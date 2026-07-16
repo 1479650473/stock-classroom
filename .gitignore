@@ -26,9 +26,9 @@ data/stock_cache.db
 /_fix_*.py
 /_test_*.py
 /_test_*.png
-/ _build_*.py
-/ _cleanup.py
-/ _*.py
+/_build_*.py
+/_cleanup.py
+/_*.py
 
 # Logs
 scripts/logs/
@@ -42,3 +42,7 @@ package/build/
 # OS
 Thumbs.db
 .DS_Store
+
+# SQLite WAL files
+*.db-shm
+*.db-wal
