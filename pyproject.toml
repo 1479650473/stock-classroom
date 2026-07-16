@@ -1,0 +1,25 @@
+[project]
+name = "stock-classroom"
+version = "0.3.0"
+description = "A股量化选股系统 - 桌面端 + Flask API + SQLite"
+requires-python = ">=3.10"
+dependencies = [
+    "flask>=3.0",
+    "flask-cors>=4.0",
+    "akshare>=1.18",
+    "pandas>=2.0",
+    "numpy>=2.0",
+    "requests>=2.30",
+    "matplotlib>=3.10",
+    "PyQt5>=5.15",
+    "PyQt5-sip>=12.15",
+]
+
+[project.optional-dependencies]
+dev = [
+    "backtesting>=0.6",
+    "scipy>=1.15",
+]
+
+[tool.setuptools]
+packages = []

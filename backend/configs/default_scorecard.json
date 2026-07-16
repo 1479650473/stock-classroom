@@ -1,0 +1,378 @@
+{
+  "version": "1.0",
+  "name": "默认多因子选股配置",
+  "description": "覆盖趋势、动量、量价、价格形态、稳定性五个维度的综合评分系统",
+  "data_window": 60,
+  "groups": [
+    {
+      "id": "trend",
+      "name": "趋势因子",
+      "weight": 30,
+      "max_score": 30,
+      "min_score": -20,
+      "indicators": [
+        {
+          "id": "ma_alignment",
+          "name": "均线排列",
+          "conditions": [
+            {
+              "type": "gt",
+              "args": [
+                "MA5",
+                "MA10"
+              ],
+              "score": 4,
+              "max": 4,
+              "reason": "MA5在MA10之上"
+            },
+            {
+              "type": "gt",
+              "args": [
+                "MA10",
+                "MA20"
+              ],
+              "score": 4,
+              "max": 4,
+              "reason": "MA10在MA20之上"
+            },
+            {
+              "type": "gt",
+              "args": [
+                "CLOSE",
+                "MA5"
+              ],
+              "score": 3,
+              "max": 3,
+              "reason": "收于MA5上方"
+            },
+            {
+              "type": "gt",
+              "args": [
+                "CLOSE",
+                "MA20"
+              ],
+              "score": 3,
+              "max": 3,
+              "reason": "收于MA20上方"
+            }
+          ]
+        },
+        {
+          "id": "ma60_support",
+          "name": "MA60支撑",
+          "conditions": [
+            {
+              "type": "gt",
+              "args": [
+                "CLOSE",
+                "MA60"
+              ],
+              "score": 6,
+              "max": 6,
+              "reason": "站稳MA60"
+            },
+            {
+              "type": "between",
+              "args": [
+                "PRICE_POS_60",
+                0.2,
+                0.8
+              ],
+              "score": 4,
+              "max": 4,
+              "reason": "价格位于区间中位"
+            }
+          ]
+        },
+        {
+          "id": "trend_direction",
+          "name": "趋势方向",
+          "conditions": [
+            {
+              "type": "gt",
+              "args": [
+                "MA5_SLOPE",
+                0
+              ],
+              "score": 4,
+              "max": 4,
+              "reason": "MA5向上"
+            },
+            {
+              "type": "gt",
+              "args": [
+                "PRICE_CHANGE_5D",
+                0
+              ],
+              "score": 2,
+              "max": 2,
+              "reason": "5日上涨"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "momentum",
+      "name": "动量因子",
+      "weight": 25,
+      "max_score": 25,
+      "min_score": -20,
+      "indicators": [
+        {
+          "id": "macd",
+          "name": "MACD",
+          "conditions": [
+            {
+              "type": "gt",
+              "args": [
+                "MACD_CROSS",
+                0
+              ],
+              "score": 8,
+              "max": 8,
+              "reason": "MACD金叉"
+            },
+            {
+              "type": "gt",
+              "args": [
+                "MACD_ABOVE_ZERO",
+                0
+              ],
+              "score": 4,
+              "max": 4,
+              "reason": "MACD零轴上方"
+            },
+            {
+              "type": "gt",
+              "args": [
+                "MACD_BAR_RISING",
+                0
+              ],
+              "score": 3,
+              "max": 3,
+              "reason": "红柱增长"
+            }
+          ]
+        },
+        {
+          "id": "rsi",
+          "name": "RSI",
+          "conditions": [
+            {
+              "type": "lt",
+              "args": [
+                "RSI14",
+                30
+              ],
+              "score": 8,
+              "max": 8,
+              "reason": "RSI超卖反弹"
+            },
+            {
+              "type": "gt",
+              "args": [
+                "RSI14",
+                70
+              ],
+              "score": -8,
+              "max": 0,
+              "reason": "RSI超买风险"
+            },
+            {
+              "type": "between",
+              "args": [
+                "RSI14",
+                50,
+                65
+              ],
+              "score": 5,
+              "max": 5,
+              "reason": "RSI多头强势"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "volume",
+      "name": "量价因子",
+      "weight": 20,
+      "max_score": 20,
+      "min_score": -15,
+      "indicators": [
+        {
+          "id": "volume_ratio",
+          "name": "成交量比",
+          "conditions": [
+            {
+              "type": "gt",
+              "args": [
+                "VOL_RATIO_5",
+                1.5
+              ],
+              "score": 8,
+              "max": 8,
+              "reason": "放量50%"
+            },
+            {
+              "type": "gt",
+              "args": [
+                "VOL_RATIO_5",
+                1.0
+              ],
+              "score": 3,
+              "max": 3,
+              "reason": "量能充足"
+            },
+            {
+              "type": "lt",
+              "args": [
+                "VOL_RATIO_5",
+                0.5
+              ],
+              "score": -8,
+              "max": 0,
+              "reason": "明显缩量"
+            }
+          ]
+        },
+        {
+          "id": "vol_price",
+          "name": "量价配合",
+          "conditions": [
+            {
+              "type": "gt",
+              "args": [
+                "VOL_UP_WITH_PRICE",
+                0
+              ],
+              "score": 7,
+              "max": 7,
+              "reason": "量增价涨"
+            },
+            {
+              "type": "lt",
+              "args": [
+                "CONSECUTIVE_DOWN",
+                1
+              ],
+              "score": -5,
+              "max": 0,
+              "reason": "连续下跌"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "price",
+      "name": "价格形态",
+      "weight": 15,
+      "max_score": 15,
+      "min_score": -10,
+      "indicators": [
+        {
+          "id": "daily_change",
+          "name": "日涨幅",
+          "conditions": [
+            {
+              "type": "between",
+              "args": [
+                "CHANGE_PCT",
+                2,
+                5
+              ],
+              "score": 8,
+              "max": 8,
+              "reason": "涨幅适中2-5%"
+            },
+            {
+              "type": "gt",
+              "args": [
+                "CHANGE_PCT",
+                5
+              ],
+              "score": 3,
+              "max": 3,
+              "reason": "强势上攻>5%"
+            },
+            {
+              "type": "lt",
+              "args": [
+                "CHANGE_PCT",
+                -3
+              ],
+              "score": -6,
+              "max": 0,
+              "reason": "跌幅过深"
+            }
+          ]
+        },
+        {
+          "id": "amp",
+          "name": "振幅",
+          "conditions": [
+            {
+              "type": "between",
+              "args": [
+                "AMP",
+                2,
+                5
+              ],
+              "score": 4,
+              "max": 4,
+              "reason": "振幅合理2-5%"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "stability",
+      "name": "稳定性因子",
+      "weight": 10,
+      "max_score": 10,
+      "min_score": -10,
+      "indicators": [
+        {
+          "id": "consistent",
+          "name": "持续上涨",
+          "conditions": [
+            {
+              "type": "gte",
+              "args": [
+                "CONSECUTIVE_UP",
+                3
+              ],
+              "score": 5,
+              "max": 5,
+              "reason": "连涨3天"
+            },
+            {
+              "type": "between",
+              "args": [
+                "AMP",
+                1,
+                4
+              ],
+              "score": 3,
+              "max": 3,
+              "reason": "振幅稳定1-4%"
+            },
+            {
+              "type": "gt",
+              "args": [
+                "PRICE_CHANGE_10D",
+                0
+              ],
+              "score": 2,
+              "max": 2,
+              "reason": "10日上涨"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

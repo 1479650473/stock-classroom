@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Environment
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project data (large SQLite files, 500MB+)
+data/kline.db
+data/stock_cache.db
+
+# Temp & debug files
+/_fix_*.py
+/_test_*.py
+/_test_*.png
+/ _build_*.py
+/ _cleanup.py
+/ _*.py
+
+# Logs
+scripts/logs/
+*.log
+
+# Packaging
+package/__pycache__/
+package/dist/
+package/build/
+
+# OS
+Thumbs.db
+.DS_Store
