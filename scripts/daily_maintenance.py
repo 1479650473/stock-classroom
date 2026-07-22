@@ -1,4 +1,4 @@
-﻿"""每日收盘后全量数据维护脚本
+"""每日收盘后全量数据维护脚本
 用法（直接运行）:
   python scripts/daily_maintenance.py
 
@@ -135,7 +135,7 @@ def update_cache():
 
 
 def update_weekly():
-    增量更新周K线（只重新计算最新一周）
+    """增量更新周K线（只重新计算最新一周）"""
     log_step('周K', '→', '聚合周线...')
     t0 = time.time()
     try:
@@ -168,6 +168,29 @@ def update_cyq():
     except Exception as e:
         log_step("筹码", "fail", str(e)[:100])
         return 0
+
+
+def update_lhb_daily():
+    """步骤 3a: 更新龙虎榜详情数据（东方财富 lhb_daily 表）"""
+    log_step("龙虎榜详情", "->", "开始更新...")
+    t0 = time.time()
+    try:
+        from data_lhb import update_lhb_daily as _ulhb
+        KLINE_DB_PATH = os.path.join(PROJECT_DIR, "data", "kline.db")
+        result = _ulhb(KLINE_DB_PATH, days_back=10)
+        elapsed = time.time() - t0
+        status = result.get("status", "error")
+        if status == "ok":
+            inserted = result.get("inserted", 0)
+            log_step("龙虎榜详情", "ok", f"插入 {inserted} 行 ({elapsed:.0f}s)")
+            return {"status": "ok", "count": f"{inserted} 行", "time": f"{elapsed:.0f}s"}
+        else:
+            msg = result.get("message", result.get("error", ""))
+            log_step("龙虎榜详情", "warn", f"{msg} ({elapsed:.0f}s)")
+            return {"status": "warn", "detail": msg}
+    except Exception as e:
+        log_step("龙虎榜详情", "fail", str(e)[:80])
+        return {"status": "fail", "detail": str(e)[:80]}
 
 
 def prune_logs(days=30):
@@ -229,7 +252,12 @@ def main():
     if not args.skip_cache:
         results["缓存"] = update_cache()
 
-    # Step 3: 周K线聚合
+    # Step 3a: 龙虎榜详情
+    if not args.skip_cache:
+        lhb_result = update_lhb_daily()
+        results["龙虎榜详情"] = lhb_result
+
+    # Step 3b: 周K线聚合
     if args.rebuild_weekly:
         log_step('周K', '→', '全量重建...')
         from data_manager import build_weekly_kline

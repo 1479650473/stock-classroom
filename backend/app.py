@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """叶瞬光量化选股系统 - Flask API
 Flask + SQLite + AKShare（主）+ 新浪（fallback）
 12 个路由，数据源架构：AKShare -> 新浪兜底 -> SQLite缓存
@@ -17,6 +17,7 @@ for k in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy",
 
 from factor_engine import FactorScorer
 from indicators import enrich_kline
+from akshare_source import diagnose_akshare
 
 app = Flask(__name__)
 CORS(app)
@@ -261,6 +262,28 @@ def api_cached_north_flow():
     conn.close()
     return jsonify({"code": 0, "data": [dict(r) for r in rows], "cached": len(rows)})
 
+
+@app.route("/api/cache/lhb-daily")
+def api_cached_lhb_daily():
+    """从 kline.db 读龙虎榜详情数据"""
+    import sqlite3
+    code = request.args.get("code", "")
+    limit = int(request.args.get("limit", 100))
+    cache_path = KLINE_DB_PATH
+    conn = sqlite3.connect(cache_path, timeout=10)
+    conn.row_factory = sqlite3.Row
+    if code:
+        rows = conn.execute(
+            "SELECT * FROM lhb_daily WHERE code=? ORDER BY trade_date DESC LIMIT ?",
+            (code, limit)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM lhb_daily ORDER BY trade_date DESC, net_amount DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
+    conn.close()
+    return jsonify({"code": 0, "data": [dict(r) for r in rows], "cached": len(rows)})
 
 # ════════════════════════════════════════════════════════
 #  健康检查

@@ -3,11 +3,11 @@ from PyQt5.QtWidgets import QWidget
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QFont
 
-_BG=QColor('#111111'); _PANEL=QColor('#191919'); _BORDER=QColor('#201E18')
-_TEXT=QColor('#EEEEEE'); _TEXTS=QColor('#B4B4B4'); _ACCENT=QColor('#FFE0C2')
-_UP=QColor('#E54D2E'); _DOWN=QColor('#3fb950'); _GRID=QColor('#2a2a2a')
-_MA5=QColor('#FDBF6E'); _MA10=QColor('#FFA726'); _MA20=QColor('#CE93D8')
-_MA60=QColor('#64B5F6'); _MVOL=QColor('#B0BEC5')
+_BG=QColor('#0D1117'); _PANEL=QColor('#161B22'); _BORDER=QColor('#21262D')
+_TEXT=QColor('#E6EDF3'); _TEXTS=QColor('#8B949E'); _ACCENT=QColor('#D4A574')
+_UP=QColor('#EF5350'); _DOWN=QColor('#4CAF50'); _GRID=QColor('#1A1F28')
+_MA5=QColor('#F0A56A'); _MA10=QColor('#5DADE2'); _MA20=QColor('#AF7AC5')
+_MA60=QColor('#F7DC6F'); _MVOL=QColor('#6C757D')
 
 class KlineWidget(QWidget):
     def __init__(s):
@@ -142,7 +142,7 @@ class KlineWidget(QWidget):
                 if lp: p.drawLine(lp,pt); lp=pt
 
     def _draw_yaxis(s,p,ml,y,h,lo,hi,mode):
-        f=p.font(); f.setPointSize(8); p.setFont(f)
+        f=p.font(); f.setPointSize(9); p.setFont(f)
         for i in range(5):
             val=lo+(hi-lo)*i/4; py=s._vy(val,lo,hi,y,h)
             p.setPen(QPen(_GRID,1)); p.drawLine(ml-3,py,ml,py)
@@ -157,7 +157,7 @@ class KlineWidget(QWidget):
 
     def _draw_dates(s,p,ml,mr,y,h,bw,vs,ve):
         vis=ve-vs; step=max(1,vis//10)
-        f=p.font(); f.setPointSize(8); p.setFont(f)
+        f=p.font(); f.setPointSize(9); p.setFont(f)
         for i,idx in enumerate(range(vs,ve)):
             if i%step!=0 and i!=vis-1: continue
             x=ml+i*bw+bw/2; d=s._bars[idx]['date']
@@ -169,17 +169,24 @@ class KlineWidget(QWidget):
     def _draw_title(s,p,W,H):
         p.fillRect(0,0,W,H,_PANEL)
         if not s._bars:
-            p.setPen(_ACCENT); p.drawText(QRectF(0,0,W,H),Qt.AlignCenter,'choose stock')
+            p.setPen(_TEXTS); p.drawText(QRectF(0,0,W,H),Qt.AlignCenter,'Choose a stock to view chart')
             return
         b0=s._bars[0]; c=float(b0['close']); ch=c-float(b0['open'])
         pct=ch/max(float(b0['open']),0.01)*100; up=ch>=0
-        f=p.font(); f.setBold(True); f.setPointSize(11); p.setFont(f)
+        f=p.font(); f.setBold(True); f.setPointSize(12); p.setFont(f)
         p.setPen(_ACCENT)
-        p.drawText(QRectF(10,0,400,H),Qt.AlignVCenter,f'  {s._symbol} {s._name}  |  {len(s._bars)}日')
-        f.setBold(False); p.setFont(f)
+        p.drawText(QRectF(10,0,200,H),Qt.AlignVCenter,f'{s._symbol}')
+        f.setBold(False); f.setPointSize(11); p.setFont(f)
+        p.setPen(_TEXT)
+        p.drawText(QRectF(80,0,160,H),Qt.AlignVCenter,f'{s._name}')
+        p.setPen(_BORDER)
+        p.drawText(QRectF(230,0,30,H),Qt.AlignVCenter,'|')
+        p.setPen(_TEXTS)
+        p.drawText(QRectF(250,0,100,H),Qt.AlignVCenter,f'{len(s._bars)} 日')
         p.setPen(_UP if up else _DOWN)
-        ar='▲' if up else '▼'
-        p.drawText(QRectF(400,0,300,H),Qt.AlignVCenter,f'{ar} {c:.2f}  {ch:+.2f}  ({pct:+.2f}%)')
+        ar='\u25b2' if up else '\u25bc'
+        f.setBold(True); p.setFont(f)
+        p.drawText(QRectF(340,0,300,H),Qt.AlignVCenter,f'{c:.2f}  {ch:+.2f} ({pct:+.2f}%)')
 
     def _draw_cross(s,p,W,H,ml,cw,bw,vs,ve,py,ph):
         b=s._bars[s._ch]
@@ -226,7 +233,7 @@ class KlineWidget(QWidget):
             p.setPen(_MA10)
             p.drawText(QRectF(ml+cw-80,iy-8,78,16),Qt.AlignRight|Qt.AlignVCenter,f"{iv:.1f}")
         # --- Info card ---
-        f=p.font(); f.setPointSize(9); p.setFont(f)
+        f=p.font(); f.setPointSize(10); p.setFont(f)
         vol_fmt=f"{vv/1e8:.1f}亿"if vv>=1e8 else f"{vv/1e4:.0f}万"if vv>=1e4 else f"{vv:.0f}"
         ind_fmt=f"{float(b.get("macd") or 0):.4f}"if s._ind=="macd"else f"{float(b.get("rsi14") or 50):.1f}"
         info=(f"  {b["date"]}  {f"▲{pct:+.2f}%"if up else f"▼{pct:+.2f}%"}\n"
@@ -235,8 +242,8 @@ class KlineWidget(QWidget):
         cr=QRectF(x+8,cy-55,200,72)
         if cr.right()>W: cr.moveRight(x-8)
         if cr.top()<py[0]: cr.moveTop(cy+8)
-        p.setBrush(QColor(25,25,25,230)); p.setPen(QPen(_ACCENT,1))
-        p.drawRoundedRect(cr,4,4); p.setPen(_TEXT)
+        p.setBrush(QColor(22,27,34,240)); p.setPen(QPen(_ACCENT,1))
+        p.drawRoundedRect(cr,6,6); p.setPen(_TEXT)
         p.drawText(cr.adjusted(6,4,-6,-4),Qt.AlignLeft|Qt.AlignTop,info)
 
     def mouseMoveEvent(s,e):

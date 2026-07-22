@@ -1,7 +1,3 @@
-"""叶瞬光量化选股 桌面端 v3.0
-PyQt5 + matplotlib K线图
-本地模式：直接读 kline.db + 本地算分，零 HTTP 依赖
-"""
 import sys, os, json, sqlite3, traceback
 from datetime import datetime
 import requests
@@ -10,7 +6,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "bac
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 KLINE_DB = os.path.join(PROJECT_DIR, "data", "kline.db")
 CACHE_DB = os.path.join(PROJECT_DIR, "data", "stock_cache.db")
-API = ""  # 不再使用 Flask API，保留兼容旧代码
 
 import matplotlib
 matplotlib.use("Qt5Agg")
@@ -20,13 +15,11 @@ import numpy as np
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QSplitter, QWidget, QVBoxLayout, QHBoxLayout,
-    QTableWidget, QTableWidgetItem, QHeaderView,
-    QPushButton, QLabel, QLineEdit, QStatusBar,
-    QAbstractItemView, QStyleFactory, QListWidget, QListWidgetItem, QFrame,
-    QScrollArea, QComboBox, QCompleter, QStackedWidget
+    QPushButton, QLabel, QLineEdit, QStatusBar, QPlainTextEdit,
+    QStyleFactory, QFrame, QStackedWidget
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QStringListModel
-from PyQt5.QtGui import QColor, QFont
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QObject
+from PyQt5.QtGui import QColor, QFont, QPalette
 from frontend.panels.market_panel import MarketPanel
 from frontend.panels.picks_panel import PicksPanel
 from frontend.panels.holdings_panel import HoldingsPanel
@@ -34,37 +27,293 @@ from frontend.panels.dc_panel import DCPanel
 from frontend.kline_widget import KlineWidget as KlineChart
 
 API = "http://127.0.0.1:5000"
-PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 STYLE = """
-QMainWindow, QWidget { background-color: #111111; color: #EEEEEE; font-family: "Microsoft YaHei"; font-size: 12px; }
-QFrame#card { background: #191919; border: 1px solid #201E18; border-radius: 6px; }
-QListWidget { background: #111111; color: #EEEEEE; border: none; outline: none; }
-QListWidget::item { padding: 10px 16px; }
-QListWidget::item:selected { background: #393028; color: #FFE0C2; }
-QListWidget::item:hover { background: #222222; }
-QTableWidget { background: #111111; color: #EEEEEE; border: 1px solid #201E18; gridline-color: #201E18; }
-QTableWidget::item { padding: 3px 8px; }
-QTableWidget::item:selected { background: #393028; color: #FFE0C2; }
-QTableWidget QHeaderView::section { background: #191919; color: #B4B4B4; border: none; border-bottom: 2px solid #2A2A2A; padding: 4px 8px; font-weight: bold; }
-QHeaderView::section:horizontal { border-right: 1px solid #201E18; }
-QLineEdit { background: #191919; color: #EEEEEE; border: 1px solid #2A2A2A; border-radius: 4px; padding: 6px 12px; }
-QLineEdit:focus { border-color: #FFE0C2; }
-QComboBox { background: #191919; color: #EEEEEE; border: 1px solid #2A2A2A; border-radius: 4px; padding: 4px 10px; }
-QComboBox::drop-down { border: none; }
-QComboBox QAbstractItemView { background: #191919; color: #EEEEEE; border: 1px solid #2A2A2A; selection-background-color: #393028; }
-QPushButton { background: #2A2A2A; color: #EEEEEE; border: 1px solid #3A322A; border-radius: 4px; padding: 5px 14px; }
-QPushButton:hover { background: #393028; }
-QPushButton#refreshBtn { background: #393028; color: #FFE0C2; border-color: #FFE0C2; }
-QPushButton#refreshBtn:hover { background: #3A322A; }
-QStatusBar { background: #191919; color: #B4B4B4; border-top: 1px solid #201E18; }
-QSplitter::handle { background: #201E18; width: 1px; }
-QScrollArea { border: none; }
+/* ============================================================
+   YeLight — Premium Dark Theme
+   ============================================================ */
+QMainWindow, QWidget {
+    background-color: #0D1117;
+    color: #E6EDF3;
+    font-family: "Segoe UI", "Microsoft YaHei";
+    font-size: 13px;
+}
+/* ── Cards ── */
+QFrame#card {
+    background: #161B22;
+    border: 1px solid #21262D;
+    border-radius: 8px;
+}
+QFrame#card:hover {
+    border-color: #30363D;
+}
+
+/* ── Lists ── */
+QListWidget {
+    background: #0D1117;
+    color: #E6EDF3;
+    border: 1px solid #21262D;
+    border-radius: 6px;
+    outline: none;
+}
+QListWidget::item {
+    padding: 6px 12px;
+    border-radius: 4px;
+}
+QListWidget::item:selected {
+    background: rgba(212, 165, 116, 0.12);
+    color: #D4A574;
+}
+QListWidget::item:hover:!selected {
+    background: #1C2128;
+}
+
+/* ── Tables ── */
+QTableWidget {
+    background: #0D1117;
+    color: #E6EDF3;
+    border: 1px solid #21262D;
+    border-radius: 6px;
+    gridline-color: #1A1F28;
+}
+QTableWidget::item {
+    padding: 4px 10px;
+    border-bottom: 1px solid #1A1F28;
+}
+QTableWidget::item:selected {
+    background: rgba(212, 165, 116, 0.12);
+    color: #D4A574;
+}
+QTableWidget::item:hover:!selected {
+    background: #1C2128;
+}
+QHeaderView::section {
+    background: #161B22;
+    color: #8B949E;
+    border: none;
+    border-bottom: 2px solid #21262D;
+    padding: 6px 10px;
+    font-weight: 600;
+    font-size: 12px;
+}
+QHeaderView::section:horizontal {
+    border-right: 1px solid #1A1F28;
+}
+
+/* ── Line Edit ── */
+QLineEdit {
+    background: #161B22;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-size: 12px;
+}
+QLineEdit:focus {
+    border-color: #D4A574;
+}
+QLineEdit[placeholderText] {
+    color: #484F58;
+}
+
+/* ── Push Button ── */
+QPushButton {
+    background: #1C2128;
+    color: #C9D1D9;
+    border: 1px solid #30363D;
+    border-radius: 6px;
+    padding: 5px 16px;
+    font-size: 12px;
+}
+QPushButton:hover {
+    background: #252A35;
+    border-color: #484F58;
+}
+QPushButton:pressed {
+    background: #161B22;
+}
+QPushButton:checked {
+    background: rgba(212, 165, 116, 0.10);
+    color: #D4A574;
+    border-color: #D4A574;
+}
+
+/* ── Refresh Button ── */
+QPushButton#refreshBtn {
+    background: rgba(212, 165, 116, 0.10);
+    color: #D4A574;
+    border: 1px solid #D4A574;
+}
+QPushButton#refreshBtn:hover {
+    background: rgba(212, 165, 116, 0.18);
+}
+
+/* ── Nav Buttons (sidebar style) ── */
+QPushButton#navBtn {
+    background: transparent;
+    color: #8B949E;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 14px;
+    text-align: left;
+}
+QPushButton#navBtn:hover {
+    background: #1C2128;
+    color: #C9D1D9;
+}
+QPushButton#navBtn:checked {
+    background: rgba(212, 165, 116, 0.08);
+    color: #D4A574;
+    border-left: 3px solid #D4A574;
+}
+
+/* ── Indicator Buttons (segmented control) ── */
+QPushButton#indBtn {
+    background: #161B22;
+    color: #8B949E;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    padding: 3px 14px;
+    font-size: 12px;
+}
+QPushButton#indBtn:checked {
+    background: rgba(212, 165, 116, 0.10);
+    color: #D4A574;
+    border-color: #D4A574;
+}
+
+/* ── CheckBox ── */
+QCheckBox {
+    color: #8B949E;
+    font-size: 12px;
+    spacing: 6px;
+}
+QCheckBox::indicator {
+    width: 14px;
+    height: 14px;
+    border: 1px solid #30363D;
+    border-radius: 3px;
+    background: #161B22;
+}
+QCheckBox::indicator:checked {
+    background: #D4A574;
+    border-color: #D4A574;
+}
+QCheckBox::indicator:hover {
+    border-color: #484F58;
+}
+
+/* ── ComboBox ── */
+QComboBox {
+    background: #161B22;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    border-radius: 6px;
+    padding: 4px 10px;
+}
+QComboBox:hover { border-color: #484F58; }
+QComboBox::drop-down { border: none; width: 24px; }
+QComboBox QAbstractItemView {
+    background: #161B22;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    selection-background-color: rgba(212, 165, 116, 0.12);
+    selection-color: #D4A574;
+}
+
+/* ── Tree Widget ── */
+QTreeWidget {
+    background: #0D1117;
+    color: #C9D1D9;
+    border: 1px solid #21262D;
+    border-radius: 6px;
+    outline: none;
+}
+QTreeWidget::item {
+    padding: 4px 8px;
+    border-radius: 3px;
+}
+QTreeWidget::item:selected {
+    background: rgba(212, 165, 116, 0.12);
+    color: #D4A574;
+}
+QTreeWidget::item:hover:!selected {
+    background: #1C2128;
+}
+QTreeWidget::branch:!has-children:!has-siblings:adjoins-item {
+    border: none;
+}
+
+/* ── ScrollBar ── */
+QScrollBar:vertical {
+    background: #0D1117;
+    width: 8px;
+    margin: 0;
+    border-radius: 4px;
+}
+QScrollBar::handle:vertical {
+    background: #30363D;
+    min-height: 30px;
+    border-radius: 4px;
+}
+QScrollBar::handle:vertical:hover {
+    background: #484F58;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+QScrollBar:horizontal {
+    background: #0D1117;
+    height: 8px;
+    margin: 0;
+    border-radius: 4px;
+}
+QScrollBar::handle:horizontal {
+    background: #30363D;
+    min-width: 30px;
+    border-radius: 4px;
+}
+QScrollBar::handle:horizontal:hover {
+    background: #484F58;
+}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0px;
+}
+
+/* ── ToolTip ── */
+QToolTip {
+    background: #1C2128;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 11px;
+}
+
+/* ── Splitter ── */
+QSplitter::handle {
+    background: #21262D;
+    width: 1px;
+}
+
+/* ── StatusBar ── */
+QStatusBar {
+    background: #161B22;
+    color: #8B949E;
+    border-top: 1px solid #21262D;
+    font-size: 11px;
+    padding: 2px 12px;
+}
+
+/* ── Scroll Area ── */
+QScrollArea {
+    border: none;
+}
 """
 
 
 class ApiThread(QThread):
-    """后台HTTP请求，异常不崩溃"""
     result = pyqtSignal(str, object)
 
     def __init__(self, url, tag=""):
@@ -89,7 +338,6 @@ class ApiThread(QThread):
 
 
 class LocalWorker(QThread):
-    """本地工作线程：后台调 Python 函数（不走 HTTP），保持 UI 流畅"""
     result = pyqtSignal(str, object)
     def __init__(self, func, tag="", args=None, kwargs=None):
         super().__init__()
@@ -106,17 +354,104 @@ class LocalWorker(QThread):
             self.result.emit(self.tag, {"code": -1, "error": str(e)})
 
 
+class LogStream(QObject):
+    text_written = pyqtSignal(str)
+
+    def __init__(self):
+        super().__init__()
+        self._buffer = ""
+
+    def write(self, text):
+        self._buffer += text
+        if '\n' in self._buffer:
+            lines = self._buffer.split('\n')
+            self._buffer = lines[-1]
+            for line in lines[:-1]:
+                if line.strip():
+                    self.text_written.emit(line)
+
+    def flush(self):
+        if self._buffer.strip():
+            self.text_written.emit(self._buffer)
+            self._buffer = ""
+
+
+class LogWindow(QWidget):
+    """Floating log/terminal window."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("运行日志")
+        self.setWindowFlags(Qt.Window)
+        self.setMinimumSize(700, 400)
+        self.setGeometry(100, 100, 800, 480)
+        self.setStyleSheet("background:#0D1117;")
+
+        lo = QVBoxLayout(self)
+        lo.setContentsMargins(0, 0, 0, 0)
+        lo.setSpacing(0)
+
+        hbar = QHBoxLayout()
+        hbar.setContentsMargins(12, 6, 12, 6)
+        lbl = QLabel("控制台输出")
+        lbl.setStyleSheet("color:#D4A574;font-size:13px;font-weight:600;background:transparent")
+        hbar.addWidget(lbl)
+        hbar.addStretch()
+        self._count_lbl = QLabel("0 行")
+        self._count_lbl.setStyleSheet("color:#484F58;font-size:11px;background:transparent")
+        hbar.addWidget(self._count_lbl)
+        clear_btn = QPushButton("清空")
+        clear_btn.setFixedSize(50, 24)
+        clear_btn.setStyleSheet(
+            "QPushButton{background:#161B22;color:#8B949E;border:1px solid #30363D;border-radius:4px;font-size:10px}"
+            "QPushButton:hover{background:#1C2128;border-color:#484F58}")
+        clear_btn.clicked.connect(self._clear)
+        hbar.addWidget(clear_btn)
+        lo.addLayout(hbar)
+
+        self._log = QPlainTextEdit()
+        self._log.setReadOnly(True)
+        self._log.setStyleSheet(
+            "QPlainTextEdit{background:#0D1117;color:#E6EDF3;border:none;"
+            "font-family:Consolas,'Courier New',monospace;font-size:11px;"
+            "line-height:1.4;padding:6px 12px;}")
+        lo.addWidget(self._log, 1)
+        self._line_count = 0
+
+    def append(self, text):
+        self._log.appendPlainText(text)
+        self._line_count += 1
+        self._count_lbl.setText(f"{self._line_count} 行")
+        sb = self._log.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+    def _clear(self):
+        self._log.clear()
+        self._line_count = 0
+        self._count_lbl.setText("0 行")
+
+    def closeEvent(self, event):
+        event.ignore()
+        self.hide()
+
 
 class DesktopApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("叶瞬光量化选股 v3.0")
-        self.setGeometry(100, 40, 1280, 800)
-        self.setMinimumSize(960, 600)
+        self.setWindowTitle("YeLight — 量化选股")
+        self.setGeometry(50, 20, 1500, 920)
+        self.setMinimumSize(1100, 700)
         self.search_results = []
-        self._tab_loaded = [False, False, False, False]  # 懒加载标记
+        self._tab_loaded = [False, False, False, False]
+
+        self._log_window = LogWindow()
+        self._log_stream = LogStream()
+        self._log_stream.text_written.connect(self._log_window.append)
+        sys.stdout = self._log_stream
+        sys.stderr = self._log_stream
+        print("YeLight 启动")
+
         self.build_ui()
-        self.status.showMessage("就绪 — 点击左侧标签加载数据")
+        self.status.showMessage("就绪 — 点击左侧导航加载数据")
 
     def build_ui(self):
         central = QWidget()
@@ -125,57 +460,119 @@ class DesktopApp(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Top bar
+        # ═══ Top Bar ═══
         topbar = QFrame()
-        topbar.setFixedHeight(44)
-        topbar.setStyleSheet("background:#191919; border-bottom:1px solid #201E18;")
+        topbar.setFixedHeight(48)
+        topbar.setStyleSheet("background:#161B22; border-bottom:1px solid #21262D;")
         tl = QHBoxLayout(topbar)
         tl.setContentsMargins(16, 0, 16, 0)
-        title = QLabel("⚡ 叶瞬光 量化选股")
-        title.setStyleSheet("color:#FFE0C2; font-size:15px; font-weight:bold; border:none;")
-        tl.addWidget(title)
+
+        logo = QWidget()
+        logo_lo = QHBoxLayout(logo)
+        logo_lo.setContentsMargins(0, 0, 0, 0)
+        logo_lo.setSpacing(4)
+        lbl_brand = QLabel("YeLight")
+        lbl_brand.setStyleSheet("color:#D4A574; font-size:17px; font-weight:700; border:none;")
+        logo_lo.addWidget(lbl_brand)
+        lbl_sub = QLabel("量化选股")
+        lbl_sub.setStyleSheet("color:#8B949E; font-size:13px; font-weight:400; border:none;")
+        logo_lo.addWidget(lbl_sub)
+        tl.addWidget(logo)
+
         tl.addStretch()
+
         self.search = QLineEdit()
-        self.search.setPlaceholderText("输入代码或名称搜索...")
-        self.search.setFixedWidth(280)
+        self.search.setPlaceholderText("输入代码或名称搜索")
+        self.search.setFixedSize(300, 30)
+        self.search.setStyleSheet(
+            "QLineEdit{background:#1C2128;color:#E6EDF3;border:1px solid #30363D;"
+            "border-radius:15px;padding:4px 16px;font-size:13px;}"
+            "QLineEdit:focus{border-color:#D4A574;}")
         self.search.textChanged.connect(self.on_search)
         self.search.returnPressed.connect(self.on_search_enter)
         tl.addWidget(self.search)
-        refresh = QPushButton("🔄 刷新")
+
+        refresh = QPushButton("刷新")
         refresh.setObjectName("refreshBtn")
+        refresh.setFixedHeight(30)
         refresh.clicked.connect(self.refresh_all)
         tl.addWidget(refresh)
+
+        log_btn = QPushButton("日志")
+        log_btn.setFixedSize(48, 30)
+        log_btn.setCursor(Qt.PointingHandCursor)
+        log_btn.setStyleSheet(
+            "QPushButton{background:#161B22;color:#8B949E;border:1px solid #30363D;border-radius:6px;font-size:11px}"
+            "QPushButton:hover{background:#1C2128;border-color:#484F58}")
+        log_btn.clicked.connect(lambda: self._log_window.show() if self._log_window.isHidden() else self._log_window.hide())
+        tl.addWidget(log_btn)
         layout.addWidget(topbar)
 
-
+        # ═══ Main Splitter ═══
         outer = QSplitter(Qt.Horizontal)
         outer.setHandleWidth(1)
-        outer.setStyleSheet('QSplitter::handle{background:#201E18;width:1px}')
 
-        # Left panel
+        # ── Left: Navigation + Panel ──
         left_widget = QWidget()
-        ll = QVBoxLayout(left_widget)
-        ll.setContentsMargins(6, 4, 3, 4)
-        ll.setSpacing(4)
+        left_lo = QVBoxLayout(left_widget)
+        left_lo.setContentsMargins(0, 0, 0, 0)
+        left_lo.setSpacing(0)
 
-        # Left tab buttons
-        tab_row = QHBoxLayout()
-        tab_row.setSpacing(3)
+        nav_panel = QWidget()
+        nav_panel.setFixedWidth(72)
+        nav_panel.setStyleSheet("background:#0D1117; border-right:1px solid #21262D;")
+        nav_lo = QVBoxLayout(nav_panel)
+        nav_lo.setContentsMargins(6, 12, 6, 12)
+        nav_lo.setSpacing(4)
+
         self.tab_btns = []
-        for i, name in enumerate(["📊 市场", "🎯 选股", "💼 持仓", "🗄 数据"]):
+        nav_items = [
+            ("market", "市场"),
+            ("picks", "选股"),
+            ("holdings", "持仓"),
+            ("data", "数据"),
+        ]
+        for tag, name in nav_items:
             btn = QPushButton(name)
+            btn.setObjectName("navBtn")
             btn.setCheckable(True)
-            btn.setChecked(i == 0)
+            btn.setFixedSize(60, 56)
             btn.setCursor(Qt.PointingHandCursor)
-            btn.setStyleSheet('QPushButton{background:#191919;color:#B4B4B4;border:1px solid #201E18;border-radius:4px;padding:4px 10px;font-size:11px}' + 'QPushButton:checked{background:rgba(255,224,194,0.12);color:#FFE0C2;border-color:#FFE0C2}')
-            btn.clicked.connect(lambda checked, idx=i: self._switch_left_tab(idx))
-            tab_row.addWidget(btn)
+            btn.setStyleSheet("""
+                QPushButton#navBtn {
+                    background: transparent;
+                    color: #8B949E;
+                    border: none;
+                    border-radius: 6px;
+                     padding: 0px;
+                     font-size: 14px;
+                     font-weight: 500;
+                }
+                QPushButton#navBtn:hover {
+                    background: #1C2128;
+                    color: #C9D1D9;
+                }
+                QPushButton#navBtn:checked {
+                    background: rgba(212, 165, 116, 0.10);
+                    color: #D4A574;
+                    font-weight: 600;
+                }
+            """)
+            btn.clicked.connect(lambda checked, idx=len(self.tab_btns): self._switch_left_tab(idx))
+            nav_lo.addWidget(btn)
             self.tab_btns.append(btn)
-        ll.addLayout(tab_row)
 
-        # Left stack (reuse existing widgets)
+        nav_lo.addStretch()
+
+        body_wrapper = QWidget()
+        body_wrapper_lo = QHBoxLayout(body_wrapper)
+        body_wrapper_lo.setContentsMargins(0, 0, 0, 0)
+        body_wrapper_lo.setSpacing(0)
+        body_wrapper_lo.addWidget(nav_panel)
+
         self.left_stack = QStackedWidget()
-        # Left panel tabs (independent modules)
+        self.left_stack.setStyleSheet("background:#0D1117;")
+
         self.market_panel = MarketPanel()
         self.market_panel.db_path = KLINE_DB
         self.market_panel.on_open_kline = self.open_kline
@@ -191,6 +588,7 @@ class DesktopApp(QMainWindow):
         self.holdings_panel = HoldingsPanel()
         self.holdings_panel.db_path = KLINE_DB
         self.holdings_panel.on_status = lambda msg: self.status.showMessage(msg)
+        self.holdings_panel.on_open_kline = self.open_kline
         self.left_stack.addWidget(self.holdings_panel)
 
         self.dc_panel = DCPanel()
@@ -199,79 +597,73 @@ class DesktopApp(QMainWindow):
         self.dc_panel.on_status = lambda msg: self.status.showMessage(msg)
         self.left_stack.addWidget(self.dc_panel)
 
-        # DC simplified
-
-        ll.addWidget(self.left_stack)
+        body_wrapper_lo.addWidget(self.left_stack)
+        left_lo.addWidget(body_wrapper)
         outer.addWidget(left_widget)
 
-        # Right panel: K-line
+        # ── Right: K-line ──
         right_widget = QWidget()
         rl = QVBoxLayout(right_widget)
-        rl.setContentsMargins(3, 4, 6, 4)
-        rl.setSpacing(4)
+        rl.setContentsMargins(8, 8, 8, 8)
+        rl.setSpacing(6)
 
-        self.right_stack = QStackedWidget()
-
-        # Page 0: K-line
-        k_page = QWidget()
-        k_lay = QVBoxLayout(k_page)
-        k_lay.setContentsMargins(0,0,0,0)
         k_bar = QHBoxLayout()
+        k_bar.setSpacing(8)
+
         self.k_search = QLineEdit()
-        self.k_search.setPlaceholderText("输入代码/名称搜索...")
+        self.k_search.setPlaceholderText("搜索股票代码或名称")
+        self.k_search.setStyleSheet(
+            "QLineEdit{background:#161B22;color:#E6EDF3;border:1px solid #30363D;"
+            "border-radius:6px;padding:5px 12px;font-size:12px;}"
+            "QLineEdit:focus{border-color:#D4A574;}")
         self.k_search.returnPressed.connect(self._k_search_stock)
         k_bar.addWidget(self.k_search, 1)
-        k_bar.addWidget(QLabel("指标:"))
+
+        k_bar.addWidget(QLabel("指标", styleSheet="color:#8B949E;font-size:12px;font-weight:500;"))
+
         self.k_btn_macd = QPushButton("MACD")
+        self.k_btn_macd.setObjectName("indBtn")
         self.k_btn_macd.setCheckable(True)
         self.k_btn_macd.setChecked(True)
+        self.k_btn_macd.setFixedHeight(26)
         self.k_btn_macd.clicked.connect(lambda: self._switch_kline_indicator("macd"))
         k_bar.addWidget(self.k_btn_macd)
+
         self.k_btn_rsi = QPushButton("RSI")
+        self.k_btn_rsi.setObjectName("indBtn")
         self.k_btn_rsi.setCheckable(True)
+        self.k_btn_rsi.setFixedHeight(26)
         self.k_btn_rsi.clicked.connect(lambda: self._switch_kline_indicator("rsi"))
         k_bar.addWidget(self.k_btn_rsi)
-        k_lay.addLayout(k_bar)
+
+        k_bar.addStretch()
+        rl.addLayout(k_bar)
+
         self.kline_chart = KlineChart()
-        k_lay.addWidget(self.kline_chart)
-        self.right_stack.addWidget(k_page)
+        rl.addWidget(self.kline_chart)
 
-        # Page 1: Data Center
-        dc_page = QWidget()
-        dc_lay = QVBoxLayout(dc_page)
-        dc_lay.setContentsMargins(0,0,0,0)
-        self.dc_overview = QHBoxLayout()
-        dc_lay.addLayout(self.dc_overview)
-        self.dc_list = QListWidget()
-        self.dc_list.itemClicked.connect(self.on_dc_select)
-        dc_lay.addWidget(self.dc_list)
-        self.dc_table = QTableWidget()
-        self.dc_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.dc_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.dc_table.horizontalHeader().setStretchLastSection(True)
-        self.dc_table.verticalHeader().setVisible(False)
-        self.dc_table.setShowGrid(False)
-        dc_lay.addWidget(self.dc_table)
-        self.right_stack.addWidget(dc_page)
-
-        self.right_stack.setCurrentIndex(0)
-        rl.addWidget(self.right_stack)
         outer.addWidget(right_widget)
-        outer.setSizes([480, 720])
+        outer.setSizes([380, 820])
 
         layout.addWidget(outer)
 
+        # ═══ Status Bar ═══
         self.status = QStatusBar()
-        self.status.setStyleSheet('background:#191919;color:#B4B4B4;border-top:1px solid #201E18;font-size:11px')
+        self.status.setStyleSheet(
+            "QStatusBar{background:#161B22;color:#8B949E;border-top:1px solid #21262D;"
+            "font-size:12px;padding:2px 12px;}")
+        self._status_dot = QLabel("●")
+        self._status_dot.setStyleSheet("color:#3fb950;font-size:10px;border:none;padding-right:4px;")
+        self.status.addPermanentWidget(self._status_dot)
         self.setStatusBar(self.status)
-        self.status.showMessage('就绪 — 点击左侧股票查看 K 线')
+        self.status.showMessage("就绪")
 
-        # Trigger initial load
         QTimer.singleShot(100, lambda: self._switch_left_tab(0))
+
+    # ─── Search ───
     def on_search(self, text):
         if len(text) < 2:
             return
-        self.status.showMessage(f"搜索: {text}...")
 
     def on_search_enter(self):
         text = self.search.text().strip()
@@ -298,69 +690,11 @@ class DesktopApp(QMainWindow):
         else:
             self.status.showMessage("未找到匹配股票")
 
-    # === Market ===
-    def _load_market(self):
-        self.status.showMessage("加载市场数据...")
-        def _local_market():
-            import sqlite3 as _sq
-            conn = _sq.connect(KLINE_DB)
-            conn.row_factory = _sq.Row
-            try:
-                idx_map = {'000001':'上证指数','399001':'深证成指','399006':'创业板指'}
-                idx_rows = conn.execute("SELECT code, close FROM kline_daily WHERE code IN ('000001','399001','399006') AND date = (SELECT MAX(date) FROM kline_daily)").fetchall()
-                indices = [{'code':r['code'],'name':idx_map.get(r['code'],r['code']),'price':r['close'],'change_pct':0,'volume':0,'source':'local'} for r in idx_rows]
-                latest = conn.execute("SELECT MAX(date) as d FROM kline_daily").fetchone()['d']
-                total = conn.execute("SELECT COUNT(*) as c FROM stock_list WHERE status='active'").fetchone()['c']
-                stats = {'date':latest,'total':total}
-            finally:
-                conn.close()
-            return {"code":0,"data":indices,"stats":stats,"source":"local"}
-        t = LocalWorker(_local_market, "market")
-        t.result.connect(self._on_market)
-        t.start()
-
-    def _on_market(self, tag, data):
-        if data.get("code") != 0:
-            self.status.showMessage(f"市场数据失败: {data.get('error','')}")
-            return
-        indices = data.get("data", [])
-        for i in reversed(range(self.card_row.count())):
-            w = self.card_row.itemAt(i).widget()
-            if w:
-                w.deleteLater()
-        for d in indices[:6]:
-            card = QFrame()
-            card.setObjectName("card")
-            card.setFixedSize(180, 72)
-            cl = QVBoxLayout(card)
-            cl.setContentsMargins(12, 6, 12, 6)
-            cl.setSpacing(2)
-            nm = QLabel(d.get("name", ""))
-            nm.setStyleSheet("color:#B4B4B4; font-size:10px; background:transparent;")
-            cl.addWidget(nm)
-            p = QLabel(f"{d.get('price', d.get('close', 0)):.2f}")
-            p.setStyleSheet("color:#EEEEEE; font-size:18px; font-weight:bold; background:transparent;")
-            cl.addWidget(p)
-            chg = d.get("change_pct", 0)
-            color = "#E54D2E" if chg >= 0 else "#3fb950"
-            c = QLabel(f"{'+'if chg>=0 else ''}{chg:.2f}%")
-            c.setStyleSheet(f"color:{color}; font-size:12px; background:transparent;")
-            cl.addWidget(c)
-            self.card_row.addWidget(card)
-        self.status.showMessage("市场数据已加载")
-        self._load_picks_async()
-
-    def on_nav(self, idx):
-        self._switch_left_tab(idx)
-
+    # ─── Navigation ───
     def _switch_left_tab(self, idx):
         for i, btn in enumerate(self.tab_btns):
             btn.setChecked(i == idx)
         self.left_stack.setCurrentIndex(idx)
-        if hasattr(self, "right_stack"):
-            target = 1 if idx == 3 else 0
-            if self.right_stack.currentIndex() != target:
-                self.right_stack.setCurrentIndex(target)
         if not self._tab_loaded[idx]:
             self._tab_loaded[idx] = True
             if idx == 0:
@@ -371,363 +705,21 @@ class DesktopApp(QMainWindow):
                 self.holdings_panel.load()
             elif idx == 3:
                 self.dc_panel.load()
-    def _load_picks_async(self):
-        def _local_picks():
-            """直接查询 SQLite 评分，不依赖 data_manager 模块"""
-            conn = sqlite3.connect(KLINE_DB)
-            conn.row_factory = sqlite3.Row
-            try:
-                rows = conn.execute("SELECT code, name FROM stock_list WHERE status='active' ORDER BY code").fetchall()
-                candidates = [(str(r['code']), str(r['name'])) for r in rows
-                             if str(r['code'])[:2] in ('60','00','30','68') and 'ST' not in str(r['name'])]
-                results = []
-                for code, name in candidates:
-                    try:
-                        kd = conn.execute("SELECT * FROM kline_daily WHERE code=? ORDER BY date DESC LIMIT 60", (code,)).fetchall()
-                        if len(kd) < 10: continue
-                        last, prev = kd[0], kd[1]
-                        close = float(last['close'])
-                        prev_close = float(prev['close'])
-                        volume = float(last['volume'])
-                        if volume <= 0: continue
-                        change_pct = round((close-prev_close)/prev_close*100,2) if prev_close else 0
-                        avg_vol = sum(float(r['volume']) for r in kd[-10:]) / 10
-                        score = 50
-                        if close > prev_close: score += 20
-                        if volume > avg_vol * 1.5: score += 20
-                        elif volume > avg_vol: score += 10
-                        if change_pct > 3: score += 15
-                        elif change_pct > 0: score += 5
-                        results.append({'code':code,'name':name,'price':close,
-                            'change_pct':change_pct,'volume':int(volume),
-                            'turnover':0.1,'score':score,'reasons':['简单评分']})
-                    except:
-                        continue
-            finally:
-                conn.close()
-            results.sort(key=lambda x:x['score'], reverse=True)
-            return {'code':0,'data':results[:20]}
-        t = LocalWorker(_local_picks, "picks")
-        t.result.connect(self._on_picks_result)
-        t.start()
-    
-    def _on_picks_result(self, tag, data):
-        self._on_market_picks(tag, data)
-        self._on_picks(tag, data)
 
-    def _on_market_picks(self, tag, data):
-        if data.get("code") != 0:
-            return
-        picks = data.get("data", [])
-        self._fill_stock_table(self.market_table, picks, with_rank=True, with_price=True, with_score=True)
-
-    def on_market_click(self, row, col):
-        code_item = self.market_table.item(row, 1)
-        name_item = self.market_table.item(row, 2)
-        if code_item:
-            self.open_kline(code_item.text(), name_item.text() if name_item else "")
-
-    # === Picks ===
-    def _load_picks(self):
-        self.status.showMessage("加载选股...")
-        self._load_picks_async()
-
-    def _on_picks(self, tag, data):
-        if data.get("code") != 0:
-            self.status.showMessage(f"选股失败: {data.get('error','')}")
-            return
-        picks = data.get("data", [])
-        self._fill_stock_table(self.picks_table, picks, with_rank=True, with_price=True, with_score=True)
-        self.status.showMessage(f"选股已加载 - {len(picks)} 只")
-
-    def on_picks_click(self, row, col):
-        code_item = self.picks_table.item(row, 1)
-        name_item = self.picks_table.item(row, 2)
-        if code_item:
-            self.open_kline(code_item.text(), name_item.text() if name_item else "")
-
-    # === Holdings ===
-    def _load_holdings(self):
-        self.status.showMessage("加载持仓...")
-        def _local_holdings():
-            holds = [
-                {"code":"600519","name":"茅台","cost":1680.0,"shares":100},
-                {"code":"000858","name":"五粮液","cost":145.0,"shares":1000},
-                {"code":"300750","name":"宁德时代","cost":220.0,"shares":200},
-                {"code":"601318","name":"中国平安","cost":48.0,"shares":500},
-            ]
-            conn = sqlite3.connect(KLINE_DB)
-            for h in holds:
-                row = conn.execute(
-                    "SELECT close FROM kline_daily WHERE code=? ORDER BY date DESC LIMIT 1",
-                    (h["code"],)
-                ).fetchone()
-                h["current"] = float(row[0]) if row else h["cost"]
-            conn.close()
-            return {"code":0,"data":holds}
-        t = LocalWorker(_local_holdings, "holdings")
-        t.result.connect(self._on_holdings)
-        t.start()
-
-    def _on_holdings(self, tag, data):
-        for i in reversed(range(self.holdings_cards.count())):
-            w = self.holdings_cards.itemAt(i).widget()
-            if w:
-                w.deleteLater()
-        if data.get("code") != 0 or not data.get("data"):
-            self.status.showMessage("暂无持仓")
-            return
-        holds = data.get("data", [])
-        total_val = sum(h.get("current", 0) * h.get("shares", 0) for h in holds)
-        total_pnl = sum((h.get("current", 0) - h.get("cost", 0)) * h.get("shares", 0) for h in holds)
-
-        card_data = [
-            ("持仓市值", f"{total_val:,.0f}", "#EEEEEE"),
-            ("总盈亏", f"{'+'if total_pnl>=0 else ''}{total_pnl:,.0f}", "#E54D2E" if total_pnl >= 0 else "#3fb950"),
-            ("持仓数", f"{len(holds)}只", "#EEEEEE"),
-        ]
-        for label, value, color in card_data:
-            card = QFrame()
-            card.setObjectName("card")
-            card.setFixedSize(160, 60)
-            cl = QVBoxLayout(card)
-            cl.setContentsMargins(12, 6, 12, 6)
-            l = QLabel(label)
-            l.setStyleSheet("color:#B4B4B4; font-size:10px; background:transparent;")
-            cl.addWidget(l)
-            v = QLabel(value)
-            v.setStyleSheet(f"color:{color}; font-size:16px; font-weight:bold; background:transparent;")
-            cl.addWidget(v)
-            self.holdings_cards.addWidget(card)
-
-        self.holdings_table.setRowCount(len(holds))
-        self.holdings_table.setColumnCount(5)
-        self.holdings_table.setHorizontalHeaderLabels(["代码", "名称", "成本", "现价", "盈亏"])
-        for i, h in enumerate(holds):
-            pnl = (h.get("current", 0) - h.get("cost", 0)) * h.get("shares", 0)
-            items = [
-                QTableWidgetItem(h.get("code", "")),
-                QTableWidgetItem(h.get("name", "")),
-                QTableWidgetItem(f"{h.get('cost', 0):.2f}"),
-                QTableWidgetItem(f"{h.get('current', 0):.2f}"),
-                QTableWidgetItem(f"{'+'if pnl>=0 else ''}{pnl:,.0f}"),
-            ]
-            items[4].setForeground(QColor("#E54D2E" if pnl >= 0 else "#3fb950"))
-            for j, item in enumerate(items):
-                self.holdings_table.setItem(i, j, item)
-        self.holdings_table.resizeColumnsToContents()
-        self.status.showMessage(f"持仓: {len(holds)}只, 市值 {total_val:,.0f}")
-
-    def on_holdings_click(self, row, col):
-        code_item = self.holdings_table.item(row, 0)
-        name_item = self.holdings_table.item(row, 1)
-        if code_item:
-            self.open_kline(code_item.text(), name_item.text() if name_item else "")
-
-    # === Data Center ===
-    def _load_dc(self):
-        self.status.showMessage('加载数据表...')
-        if not hasattr(self, 'dc_overview'):
-            self.dc_overview = QHBoxLayout()
-        try:
-            for i in reversed(range(self.dc_overview.count())):
-                w = self.dc_overview.itemAt(i).widget()
-                if w: w.deleteLater()
-            self.dc_list.clear()
-            db_paths = [
-                (os.path.join(PROJECT_DIR, 'data', 'kline.db'), 'K线库', '#3fb950'),
-                (os.path.join(PROJECT_DIR, 'data', 'stock_cache.db'), '缓存库', '#FFE0C2'),
-            ]
-            self._dc_tables = []
-            total_global_rows = 0
-            for db_path, label, color in db_paths:
-                if not os.path.exists(db_path):
-                    card = self._make_info_card(label + chr(10) + '未找到', color, 140, 56)
-                    self.dc_overview.addWidget(card)
-                    continue
-
-                sz_mb = os.path.getsize(db_path) / 1048576
-                conn = sqlite3.connect(db_path)
-                cur = conn.cursor()
-                names = cur.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
-                for (name,) in names:
-                    cnt = cur.execute('SELECT COUNT(*) FROM [%s]' % name).fetchone()[0]
-                    cur.execute('PRAGMA table_info([%s])' % name)
-                    col_info = [(c[1], c[2]) for c in cur.fetchall()]
-                    t = {'name': name, 'count': cnt, 'db_path': db_path, 'db': label, 'cols': col_info}
-                    self._dc_tables.append(t)
-                    total_global_rows += cnt
-                    txt = '[%s] %s    %s 行' % (label, name, '{:,}'.format(cnt))
-                    item = QListWidgetItem(txt)
-                    item.setData(Qt.UserRole, t)
-                    self.dc_list.addItem(item)
-                conn.close()
-
-                card = self._make_info_card(label, color, 140, 56)
-                self.dc_overview.addWidget(card)
-                lbl = card.findChildren(QLabel)[-1]
-                lbl.setText('%.0f MB - %d 个表' % (sz_mb, len(names)))
-
-            msg = '%d 个表, %s 行' % (len(self._dc_tables), '{:,}'.format(total_global_rows))
-            self.status.showMessage(msg)
-        except Exception as e:
-            import traceback as _tb
-            self.status.showMessage('加载失败: ' + str(e))
-            with open(os.path.join(PROJECT_DIR, "dc_err.txt"), "w") as f:
-                _tb.print_exc(file=f)
-
-    def _make_info_card(self, text, color, w=140, h=56):
-        card = QFrame()
-        card.setObjectName('card')
-        card.setFixedSize(w, h)
-        cl = QVBoxLayout(card)
-        cl.setContentsMargins(8, 4, 8, 4)
-        cl.setSpacing(0)
-        lbl = QLabel(text)
-        lbl.setStyleSheet('color:%s; font-size:12px; font-weight:bold; background:transparent;' % color)
-        lbl.setAlignment(Qt.AlignCenter)
-        cl.addWidget(lbl)
-        self.dc_overview.addWidget(card)
-        return card
-
-    def on_dc_select(self, item):
-        t = item.data(Qt.UserRole)
-        if not t:
-            return
-        try:
-            self.status.showMessage('加载 ' + t['name'] + '...')
-            self._dc_selected_table = t
-            conn = sqlite3.connect(t['db_path'])
-            cur = conn.cursor()
-            query = ('SELECT k.code, k.date, k.open, k.high, k.low, k.close, k.volume, k.amount'
-                     ' FROM kline_daily k'
-                     ' WHERE k.date = (SELECT MAX(date) FROM kline_daily WHERE code = k.code)'
-                     ' ORDER BY k.volume DESC LIMIT 500'
-                     if t['name'] == 'kline_daily'
-                     else 'SELECT * FROM [%s] LIMIT 500' % t['name'])
-            cur.execute(query)
-            rows = cur.fetchall()
-            cols_str = [d[0] for d in cur.description] if cur.description else []
-            if t['name'] == 'kline_daily':
-                # Add name column via separate query
-                conn2 = sqlite3.connect(t['db_path'])
-                names = dict(conn2.execute('SELECT code, name FROM stock_list').fetchall())
-                conn2.close()
-                rows = [list(r) + [names.get(r[0], '')] for r in rows]
-                cols_str = cols_str + ['name']
-            conn.close()
-
-            self._dc_cols = cols_str
-            self._dc_rows = rows
- 
-            self.status.showMessage('%s | %s 行 | %d 列 | %s' % (t['name'], '{:,}'.format(t['count']), len(cols_str), t['db']))
-
-            self._fill_dc_table(rows, cols_str)
-            msg = '%s -- %d/%s 行, %d 列, %s'
-            self.status.showMessage(msg % (t['name'], len(rows), '{:,}'.format(t['count']), len(cols_str), t['db']))
-        except Exception as e:
-            self.status.showMessage('查询失败: ' + str(e))
-
-    def _fill_dc_table(self, rows, cols):
-        n_rows = len(rows)
-        n_cols = len(cols)
-        # 完全重置：先清为 0 再设置，避免旧状态干扰
-        self.dc_table.setRowCount(0)
-        self.dc_table.setColumnCount(0)
-        self.dc_table.setRowCount(n_rows)
-        self.dc_table.setColumnCount(n_cols + 1)
-        CN = {
-            'code':'代码','date':'日期','open':'开盘','high':'最高',
-            'low':'最低','close':'收盘','volume':'成交量','amount':'成交额',
-            'name':'名称','board':'板块','status':'状态','last_date':'最后日期',
-            'total_days':'总天数','up_count':'上涨','down_count':'下跌',
-            'id':'序号','update_date':'更新日期','rows_added':'新增行',
-            'duration':'耗时','price':'价格','change_pct':'涨跌幅',
-            'turnover':'换手率','score':'评分','reasons':'理由',
-            'net_value':'净流入','main_net':'主力净流入','type':'类型',
-            'change_amount':'成交额','count':'计数',
-        }
-        cols_cn = [CN.get(c, c) for c in cols]
-        self.dc_table.setHorizontalHeaderLabels(['#'] + cols_cn)
-
-        bg_even = QColor('#111111')
-        bg_odd = QColor('#191919')
-        for r, row in enumerate(rows):
-            bg = bg_odd if r % 2 else bg_even
-            rn = QTableWidgetItem(str(r + 1))
-            rn.setForeground(QColor('#484848'))
-            rn.setBackground(bg)
-            rn.setFlags(Qt.ItemIsEnabled)
-            self.dc_table.setItem(r, 0, rn)
-
-            for c, val in enumerate(row):
-                if val is None:
-                    cell = QTableWidgetItem('NULL')
-                    cell.setForeground(QColor('#E54D2E'))
-                    cell.setBackground(bg)
-                    cell.setFont(QFont('Consolas', 9, -1, True))
-                else:
-                    text = str(val)
-                    cell = QTableWidgetItem(text)
-                    cell.setBackground(bg)
-                    if isinstance(val, (int, float)):
-                        cell.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                        cell.setFont(QFont('Consolas', 10))
-                cell.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-                self.dc_table.setItem(r, c + 1, cell)
-
-        self.dc_table.setColumnWidth(0, 40)
-        for i in range(n_cols):
-            max_w = 80
-            for j in range(min(50, n_rows)):
-                txt = str(rows[j][i]) if rows[j][i] is not None else 'NULL'
-                max_w = max(max_w, len(txt) * 9 + 20)
-            self.dc_table.setColumnWidth(i + 1, min(250, max_w))
-        self.dc_table.horizontalHeader().setStretchLastSection(False)
-        self.dc_table.resizeRowsToContents()
-        self.dc_table.update()
-        self.status.showMessage('表格: %d 行 x %d 列' % (n_rows, n_cols + 1))
-
-    def _dc_filter_table(self, text):
-        if not hasattr(self, '_dc_rows') or not self._dc_rows:
-            return
-        q = text.strip().lower()
-        if not q:
-            # Reset to stock overview for kline_daily
-            if self._dc_selected_table and self._dc_selected_table['name'] == 'kline_daily':
-                item = self.dc_list.currentItem()
-                if not item:
-                    return
-                self.on_dc_select(self.dc_list.currentItem())
-                return
-            self._fill_dc_table(self._dc_rows, self._dc_cols)
-            return
-        # For kline_daily: query all data for matching stock
-        if self._dc_selected_table and self._dc_selected_table['name'] == 'kline_daily':
-            code_q = q.upper()
-            conn = sqlite3.connect(self._dc_selected_table['db_path'])
-            rows = conn.execute('SELECT * FROM kline_daily WHERE code=? ORDER BY date',
-                               (code_q,)).fetchall()
-            cols_str = [d[0] for d in conn.description] if conn.description else []
-            conn.close()
-            self._dc_rows = rows
-            self._dc_cols = cols_str
-            self._fill_dc_table(rows, cols_str)
-            self.status.showMessage('个股代码 %s | %d 条K线' % (code_q, len(rows)))
-            return
-        # Default: in-memory filter
-        filtered = [row for row in self._dc_rows if any(str(v).lower().find(q) >= 0 for v in row if v is not None)]
-        self._fill_dc_table(filtered, self._dc_cols)
-        fmt = '%s | 过滤: %d/%s 行'
-        self.status.showMessage(fmt % (self._dc_selected_table['name'], len(filtered), '{:,}'.format(len(self._dc_rows))))
-
-    # === K-line ===
+    # ─── K-line ───
     def open_kline(self, code, name):
         try:
             self.k_search.setText(f'{name} ({code})')
             self.status.showMessage(f"加载 {name}({code}) K线...")
-            self.right_stack.setCurrentIndex(0)
-            self._kline_worker = ApiThread(f"{API}/api/kline?code={code}&days=180", "kline")
+            def _load_kline(c):
+                from data_manager import get_kline_data
+                from indicators import enrich_kline
+                kd = get_kline_data(c, 180)
+                if not kd:
+                    return {"code": -1, "error": "无数据"}
+                enriched = enrich_kline(kd)
+                return {"code": 0, "data": enriched}
+            self._kline_worker = LocalWorker(_load_kline, "kline", args=[code])
             self._kline_worker.result.connect(self._on_kline_data)
             self._kline_worker.start()
         except Exception as e:
@@ -768,51 +760,7 @@ class DesktopApp(QMainWindow):
         else:
             self.status.showMessage(f'未找到: {text}')
 
-    # === Helpers ===
-    def _fill_stock_table(self, table, data, with_rank=False, with_price=False, with_score=False):
-        cols = []
-        if with_rank:
-            cols.append("#")
-        cols += ["代码", "名称"]
-        if with_price:
-            cols.append("价格")
-        cols.append("涨跌幅")
-        if with_score:
-            cols.append("评分")
-
-        table.setRowCount(len(data))
-        table.setColumnCount(len(cols))
-        table.setHorizontalHeaderLabels(cols)
-
-        for i, s in enumerate(data):
-            col_idx = 0
-            if with_rank:
-                table.setItem(i, col_idx, QTableWidgetItem(str(i + 1)))
-                col_idx += 1
-            table.setItem(i, col_idx, QTableWidgetItem(s.get("code", "")))
-            col_idx += 1
-            table.setItem(i, col_idx, QTableWidgetItem(s.get("name", "")))
-            col_idx += 1
-            if with_price:
-                table.setItem(i, col_idx, QTableWidgetItem(f"{s.get('price', 0):.2f}"))
-                col_idx += 1
-            chg = s.get("change_pct", 0)
-            chg_item = QTableWidgetItem(f"{'+'if chg>=0 else ''}{chg:.2f}%")
-            chg_item.setForeground(QColor("#E54D2E" if chg >= 0 else "#3fb950"))
-            table.setItem(i, col_idx, chg_item)
-            col_idx += 1
-            if with_score:
-                sc = s.get("score", "--")
-                score_item = QTableWidgetItem(str(sc) if sc is not None else "--")
-                table.setItem(i, col_idx, score_item)
-                col_idx += 1
-        table.resizeColumnsToContents()
-        table.setColumnWidth(1, 60)
-        table.setColumnWidth(2, 100)
-
-
     def _switch_kline_indicator(self, ind_type):
-        """Switch sub-indicator for K-line chart."""
         self.kline_chart.switch_indicator(ind_type)
         self.k_btn_macd.setChecked(ind_type == "macd")
         self.k_btn_rsi.setChecked(ind_type == "rsi")
@@ -827,10 +775,8 @@ class DesktopApp(QMainWindow):
 
 if __name__ == "__main__":
     if "-h" in sys.argv or "--help" in sys.argv:
-        print("叶瞬光量化选股 桌面端 v3.0 (本地模式)")
+        print("YeLight 量化选股 v4.0")
         print("启动: python desktop_app.py")
-        print("启动后点击导航栏加载数据，所有数据走本地 kline.db")
-        print("依赖: PyQt5, matplotlib, numpy, data/kline.db")
         sys.exit(0)
     try:
         app = QApplication(sys.argv)
