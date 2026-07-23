@@ -6,7 +6,6 @@ Handles frozen path setup before launching PlatformShell.
 
 import sys, os, traceback
 
-# ── Path setup for frozen mode ──
 if getattr(sys, 'frozen', False):
     BASE = sys._MEIPASS
     EXE_DIR = os.path.dirname(sys.executable)
@@ -27,12 +26,18 @@ LOG_PATH = os.path.join(EXE_DIR, "error.log")
 if __name__ == "__main__":
     try:
         from PyQt5.QtWidgets import QApplication, QStyleFactory
-        from frontend.platform.theme import STYLE
+        from PyQt5.QtGui import QFont
+        from frontend.platform.theme import build_style
         from frontend.platform.platform_shell import PlatformShell
+        from frontend.plugins.settings.config import load_settings
+
+        settings = load_settings()
+        font_size = settings.get("font_size", 13)
 
         app = QApplication(sys.argv)
         app.setStyle(QStyleFactory.create("fusion"))
-        app.setStyleSheet(STYLE)
+        app.setStyleSheet(build_style(font_size))
+        app.setFont(QFont("Microsoft YaHei", font_size))
         w = PlatformShell()
         w.show()
         sys.exit(app.exec_())

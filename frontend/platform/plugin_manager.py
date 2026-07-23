@@ -194,7 +194,8 @@ class PluginManager:
         for pid in self._nav_order:
             if pid in self._plugins:
                 p = self._plugins[pid]
-                items.append((pid, p.name, p.icon, p.region))
+                if p.region != PluginRegion.TOPBAR:
+                    items.append((pid, p.name, p.icon, p.region))
         return items
 
     def activate(self, plugin_id: str):

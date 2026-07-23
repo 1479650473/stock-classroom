@@ -22,6 +22,7 @@ class PlatformBus(QObject):
     log_message = pyqtSignal(str)
     refresh_current = pyqtSignal()
     data_update_progress = pyqtSignal(str, object)
+    settings_changed = pyqtSignal(dict)
 
 
 @dataclass

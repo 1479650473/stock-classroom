@@ -1,7 +1,34 @@
 # -*- coding: utf-8 -*-
 """Global stylesheet and color constants for stock-classroom."""
 
-STYLE = """
+FONT_BASE = 13
+
+
+def fs(size: int) -> str:
+    """Return scaled CSS font-size string, e.g. fs(13) -> '13px'."""
+    scaled = round(size * FONT_BASE / 13)
+    return f"{scaled}px"
+
+
+def fsi(size: int) -> int:
+    """Return scaled font-size as integer (for QFont use)."""
+    return round(size * FONT_BASE / 13)
+
+
+def build_style(base_fs: int = 13) -> str:
+    """Build the global QSS stylesheet with given base font-size."""
+    global FONT_BASE
+    FONT_BASE = base_fs
+
+    scale = base_fs / 13
+    s = _TEMPLATE
+    for sz in range(8, 37):
+        scaled = round(sz * scale)
+        s = s.replace(f"$fs{sz}", f"{scaled}px")
+    return s
+
+
+_TEMPLATE = """
 /* ============================================================
    stock-classroom — Premium Dark Theme
    ============================================================ */
@@ -9,7 +36,7 @@ QMainWindow, QWidget {
     background-color: #0D1117;
     color: #E6EDF3;
     font-family: "Segoe UI", "Microsoft YaHei";
-    font-size: 13px;
+    font-size: $fs13;
 }
 /* ── Cards ── */
 QFrame#card {
@@ -67,7 +94,7 @@ QHeaderView::section {
     border-bottom: 2px solid #21262D;
     padding: 6px 10px;
     font-weight: 600;
-    font-size: 12px;
+    font-size: $fs12;
 }
 QHeaderView::section:horizontal {
     border-right: 1px solid #1A1F28;
@@ -80,7 +107,7 @@ QLineEdit {
     border: 1px solid #30363D;
     border-radius: 6px;
     padding: 6px 14px;
-    font-size: 12px;
+    font-size: $fs12;
 }
 QLineEdit:focus {
     border-color: #D4A574;
@@ -96,7 +123,7 @@ QPushButton {
     border: 1px solid #30363D;
     border-radius: 6px;
     padding: 5px 16px;
-    font-size: 12px;
+    font-size: $fs12;
 }
 QPushButton:hover {
     background: #252A35;
@@ -128,7 +155,7 @@ QPushButton#navBtn {
     border: none;
     border-radius: 6px;
     padding: 8px 12px;
-    font-size: 14px;
+    font-size: $fs14;
     text-align: left;
 }
 QPushButton#navBtn:hover {
@@ -148,7 +175,7 @@ QPushButton#indBtn {
     border: 1px solid #30363D;
     border-radius: 4px;
     padding: 3px 14px;
-    font-size: 12px;
+    font-size: $fs12;
 }
 QPushButton#indBtn:checked {
     background: rgba(212, 165, 116, 0.10);
@@ -159,7 +186,7 @@ QPushButton#indBtn:checked {
 /* ── CheckBox ── */
 QCheckBox {
     color: #8B949E;
-    font-size: 12px;
+    font-size: $fs12;
     spacing: 6px;
 }
 QCheckBox::indicator {
@@ -184,6 +211,7 @@ QComboBox {
     border: 1px solid #30363D;
     border-radius: 6px;
     padding: 4px 10px;
+    font-size: $fs12;
 }
 QComboBox:hover { border-color: #484F58; }
 QComboBox::drop-down { border: none; width: 24px; }
@@ -261,7 +289,7 @@ QToolTip {
     border: 1px solid #30363D;
     border-radius: 6px;
     padding: 6px 10px;
-    font-size: 11px;
+    font-size: $fs11;
 }
 
 /* ── Splitter ── */
@@ -275,7 +303,7 @@ QStatusBar {
     background: #161B22;
     color: #8B949E;
     border-top: 1px solid #21262D;
-    font-size: 11px;
+    font-size: $fs11;
     padding: 2px 12px;
 }
 
@@ -283,7 +311,25 @@ QStatusBar {
 QScrollArea {
     border: none;
 }
+
+/* ── Settings Button ── */
+QPushButton#settingsBtn {
+    background: transparent;
+    color: #8B949E;
+    border: none;
+    border-radius: 6px;
+    font-size: $fs16;
+    padding: 2px 6px;
+}
+QPushButton#settingsBtn:hover {
+    background: #1C2128;
+    color: #C9D1D9;
+}
 """
+
+# Default style (built once at import)
+STYLE = build_style(13)
+
 
 COLORS = {
     "bg": "#0D1117",
