@@ -490,6 +490,20 @@ def ak_get_etf_list() -> List[Dict]:
 #  数据源诊断
 # ══════════════════════════════════════════════════════════════
 
+def _diagnose_limit_up():
+    from datetime import datetime
+    return ak.stock_zt_pool_em(date=datetime.now().strftime("%Y%m%d"))
+
+
+def _diagnose_lhb_detail():
+    from datetime import datetime, timedelta
+    today = datetime.now()
+    return ak.stock_lhb_detail_em(
+        start_date=(today - timedelta(days=3)).strftime("%Y%m%d"),
+        end_date=today.strftime("%Y%m%d"),
+    )
+
+
 def diagnose_akshare() -> dict:
     """诊断 AKShare 各个接口可用性"""
     import time
@@ -504,6 +518,11 @@ def diagnose_akshare() -> dict:
         "stock_hist": lambda: ak.stock_zh_a_hist(symbol="000001", period="daily", start_date="20260701", end_date="20260705", adjust="qfq"),
         "news": lambda: ak.stock_news_em(symbol="000001"),
         "gdhs": lambda: ak.stock_zh_a_gdhs(symbol="000001"),
+        "limit_up": lambda: _diagnose_limit_up(),
+        "lhb": lambda: ak.stock_lhb_stock_statistic_em(symbol="近一月"),
+        "high_low": lambda: ak.stock_a_high_low_statistics(symbol="all"),
+        "fund_flow": lambda: ak.stock_individual_fund_flow_rank(indicator="今日"),
+        "lhb_detail": lambda: _diagnose_lhb_detail(),
     }
     for name, fn in tests.items():
         t0 = time.time()

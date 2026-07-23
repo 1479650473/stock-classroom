@@ -19,16 +19,20 @@ C_GREEN = "#3fb950"
 C_RED = "#EF5350"
 
 API_LIST = [
-    ("stock_zh_a_daily", "日K线"),
-    ("stock_zh_a_spot_em", "实时行情"),
-    ("stock_board_industry_name_em", "行业板块"),
-    ("stock_board_concept_name_em", "概念板块"),
-    ("stock_hsgt_hist_em", "北向资金"),
-    ("stock_zt_pool_em", "涨停板"),
-    ("stock_lhb_stock_statistic_em", "龙虎榜"),
-    ("stock_a_high_low_statistics", "创新高/低"),
-    ("stock_individual_fund_flow_rank", "资金流向"),
-    ("stock_lhb_detail_em", "龙虎榜详情"),
+    ("spot",        "实时行情"),
+    ("index",       "指数行情"),
+    ("industry",    "行业板块"),
+    ("concept",     "概念板块"),
+    ("north_flow",  "北向资金"),
+    ("stock_hist",  "日K线"),
+    ("news",        "个股新闻"),
+    ("gdhs",        "股东户数"),
+    ("etf",         "ETF行情"),
+    ("limit_up",    "涨停板"),
+    ("lhb",         "龙虎榜统计"),
+    ("high_low",    "创新高/低"),
+    ("fund_flow",   "资金流向"),
+    ("lhb_detail",  "龙虎榜详情"),
 ]
 
 
