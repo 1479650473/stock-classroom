@@ -1,0 +1,12 @@
+{
+  "nav_order": [
+    "search",
+    "market",
+    "picks",
+    "holdings",
+    "datacenter",
+    "kline"
+  ],
+  "default_left": "market",
+  "default_right": "kline"
+}

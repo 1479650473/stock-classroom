@@ -1,12 +1,13 @@
-﻿# 叶瞬光量化选股系统 — 对话提示词
+﻿# stock-classroom — 对话提示词
 
 > 项目路径: `D:\小光工作区\projects\stock-classroom`
-> 版本: v3.2 | 最后更新: 2026-07-21
+> 版本: v4.0 | 最后更新: 2026-07-23
 
 ## 项目概述
 
-A 股量化选股桌面应用。Flask 后端 + PyQt5 桌面端 + SQLite 双库架构。
-桌面端 v3.2 纯本地运行，零 HTTP 依赖。当前使用 **YeLight 暗色主题** (#0D1117 / #161B22 / #D4A574)。
+A 股量化选股桌面应用。**v4.0 插件化架构**：平台骨架独立运行，功能模块以插件形式挂载。单插件崩溃不影响全局。
+Flask 后端 (可选 API 桥) + PyQt5 桌面端 + SQLite 双库架构。
+桌面端入口: `desktop_app.py` (启动器, ~30行)，平台壳: `frontend/platform/platform_shell.py`。
 
 ### 核心功能
 - 三大指数实时行情 + K 线图 (MA5/10/20/60 + MAVOL5, MACD/RSI, 十字光标+信息卡片)
@@ -43,16 +44,16 @@ kline_daily 按年份拆分为 27 张分年表, 通过 UNION ALL 视图兼容旧
 
 ```bash
 # 桌面端一键启动 (纯本地, 无需 Flask)
-python run_desktop.py
+python desktop_app.py
 
-# Flask API 服务器 (可选, 桌面端 v3.2 已不依赖)
+# Flask API 服务器 (可选, 桌面端 v4.0 已不依赖)
 # python run_server.py
 ```
 
 ## 核心架构
 
 ```
-PyQt5 Desktop (desktop_app.py)  --  v3.2 纯本地, 零 HTTP
+PyQt5 Desktop (desktop_app.py)  --  v4.0 插件架构, 纯本地, 零 HTTP
   +-- QHBoxLayout (全局)
   |   +-- 左侧 72px 竖排导航 (market/picks/holdings/dc)
   |   +-- 右侧主区域
@@ -102,7 +103,7 @@ Flask API (backend/app.py, 26 路由) 仅作为外部接口保留，桌面端不
 | GET /diagnose_akshare | AKShare 连通性诊断 |
 | GET / | 静态首页 |
 
-桌面端 v3.2 不依赖任何 HTTP 路由。
+桌面端 v4.0 不依赖任何 HTTP 路由。
 
 ## 当前状态 (2026-07-21 更新)
 
@@ -113,7 +114,7 @@ Flask API (backend/app.py, 26 路由) 仅作为外部接口保留，桌面端不
 - [x] 多因子选股: 43因子 + DSL 条件引擎, 外置 JSON 评分卡
 - [x] 筹码分布: JS 引擎本地计算 (py_mini_racer)
 - [x] 自动维护: daily_maintenance.py, 18:00 触发
-- [x] **全局主题升级**: Caffeine → YeLight 暗色 (#0D1117/#161B22/#D4A574), 6 文件同步
+- [x] **全局主题升级**: Caffeine → 暗色 (#0D1117/#161B22/#D4A574), 6 文件同步
 - [x] **K线本地化**: 桌面端 K线/评分/筹码全部直调本地, 零 HTTP 依赖, 8ms 出图
 - [x] **日志终端**: LogStream/LogWindow stdout/stderr 重定向
 - [x] **dc_panel 优化**: 线程安全、表头排序、底部统计栏
@@ -129,7 +130,7 @@ Flask API (backend/app.py, 26 路由) 仅作为外部接口保留，桌面端不
 4. [x] 评分引擎统一 — Flask API 端已使用 FactorScorer
 5. [x] data_lhb.py 集成 — 龙虎榜详情已集成到 daily_maintenance.py 和 app.py
 6. [x] K线旧代码清理 — matplotlib/pyqtgraph 旧文件已移除
-7. [x] 全局主题升级 — Caffeine → YeLight, 6 文件同步
+7. [x] 全局主题升级 — Caffeine → 暗色, 6 文件同步
 8. [x] K线本地化 — 桌面端零 HTTP 依赖
 9. [x] 日志终端 — LogStream/LogWindow 实现
 10. 持仓管理 — 对接数据库持久化 (当前 DUMMY_HOLDS)
@@ -145,15 +146,35 @@ Flask API (backend/app.py, 26 路由) 仅作为外部接口保留，桌面端不
 
 ## 关键文件速查
 
+### 平台核心 (v4.0)
+
 | 文件 | 说明 |
 |------|------|
-| desktop_app.py | 主窗口 (STYLE全局样式 / 布局 / LogStream/LogWindow / LocalWorker) |
+| desktop_app.py | 启动入口 (~30行), 不 import 任何 panel |
+| frontend/platform/platform_shell.py | 平台骨架 QMainWindow (~200行), 顶栏+导航+双栈+状态栏+水印 |
+| frontend/platform/plugin_base.py | IPlugin 接口 + PlatformServices + PlatformBus 信号总线 |
+| frontend/platform/plugin_manager.py | 插件发现/注册/激活/ErrorBoundary 错误隔离 |
+| frontend/platform/theme.py | 全局 STYLE 样式表 + COLORS 配色 |
+| frontend/platform/log_window.py | LogStream/LogWindow 日志终端 |
+| frontend/platform/local_worker.py | 统一后台线程 QThread |
+
+### 插件 (v4.0)
+
+| 文件 | 区域 | 说明 |
+|------|------|------|
+| frontend/plugins/search/plugin.py | TOPBAR | 搜索框 |
+| frontend/plugins/market/plugin.py | LEFT | 市场面板 |
+| frontend/plugins/picks/plugin.py | LEFT | 选股面板 |
+| frontend/plugins/holdings/plugin.py | LEFT | 持仓面板 |
+| frontend/plugins/datacenter/plugin.py | LEFT | 数据中心面板 |
+| frontend/plugins/kline/plugin.py | RIGHT | K线图 + 指标切换 |
+| frontend/plugins/plugins.json | -- | 配置: 导航顺序 + 默认激活 |
+
+### 后端
+
+| 文件 | 说明 |
+|------|------|
 | backend/data_manager.py | SQLite 写操作 + cache_cyq_chip_data + build_weekly_kline |
 | backend/akshare_source.py | 数据源封装 + ak_get_cyq_chip_data + diagnose_akshare |
-| frontend/kline_widget.py | K线图 (QPainter原生, 60fps, v3.2 11配色常量) |
-| frontend/panels/dc_panel.py | 数据中心 (QTreeWidget + QStackedWidget 双模式, 线程安全, 表头排序) |
-| frontend/panels/market_panel.py | 市场面板 (指数卡片 + 板块按钮) |
-| frontend/panels/picks_panel.py | 选股面板 (因子评分, 三级 badge) |
-| frontend/panels/holdings_panel.py | 持仓面板 (摘要卡片 + 明细) |
+| frontend/plugins/kline/widget.py | K线 QPainter 绘图组件 (被 kline 插件引用) |
 | frontend/cyq_calculator.js | 筹码分布 JS 引擎 |
-| scripts/daily_maintenance.py | 全量维护 (每日 18:00 触发) |

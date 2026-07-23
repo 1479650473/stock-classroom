@@ -1,5 +1,5 @@
 # stock-classroom 依赖清单
-# 自动生成 2026-07-08 | Python 3.14.3
+# 自动生成 2026-07-08 | 更新 2026-07-23 | Python 3.14.3
 #
 # 安装方式：
 #   pip install -r requirements.txt
@@ -9,12 +9,13 @@
 # 核心运行时（必须）
 flask==3.0.0
 flask-cors==4.0.0
+PyQt5>=5.15
+PyQt5-sip>=12.15
 akshare==1.18.64
 pandas==3.0.1
-numpy==2.4.2
 requests==2.32.5
+py_mini_racer
 
-# 开发/回测（可选）
-backtesting==0.6.5
-matplotlib==3.10.8
-scipy==1.17.1
+# 可选（仅历史代码引用）
+# matplotlib==3.10.8
+# numpy==2.4.2

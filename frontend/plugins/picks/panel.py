@@ -3,7 +3,7 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QCheckBox, QPushButton)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QFont
-from .local_worker import LocalWorker
+from frontend.platform.local_worker import LocalWorker
 
 _ENGINE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "backend")
 if _ENGINE_DIR not in sys.path:

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""叶瞬光量化选股系统 - Flask API
+"""stock-classroom - Flask API
 Flask + SQLite + AKShare（主）+ 新浪（fallback）
 12 个路由，数据源架构：AKShare -> 新浪兜底 -> SQLite缓存
 """
@@ -411,7 +411,7 @@ def api_db_monitor():
     cs = _os.path.getsize(cbp) / 1048576 if _os.path.exists(cbp) else 0
     return jsonify({"code":0,"data":{"table_stats":ts,"db_sizes":{"kline_db_mb":round(ks,1),"cache_db_mb":round(cs,1)},"cache":{"spot_count":ts.get("stock_spot",0),"spot_updated":spot_u[0] if spot_u and spot_u[0] else None,"sector_count":ts.get("sector_data",0),"sector_updated":sec_u[0] if sec_u and sec_u[0] else None,"north_count":ts.get("north_flow",0),"north_updated":north_u[0] if north_u and north_u[0] else None}}})
 if __name__ == "__main__":
-    print("[Backend] 叶瞬光量化选股系统 v2 启动...")
+    print("[Backend] stock-classroom v3.2 启动...")
     print("[Backend] 数据源: AKShare (主) + 新浪 (fallback)")
     print("[Backend] 地址: http://127.0.0.1:5000")
     print("[Backend] 新增路由: /api/market/all-index /api/market/sectors /api/market/north-flow /api/market/etf /api/news /api/diagnose")

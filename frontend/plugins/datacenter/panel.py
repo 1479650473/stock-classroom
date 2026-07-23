@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QListWidget, QListWidgetItem)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QFont
-from .local_worker import LocalWorker
+from frontend.platform.local_worker import LocalWorker
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "data")
 

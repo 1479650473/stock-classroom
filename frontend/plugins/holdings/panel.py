@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QFont
-from .local_worker import LocalWorker
+from frontend.platform.local_worker import LocalWorker
 
 
 C_BG = "#0D1117"
