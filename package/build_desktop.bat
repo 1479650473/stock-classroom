@@ -44,6 +44,8 @@ echo [2/3] Building (5-8 minutes)...
   --hidden-import backend.factor_engine.models ^
   --hidden-import backend.factor_engine.dsl ^
   --hidden-import backend.factor_engine.filters ^
+  --hidden-import backend.cache_modules ^
+  --hidden-import backend.data_lhb ^
   --exclude-module matplotlib ^
   --exclude-module scipy ^
   --exclude-module backtesting ^
