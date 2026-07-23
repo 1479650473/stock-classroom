@@ -34,6 +34,7 @@ class DCPanel(QWidget):
         self.db_path = None
         self.cache_path = None
         self.on_status = None
+        self.on_table_selected = None
         self._dc_tables = []
         self._dc_rows = []
         self._dc_cols = []
@@ -310,6 +311,11 @@ class DCPanel(QWidget):
         self._sort_asc = True
         self.search.clear()
         self._load_table_data(t)
+        if self.on_table_selected:
+            try:
+                self.on_table_selected(t)
+            except Exception:
+                pass
 
     def _load_table_data(self, t):
         try:

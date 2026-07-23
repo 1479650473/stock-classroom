@@ -242,34 +242,52 @@ class PlatformShell(QMainWindow):
 
         region = plugin.region
 
-        # Update nav button states
         for pid, btn in self._nav_btns.items():
             btn.setChecked(pid == plugin_id)
 
-        # TOPBAR widgets are always shown, no stack needed
         if region == PluginRegion.TOPBAR:
             return
 
-        # Activate in PluginManager (handles deactivation + error wrapping)
         self._plugin_mgr.activate(plugin_id)
 
-        # Get the error-wrapped widget
         boundary = self._plugin_mgr.get_widget(plugin_id)
         if not boundary:
             return
 
-        # Place in correct stack
         if region == PluginRegion.LEFT:
-            stack = self._left_stack
+            self._place_in_stack(boundary, self._left_stack)
+            self._route_companion(plugin)
         else:
-            stack = self._right_stack
+            self._place_in_stack(boundary, self._right_stack)
 
+    def _place_in_stack(self, widget, stack):
         for i in range(stack.count()):
-            if stack.widget(i) is boundary:
+            if stack.widget(i) is widget:
                 stack.setCurrentIndex(i)
                 return
-        stack.addWidget(boundary)
-        stack.setCurrentWidget(boundary)
+        stack.addWidget(widget)
+        stack.setCurrentWidget(widget)
+
+    def _route_companion(self, plugin):
+        companion = None
+        try:
+            companion = plugin.create_companion_widget()
+        except Exception:
+            companion = None
+
+        if companion is not None:
+            self._place_in_stack(companion, self._right_stack)
+            return
+
+        default_right = {}
+        if os.path.exists(CONFIG_PATH):
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                default_right = json.load(f)
+        right_id = default_right.get("default_right", "kline")
+        self._plugin_mgr.activate(right_id)
+        boundary = self._plugin_mgr.get_widget(right_id)
+        if boundary:
+            self._place_in_stack(boundary, self._right_stack)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

@@ -97,3 +97,8 @@ class IPlugin(ABC):
     def refresh(self):
         """Refresh data on demand."""
         pass
+
+    def create_companion_widget(self) -> "QWidget | None":
+        """Optional companion widget shown in right panel when this plugin is active.
+        Return None to keep the default right behaviour (e.g. K-line chart)."""
+        return None
