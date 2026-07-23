@@ -103,6 +103,33 @@ class PluginManager:
 
     def discover(self, scan_dir: str):
         """Scan scan_dir for plugin packages and instantiate them."""
+        if getattr(sys, 'frozen', False):
+            self._discover_frozen()
+        else:
+            self._discover_dev(scan_dir)
+
+    def _discover_frozen(self):
+        """Frozen mode: import plugins by their known module paths from nav_order."""
+        for pid in self._nav_order:
+            module_name = f"frontend.plugins.{pid}.plugin"
+            try:
+                mod = __import__(module_name, fromlist=["*"])
+                for name in dir(mod):
+                    obj = getattr(mod, name)
+                    if (
+                        isinstance(obj, type)
+                        and issubclass(obj, IPlugin)
+                        and obj is not IPlugin
+                    ):
+                        inst = obj()
+                        self.register(inst)
+                        break
+            except Exception as e:
+                traceback.print_exc()
+                print(f"[PluginManager] Failed to load frozen plugin '{pid}': {e}")
+
+    def _discover_dev(self, scan_dir: str):
+        """Dev mode: scan plugin directories on filesystem."""
         if not os.path.isdir(scan_dir):
             return
 

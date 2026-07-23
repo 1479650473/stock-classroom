@@ -15,10 +15,15 @@ from .plugin_base import PlatformBus, PlatformServices, PluginRegion
 from .plugin_manager import PluginManager
 
 
-PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if getattr(sys, 'frozen', False):
+    _APP_DIR = sys._MEIPASS
+    PROJECT_DIR = os.path.dirname(sys.executable)
+else:
+    _APP_DIR = PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 KLINE_DB = os.path.join(PROJECT_DIR, "data", "kline.db")
 CACHE_DB = os.path.join(PROJECT_DIR, "data", "stock_cache.db")
-PLUGINS_DIR = os.path.join(PROJECT_DIR, "frontend", "plugins")
+PLUGINS_DIR = os.path.join(_APP_DIR, "frontend", "plugins")
 CONFIG_PATH = os.path.join(PLUGINS_DIR, "plugins.json")
 
 
@@ -30,6 +35,17 @@ class PlatformShell(QMainWindow):
         self.setWindowTitle("stock-classroom")
         self.setGeometry(50, 20, 1500, 920)
         self.setMinimumSize(1100, 700)
+
+        # ── Ensure data dir exists ──
+        os.makedirs(os.path.join(PROJECT_DIR, "data"), exist_ok=True)
+
+        # ── Frozen mode: ensure backend on sys.path ──
+        if getattr(sys, 'frozen', False):
+            be = os.path.join(_APP_DIR, "backend")
+            if be not in sys.path:
+                sys.path.insert(0, be)
+            if _APP_DIR not in sys.path:
+                sys.path.insert(0, _APP_DIR)
 
         # ── Log terminal ──
         self._log_window = LogWindow()
