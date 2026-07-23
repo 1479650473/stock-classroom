@@ -1,11 +1,11 @@
 ﻿# stock-classroom — 对话提示词
 
 > 项目路径: `D:\小光工作区\projects\stock-classroom`
-> 版本: v4.0 | 最后更新: 2026-07-23
+> 版本: v4.1 | 最后更新: 2026-07-24
 
 ## 项目概述
 
-A 股量化选股桌面应用。**v4.0 插件化架构**：平台骨架独立运行，功能模块以插件形式挂载。单插件崩溃不影响全局。
+A 股量化选股桌面应用。**v4.1 插件化架构**：平台骨架独立运行，功能模块以插件形式挂载，含 AI 助手、设置面板、数据管道、伴侣面板。单插件崩溃不影响全局。
 Flask 后端 (可选 API 桥) + PyQt5 桌面端 + SQLite 双库架构。
 桌面端入口: `desktop_app.py` (启动器, ~30行)，平台壳: `frontend/platform/platform_shell.py`。
 
@@ -57,7 +57,7 @@ PyQt5 Desktop (desktop_app.py)  --  v4.0 插件架构, 纯本地, 零 HTTP
   +-- QHBoxLayout (全局)
   |   +-- 左侧 72px 竖排导航 (market/picks/holdings/dc)
   |   +-- 右侧主区域
-  |       +-- 顶栏: 品牌 + 搜索 + 日志按钮 + 在线状态
+  |       +-- 顶栏: 品牌 + 搜索 + 设置 ⚙ + AI助手 ⭐ + 日志按钮 + 在线状态
   |       +-- QSplitter: 左面板 QStackedWidget (4页) + 右面板 KlineWidget
   |       +-- 状态栏: 指标切换 + 股票名
   |       +-- LogWindow (切换显示, stdout/stderr 重定向)
@@ -154,21 +154,26 @@ Flask API (backend/app.py, 26 路由) 仅作为外部接口保留，桌面端不
 | frontend/platform/platform_shell.py | 平台骨架 QMainWindow (~200行), 顶栏+导航+双栈+状态栏+水印 |
 | frontend/platform/plugin_base.py | IPlugin 接口 + PlatformServices + PlatformBus 信号总线 |
 | frontend/platform/plugin_manager.py | 插件发现/注册/激活/ErrorBoundary 错误隔离 |
-| frontend/platform/theme.py | 全局 STYLE 样式表 + COLORS 配色 |
+| frontend/platform/theme.py | 全局 STYLE 样式表 + COLORS 配色 + `build_style()` + `fs()` |
 | frontend/platform/log_window.py | LogStream/LogWindow 日志终端 |
 | frontend/platform/local_worker.py | 统一后台线程 QThread |
+| frontend/plugins/settings/config.py | `load_settings()` / `save_settings()` → `backend/configs/settings.json` |
+| backend/configs/settings.json | `font_size` + `agent{api_base, api_key, model}` |
 
 ### 插件 (v4.0)
 
 | 文件 | 区域 | 说明 |
 |------|------|------|
 | frontend/plugins/search/plugin.py | TOPBAR | 搜索框 |
+| frontend/plugins/settings/plugin.py | TOPBAR | 设置面板 (字体+AI配置) |
+| frontend/plugins/agent/plugin.py | TOPBAR | AI助手浮动聊天窗 |
 | frontend/plugins/market/plugin.py | LEFT | 市场面板 |
 | frontend/plugins/picks/plugin.py | LEFT | 选股面板 |
 | frontend/plugins/holdings/plugin.py | LEFT | 持仓面板 |
+| frontend/plugins/datapipeline/plugin.py | LEFT | 数据管道面板 |
 | frontend/plugins/datacenter/plugin.py | LEFT | 数据中心面板 |
 | frontend/plugins/kline/plugin.py | RIGHT | K线图 + 指标切换 |
-| frontend/plugins/plugins.json | -- | 配置: 导航顺序 + 默认激活 |
+| frontend/plugins/plugins.json | -- | 导航顺序 + 默认激活 |
 
 ### 后端
 

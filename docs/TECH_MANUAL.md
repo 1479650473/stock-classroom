@@ -1,14 +1,14 @@
 ﻿# stock-classroom — 技术手册
 
 > 项目路径: `D:\小光工作区\projects\stock-classroom`
-> 版本: v4.0 | 最后更新: 2026-07-23
+> 版本: v4.1 | 最后更新: 2026-07-24
 > 主题: 暗色 (#0D1117 / #161B22 / #D4A574)
 
 ---
 
 ## 一、项目概述
 
-A 股量化选股桌面应用。v4.0 重构为**插件化架构**：平台骨架独立运行，所有功能模块以插件形式挂载，单插件崩溃不影响全局。
+A 股量化选股桌面应用。v4.1 在插件化架构上扩展了**AI 助手**、**设置面板**、**数据管道**和**伴侣面板**机制。平台骨架独立运行，功能模块以插件形式挂载，单插件崩溃不影响全局。
 
 桌面端入口: `desktop_app.py` (启动器 30 行)，平台壳: `frontend/platform/platform_shell.py`。
 Flask API 入口: `run_server.py` (可选，桌面端直连 SQLite 不依赖)。
@@ -35,7 +35,7 @@ v4.0 从"上帝类"重构为**插件化平台架构**。`PlatformShell` (~200行
 
 ```
 PlatformShell (platform_shell.py)
-├─ TopBar: Brand │ [TOPBAR slot: SearchPlugin] │ 刷新 │ 日志
+├─ TopBar: Brand │ [TOPBAR: SearchPlugin] [SettingsPlugin ⚙] [AgentPlugin ⭐] │ 刷新 │ 日志
 ├─ 左侧导航栏 (72px, 动态生成, icon+文字竖排)
 │   📊市场  🔍选股  📦持仓  🗄数据  📈K线
 ├─ QSplitter
@@ -52,11 +52,14 @@ PlatformShell (platform_shell.py)
 | 插件ID | 显示名 | 图标 | 区域 | 面板文件 | 说明 |
 |--------|--------|------|------|----------|------|
 | search | 搜索 | 🔎 | TOPBAR | `plugins/search/plugin.py` | 顶栏搜索框，Enter 搜索股票 |
-| market | 市场 | 📊 | LEFT | `plugins/market/plugin.py` → `panels/market_panel.py` | 大盘指数 + 板块 |
-| picks | 选股 | 🔍 | LEFT | `plugins/picks/plugin.py` → `panels/picks_panel.py` | 43因子评分 |
-| holdings | 持仓 | 📦 | LEFT | `plugins/holdings/plugin.py` → `panels/holdings_panel.py` | 模拟持仓 |
-| datacenter | 数据 | 🗄 | LEFT | `plugins/datacenter/plugin.py` → `panels/dc_panel.py` | 表浏览 + 股票分层 |
-| kline | K线 | 📈 | RIGHT | `plugins/kline/plugin.py` + `kline_widget.py` | K线图 + 指标切换 |
+| settings | 设置 | ⚙ | TOPBAR | `plugins/settings/plugin.py` → `dialog.py` | 字体大小 + AI 供应商配置 |
+| agent | AI助手 | ⭐ | TOPBAR | `plugins/agent/plugin.py` → `chat_window.py` | 浮动 AI 聊天窗 (DeepSeek/智谱/Kimi) |
+| market | 市场 | 📊 | LEFT | `plugins/market/plugin.py` → `panel.py` | 大盘指数 + 板块 |
+| picks | 选股 | 🔍 | LEFT | `plugins/picks/plugin.py` → `panel.py` | 43因子评分 |
+| holdings | 持仓 | 📦 | LEFT | `plugins/holdings/plugin.py` → `panel.py` | 模拟持仓 |
+| datapipeline | 数据管道 | 🔄 | LEFT | `plugins/datapipeline/plugin.py` | 10步数据更新 + 伴侣面板 |
+| datacenter | 数据中心 | 🗄 | LEFT | `plugins/datacenter/plugin.py` | 表浏览 + 股票分层 + 伴侣面板 |
+| kline | K线 | 📈 | RIGHT | `plugins/kline/plugin.py` | K线图 + 指标切换 |
 
 ### 2.3 插件系统核心文件
 
@@ -123,6 +126,45 @@ PlatformShell (platform_shell.py)
 全局字号: 基准 13px，导航 14px，表头/标签 12px，K线坐标轴 9pt，日志终端 11px。
 
 含完整 ScrollBar、Tooltip、QHeaderView、QLineEdit、QCheckBox、QComboBox 等控件全面样式覆盖。
+
+### 2.8 动态主题 (v4.1)
+
+`theme.py` 使用 `build_style(base_fs)` 动态生成 CSS 样式表，`$fs` 占位符在模板中被替换。`fs()` / `fsi()` 辅助函数供面板代码使用。
+
+用户在设置中切换字体大小 → `build_style(new_size)` 重新生成 → `app.setStyleSheet()` 即时生效，无需重启。
+
+### 2.9 AI 助手 (Agent 插件) — v4.1 新增
+
+`frontend/plugins/agent/` — TOPBAR ⭐ 按钮打开浮动 AI 聊天窗。
+
+| 文件 | 职责 |
+|------|------|
+| `chat_window.py` | 浮动 QDialog，对话历史、聊天气泡、Enter 发送 |
+| `llm_client.py` | 封装 openai SDK，兼容 OpenAI / Ollama / DeepSeek / 智谱 / Kimi 全部 OpenAI 兼容 API |
+| `chat_worker.py` | QThread 包装 LLM 调用，避免阻塞 UI |
+| `config.py` | 读写 `settings.json` 中 agent 配置段 |
+
+**热配置加载**: 每次 `_send()` 前调用 `load_agent_config()` 重建 `LLMClient`，设置变更无需重启聊天窗。
+
+**供应商预设** (设置面板 AI 标签页):
+
+| 供应商 | API URL | 默认模型 |
+|--------|---------|---------|
+| DeepSeek V4 Pro | `https://api.deepseek.com/v1` | `deepseek-v4-pro` |
+| DeepSeek V4 Flash | `https://api.deepseek.com/v1` | `deepseek-v4-flash` |
+| 智谱 GLM-4 Flash | `https://open.bigmodel.cn/api/paas/v4` | `glm-4-flash` |
+| Kimi K2.6 | `https://api.moonshot.cn/v1` | `kimi-k2.6` |
+
+选择供应商自动填入 URL + 模型名，填 API Key → 测试连接 → 应用即时生效。
+
+### 2.10 设置面板 (Settings 插件)
+
+`frontend/plugins/settings/` — 左导航 (QListWidget) + 右内容 (QStackedWidget)，窗口 1080×950。
+
+- **显示标签页**: 字体大小选择 (小11/中13/大15/特大17) + 实时预览
+- **AI 标签页**: 供应商下拉框 + API URL / Key / Model + 测试连接按钮
+
+配置持久化到 `backend/configs/settings.json`，启动时 `load_settings()` 加载并与 `DEFAULTS` 深合并。
 
 ---
 

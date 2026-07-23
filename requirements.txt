@@ -15,6 +15,7 @@ akshare==1.18.64
 pandas==3.0.1
 requests==2.32.5
 py_mini_racer
+openai>=1.0
 
 # 可选（仅历史代码引用）
 # matplotlib==3.10.8
