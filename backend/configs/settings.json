@@ -1,3 +1,8 @@
-﻿{
-    "font_size":  13
+{
+  "font_size": 13,
+  "agent": {
+    "api_base": "https://api.deepseek.com/v1",
+    "api_key": "sk-13e8209d486648b3b742fd9c8e1af25f",
+    "model": "deepseek-v4-pro"
+  }
 }

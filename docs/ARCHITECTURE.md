@@ -1,6 +1,6 @@
 # stock-classroom — 架构设计
 
-> 版本: v4.0 | 最后更新: 2026-07-23
+> 版本: v4.1 | 最后更新: 2026-07-24
 
 ---
 
@@ -38,12 +38,15 @@
 │   plugin_base.py  (接口协议)         │  IPlugin / PlatformServices / PlatformBus / PluginRegion
 ├──────────────────┬──────────────────┤
 │   plugins/       │   backend/       │
-│   search_        │   app.py (Flask) │
-│   market         │   data_manager   │
-│   picks          │   factor_engine  │
-│   holdings       │   indicators     │
-│   datacenter     │   akshare_source │
-│   kline          │   ...            │
+│   search         │   app.py (Flask) │
+│   settings       │   data_manager   │
+│   agent          │   factor_engine  │
+│   market         │   indicators     │
+│   picks          │   akshare_source │
+│   holdings       │   ...            │
+│   datapipeline   │                  │
+│   datacenter     │                  │
+│   kline          │                  │
 └──────────────────┴──────────────────┘
 ```
 
@@ -69,10 +72,11 @@ class IPlugin(ABC):
     icon: str            # emoji 图标，如 "📊"
     region: PluginRegion # LEFT / RIGHT / TOPBAR
 
-    def create_widget() -> QWidget   # 创建功能界面
-    def on_activate()                # tab 被选中时
-    def on_deactivate()              # tab 被切换走时
-    def refresh()                    # 刷新数据
+    def create_widget() -> QWidget       # 创建功能界面
+    def on_activate()                    # tab 被选中时
+    def on_deactivate()                  # tab 被切换走时
+    def refresh()                        # 刷新数据
+    def create_companion_widget() -> QWidget | None  # 可选：右侧伴侣面板
 ```
 
 ### 3.2 PluginRegion
@@ -81,7 +85,7 @@ class IPlugin(ABC):
 |------|------|------|
 | `LEFT` | 左侧主面板，在同一 QStackedWidget 中切换 | 市场、选股、持仓、数据中心 |
 | `RIGHT` | 右侧面板，在右侧 QStackedWidget 中切换 | K线 |
-| `TOPBAR` | 顶栏，始终可见 | 搜索框 |
+| `TOPBAR` | 顶栏，始终可见 | 搜索框、设置、AI助手 |
 
 ### 3.3 PlatformBus 信号总线
 
@@ -91,11 +95,20 @@ class PlatformBus(QObject):
     status_message = pyqtSignal(str)        # 状态栏消息
     log_message = pyqtSignal(str)           # 日志输出
     refresh_current = pyqtSignal()          # 刷新当前插件
+    data_update_progress = pyqtSignal(str, object)  # 数据更新进度
+    settings_changed = pyqtSignal(dict)     # 设置变更通知
 ```
 
 插件间通过 PlatformBus 通信，不直接引用对方。
 
-### 3.4 错误隔离 (ErrorBoundary)
+### 3.4 伴侣面板机制 (v4.1)
+
+LEFT 区域插件可通过 `create_companion_widget()` 返回一个 QWidget，平台自动路由到右侧 Stack：
+- K线插件无伴侣时，右侧回退显示默认K线
+- 数据管道插件显示 API 健康诊断 + DB 大小 + 更新统计
+- 数据中心插件显示选中表详情 + 列清单 + 日期范围
+
+### 3.5 错误隔离 (ErrorBoundary)
 
 ```python
 class ErrorBoundary(QWidget):
@@ -120,11 +133,11 @@ PluginManager.discover("frontend/plugins/")
 
 ### 4.2 导航栏顺序
 
-由 `frontend/plugins/plugins.json` 的 `nav_order` 控制：
+由 `frontend/plugins/plugins.json` 的 `nav_order` 控制。TOPBAR 区域插件不出现在导航中。
 
 ```json
 {
-  "nav_order": ["search", "market", "picks", "holdings", "datacenter", "kline"],
+  "nav_order": ["search", "settings", "agent", "market", "picks", "holdings", "datapipeline", "datacenter", "kline"],
   "default_left": "market",
   "default_right": "kline"
 }
@@ -166,6 +179,7 @@ stock-classroom/
 ├── desktop_app.py              # 启动入口 (~30行)
 ├── run_server.py               # Flask API 启动 (~7行)
 ├── start_desktop.bat           # Windows 批处理启动
+├── AGENTS.md                   # AI 助手上下文
 ├── pyproject.toml              # 项目元数据 + 依赖声明
 ├── requirements.txt            # pip 依赖清单
 ├── .gitignore
@@ -173,12 +187,13 @@ stock-classroom/
 ├── backend/                    # 业务逻辑层
 │   ├── app.py                  # Flask API (26路由)
 │   ├── data_manager.py         # SQLite 读写 + AKShare 调度
-│   ├── akshare_source.py       # AKShare 数据源封装
+│   ├── akshare_source.py       # AKShare 数据源封装 (18+函数, 14个诊断端点)
 │   ├── indicators.py           # MACD/RSI/BOLL 计算
 │   ├── data_lhb.py             # 龙虎榜导入
 │   ├── cache_modules.py        # 资金流/涨停缓存
 │   ├── configs/
-│   │   └── default_scorecard.json  # 5组26条件因子评分卡
+│   │   ├── default_scorecard.json  # 5组26条件因子评分卡
+│   │   └── settings.json           # 用户设置 (font_size, agent)
 │   └── factor_engine/          # 多因子评分引擎
 │       ├── __init__.py
 │       ├── models.py           # StockScore 数据类
@@ -195,7 +210,7 @@ stock-classroom/
 │   │   ├── platform_shell.py   # QMainWindow 壳 (~200行)
 │   │   ├── plugin_manager.py   # 插件发现/注册/隔离/ErrorBoundary
 │   │   ├── plugin_base.py      # IPlugin 接口 + PlatformBus + PlatformServices
-│   │   ├── theme.py            # 全局 STYLE + COLORS
+│   │   ├── theme.py            # 全局 STYLE + COLORS + build_style() + fs()
 │   │   ├── log_window.py       # LogStream + LogWindow 日志终端
 │   │   └── local_worker.py     # 统一 QThread 后台线程
 │   │
@@ -203,21 +218,37 @@ stock-classroom/
 │   │   ├── plugins.json        # 导航顺序 + 默认激活
 │   │   ├── search/             # 搜索 (TOPBAR)
 │   │   │   └── plugin.py
+│   │   ├── settings/           # 设置 (TOPBAR) — v4.1
+│   │   │   ├── plugin.py       # 齿轮按钮
+│   │   │   ├── dialog.py       # 设置面板 (字体+AI配置+供应商预设)
+│   │   │   └── config.py       # load_settings/save_settings
+│   │   ├── agent/              # AI助手 (TOPBAR) — v4.1 新增
+│   │   │   ├── plugin.py       # 星标按钮 → 浮动聊天窗
+│   │   │   ├── chat_window.py  # 聊天窗口 (QDialog)
+│   │   │   ├── chat_worker.py  # LLM 调用 QThread
+│   │   │   ├── llm_client.py   # OpenAI 兼容客户端
+│   │   │   └── config.py       # agent 配置读写
 │   │   ├── market/             # 市场 (LEFT)
-│   │   │   ├── plugin.py       # MarketPlugin 包装器
-│   │   │   └── panel.py        # MarketPanel 面板代码
+│   │   │   ├── plugin.py
+│   │   │   └── panel.py
 │   │   ├── picks/              # 选股 (LEFT)
-│   │   │   ├── plugin.py       # PicksPlugin 包装器
-│   │   │   └── panel.py        # PicksPanel 面板代码
+│   │   │   ├── plugin.py
+│   │   │   └── panel.py
 │   │   ├── holdings/           # 持仓 (LEFT)
-│   │   │   ├── plugin.py       # HoldingsPlugin 包装器
-│   │   │   └── panel.py        # HoldingsPanel 面板代码
+│   │   │   ├── plugin.py
+│   │   │   └── panel.py
+│   │   ├── datapipeline/       # 数据管道 (LEFT) — v4.1
+│   │   │   ├── plugin.py
+│   │   │   ├── panel.py        # 数据更新面板
+│   │   │   ├── worker.py       # 10步数据更新线程
+│   │   │   └── companion.py    # API健康伴侣面板
 │   │   ├── datacenter/         # 数据中心 (LEFT)
-│   │   │   ├── plugin.py       # DataCenterPlugin 包装器
-│   │   │   └── panel.py        # DCPanel 面板代码
+│   │   │   ├── plugin.py
+│   │   │   ├── panel.py
+│   │   │   └── companion.py    # 表详情伴侣面板
 │   │   └── kline/              # K线 (RIGHT)
-│   │       ├── plugin.py       # KlinePlugin 包装器
-│   │       └── widget.py       # KlineWidget QPainter 绘图
+│   │       ├── plugin.py
+│   │       └── widget.py       # QPainter 绘图
 │   │
 │   └── _archive/               # 历史版本存档
 │       ├── strategy_engine.py
@@ -243,8 +274,8 @@ stock-classroom/
 │   └── README.md
 │
 └── package/                    # PyInstaller 打包
-    ├── run.py
-    └── build.bat
+    ├── build_desktop.bat
+    └── run_desktop.py
 ```
 
 ## 六、技术栈决策
@@ -257,10 +288,24 @@ stock-classroom/
 | 数据存储 | SQLite 双库 | 单用户场景最优，将来可换 PostgreSQL |
 | 后端框架 | Flask (可选) | 桌面端直连 SQLite，Flask 仅作 API 桥；将来换 FastAPI |
 | 数据源 | AKShare | A 股最优免费源，将来可加付费源 (Wind/Tushare Pro) |
+| LLM 客户端 | openai SDK | 兼容 Ollama / DeepSeek / 智谱 / Kimi 等全部 OpenAI 兼容 API |
 | 打包 | PyInstaller | 将来 MSIX 上架 Windows Store |
 | 死依赖删除 | matplotlib / numpy / backtesting / scipy | v4.0 从核心依赖移除，仅 numpy 被 pandas 间接依赖 |
 
-## 七、v4.0 改动总结
+## 七、v4.1 改动总结
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| **AI Agent 插件** (新增) | `plugins/agent/` (6 files) | 浮动聊天窗 + LLM 客户端 + 供应商预设 (DeepSeek/智谱/Kimi) |
+| **设置插件增强** | `plugins/settings/` | 左导航+右内容面板 (1080×950), AI 标签页含供应商预设+测试连接 |
+| **设置配置修复** | `plugins/settings/config.py` | 路径解析从3层改为4层 dirname, 修正 settings.json 读写一致性 |
+| **Agent 即时配置** | `plugins/agent/chat_window.py` | 每次发送消息前重读 settings.json, 避免缓存过期 |
+| **模型名修正** | `plugins/settings/dialog.py` | DeepSeek `deepseek-chat`→`deepseek-v4-pro`, Kimi `moonshot-v1-8k`→`kimi-k2.6` |
+| **新增依赖** | `requirements.txt` | `openai>=1.0` |
+| **构建脚本** | `package/build_desktop.bat` | `--hidden-import openai` |
+| **文档更新** | `docs/` + `AGENTS.md` | 全部更新至 v4.1 |
+
+### v4.0 历史改动
 
 | 改动 | 文件 | 行数变化 |
 |------|------|----------|
@@ -279,7 +324,6 @@ stock-classroom/
 ```bash
 # 1. 创建插件目录
 mkdir frontend\plugins\my_feature
-echo "# My Feature" > frontend\plugins\my_feature\__init__.py
 
 # 2. 实现 plugin.py
 # frontend/plugins/my_feature/plugin.py
@@ -300,7 +344,7 @@ class MyPlugin(IPlugin):
             self._services.status("新功能已激活")
 
 # 3. 在 plugins.json 的 nav_order 中添加
-"nav_order": ["search", "market", "picks", "holdings", "datacenter", "my_feature", "kline"]
+"nav_order": ["search", "settings", "agent", "market", "picks", "holdings", "datapipeline", "datacenter", "my_feature", "kline"]
 
 # 4. 重启，新功能自动出现在导航栏
 # 不需要改 platform_shell.py 或 desktop_app.py 任何一行
@@ -309,12 +353,14 @@ class MyPlugin(IPlugin):
 ## 九、未来演进方向
 
 ```
-当前 (v4.0)                      未来
+当前 (v4.1)                      未来
 ──────────────────────────────────────────────────
 PyQt5                          PySide6 (上架商城 LGPL)
 Flask 可选 API                 FastAPI (多用户并发 + 自动文档)
 SQLite                        PostgreSQL + Redis (服务端)
 AKShare 免费源                 付费数据源 (实时行情)
+openai SDK 单后端              Agent 多后端抽象层 + 工具调用
+基础聊天                       Agent 工具系统 + 伴侣自动分析
 Windows 桌面                  跨平台 (macOS/Linux)
 PyInstaller 简单打包            MSIX 签名上架 Windows Store
 单用户本地                     多用户 SaaS
@@ -323,7 +369,8 @@ PyInstaller 简单打包            MSIX 签名上架 Windows Store
 ### 优先级
 
 1. **插件化架构 (v4.0)** ← 已完成
-2. **WebSocket 实时推送** ← 下一步
-3. **FastAPI 替代 Flask** ← 多用户前完成
-4. **PySide6 迁移** ← 上架商城前完成
-5. **PostgreSQL 支持** ← 服务端部署前完成
+2. **设置/Agent/管道/伴侣 (v4.1)** ← 已完成
+3. **Agent 工具调用 + 伴侣自动分析 (v4.2)**
+4. **FastAPI 替代 Flask** ← 多用户前完成
+5. **PySide6 迁移** ← 上架商城前完成
+6. **PostgreSQL 支持** ← 服务端部署前完成
