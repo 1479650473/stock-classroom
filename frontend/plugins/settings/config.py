@@ -14,6 +14,7 @@ SETTINGS_PATH = os.path.join(CONFIG_DIR, "settings.json")
 
 DEFAULTS = {
     "font_size": 13,
+    "window_size": "large",
     "agent": {
         "api_base": "https://api.deepseek.com/v1",
         "api_key": "",

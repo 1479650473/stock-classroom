@@ -2,6 +2,7 @@
 from PyQt5.QtWidgets import QWidget
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QFont
+from frontend.platform.theme import dp
 
 _BG=QColor('#0D1117'); _PANEL=QColor('#161B22'); _BORDER=QColor('#21262D')
 _TEXT=QColor('#E6EDF3'); _TEXTS=QColor('#8B949E'); _ACCENT=QColor('#D4A574')
@@ -15,7 +16,7 @@ class KlineWidget(QWidget):
         s.setFocusPolicy(Qt.StrongFocus)
         s._bars=[]; s._symbol=''; s._name=''; s._ind='macd'
         s._vs=0; s._ve=0; s._pan=None; s._ch=-1
-        s._L=dict(ml=75,mr=10,mt=35,mb=25)
+        s._L=dict(ml=dp(75),mr=dp(10),mt=dp(35),mb=dp(25))
 
     def set_data(s, data, symbol, name):
         if data is None or data.get('code')!=0: return
@@ -173,20 +174,20 @@ class KlineWidget(QWidget):
             return
         b0=s._bars[0]; c=float(b0['close']); ch=c-float(b0['open'])
         pct=ch/max(float(b0['open']),0.01)*100; up=ch>=0
-        f=p.font(); f.setBold(True); f.setPointSize(12); p.setFont(f)
+        f=p.font(); f.setBold(True); f.setPointSize(17); p.setFont(f)
         p.setPen(_ACCENT)
-        p.drawText(QRectF(10,0,200,H),Qt.AlignVCenter,f'{s._symbol}')
-        f.setBold(False); f.setPointSize(11); p.setFont(f)
+        p.drawText(QRectF(dp(10),0,dp(200),H),Qt.AlignVCenter,f'{s._symbol}')
+        f.setBold(False); f.setPointSize(16); p.setFont(f)
         p.setPen(_TEXT)
-        p.drawText(QRectF(80,0,160,H),Qt.AlignVCenter,f'{s._name}')
+        p.drawText(QRectF(dp(80),0,dp(160),H),Qt.AlignVCenter,f'{s._name}')
         p.setPen(_BORDER)
-        p.drawText(QRectF(230,0,30,H),Qt.AlignVCenter,'|')
+        p.drawText(QRectF(dp(230),0,dp(30),H),Qt.AlignVCenter,'|')
         p.setPen(_TEXTS)
-        p.drawText(QRectF(250,0,100,H),Qt.AlignVCenter,f'{len(s._bars)} 日')
+        p.drawText(QRectF(dp(250),0,dp(100),H),Qt.AlignVCenter,f'{len(s._bars)} 日')
         p.setPen(_UP if up else _DOWN)
         ar='\u25b2' if up else '\u25bc'
         f.setBold(True); p.setFont(f)
-        p.drawText(QRectF(340,0,300,H),Qt.AlignVCenter,f'{c:.2f}  {ch:+.2f} ({pct:+.2f}%)')
+        p.drawText(QRectF(dp(340),0,dp(300),H),Qt.AlignVCenter,f'{c:.2f}  {ch:+.2f} ({pct:+.2f}%)')
 
     def _draw_cross(s,p,W,H,ml,cw,bw,vs,ve,py,ph):
         b=s._bars[s._ch]
@@ -206,7 +207,7 @@ class KlineWidget(QWidget):
         p.drawLine(QPointF(ml,cy),QPointF(ml+nv*bw,cy))
         # Price label at right Y axis
         p.setPen(col); p.setFont(QFont("",8))
-        p.drawText(QRectF(ml+cw-80,cy-8,78,16),Qt.AlignRight|Qt.AlignVCenter,f"{cv:.2f}")
+        p.drawText(QRectF(ml+cw-dp(80),cy-dp(8),dp(78),dp(16)),Qt.AlignRight|Qt.AlignVCenter,f"{cv:.2f}")
         # --- Volume panel: horizontal at bar volume ---
         vv=float(b.get("volume",0))
         if vv>0:
@@ -216,7 +217,7 @@ class KlineWidget(QWidget):
             p.drawLine(QPointF(ml,vy_),QPointF(ml+nv*bw,vy_))
             vol_txt=f"{vv/1e8:.1f}亿"if vv>=1e8 else f"{vv/1e4:.0f}万"if vv>=1e4 else f"{vv:.0f}"
             p.setPen(_TEXTS)
-            p.drawText(QRectF(ml+cw-80,vy_-8,78,16),Qt.AlignRight|Qt.AlignVCenter,vol_txt)
+            p.drawText(QRectF(ml+cw-dp(80),vy_-dp(8),dp(78),dp(16)),Qt.AlignRight|Qt.AlignVCenter,vol_txt)
         # --- Indicator panel: horizontal at bar value ---
         if s._ind=="macd":
             vals=[abs(float(b2.get(k,0)))for b2 in vis for k in ("macd","dif","dea")if b2.get(k)is not None]
@@ -225,21 +226,21 @@ class KlineWidget(QWidget):
             p.setPen(QPen(_MA10,1,Qt.DashLine))
             p.drawLine(QPointF(ml,iy),QPointF(ml+nv*bw,iy))
             p.setPen(_MA10)
-            p.drawText(QRectF(ml+cw-80,iy-8,78,16),Qt.AlignRight|Qt.AlignVCenter,f"{iv:.4f}")
+            p.drawText(QRectF(ml+cw-dp(80),iy-dp(8),dp(78),dp(16)),Qt.AlignRight|Qt.AlignVCenter,f"{iv:.4f}")
         else:
             iv=float(b.get("rsi14") or 50); iy=s._vy(iv,0,100,py[2],ph[2])
             p.setPen(QPen(_MA10,1,Qt.DashLine))
             p.drawLine(QPointF(ml,iy),QPointF(ml+nv*bw,iy))
             p.setPen(_MA10)
-            p.drawText(QRectF(ml+cw-80,iy-8,78,16),Qt.AlignRight|Qt.AlignVCenter,f"{iv:.1f}")
+            p.drawText(QRectF(ml+cw-dp(80),iy-dp(8),dp(78),dp(16)),Qt.AlignRight|Qt.AlignVCenter,f"{iv:.1f}")
         # --- Info card ---
-        f=p.font(); f.setPointSize(10); p.setFont(f)
+        f=p.font(); f.setPointSize(15); p.setFont(f)
         vol_fmt=f"{vv/1e8:.1f}亿"if vv>=1e8 else f"{vv/1e4:.0f}万"if vv>=1e4 else f"{vv:.0f}"
         ind_fmt=f"{float(b.get("macd") or 0):.4f}"if s._ind=="macd"else f"{float(b.get("rsi14") or 50):.1f}"
         info=(f"  {b["date"]}  {f"▲{pct:+.2f}%"if up else f"▼{pct:+.2f}%"}\n"
               f"  O:{ov:.2f}  H:{float(b["high"]):.2f}  L:{float(b["low"]):.2f}\n"
               f"  C:{cv:.2f}  V:{vol_fmt}  {s._ind.upper()}:{ind_fmt}")
-        cr=QRectF(x+8,cy-55,200,72)
+        cr=QRectF(x+dp(8),cy-dp(55),dp(200),dp(72))
         if cr.right()>W: cr.moveRight(x-8)
         if cr.top()<py[0]: cr.moveTop(cy+8)
         p.setBrush(QColor(22,27,34,240)); p.setPen(QPen(_ACCENT,1))

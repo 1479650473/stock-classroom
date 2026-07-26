@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QFont
 from frontend.platform.local_worker import LocalWorker
+from frontend.platform.theme import dp, dps
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "data")
 
@@ -56,7 +57,7 @@ class DCPanel(QWidget):
         mode_bar = QHBoxLayout()
         mode_bar.setSpacing(4)
         mode_label = QLabel("模式:")
-        mode_label.setStyleSheet("color:#8B949E;font-size:12px;background:transparent")
+        mode_label.setStyleSheet("color:#8B949E;font-size:20px;background:transparent")
         mode_bar.addWidget(mode_label)
 
         self._mode_btns = []
@@ -64,10 +65,10 @@ class DCPanel(QWidget):
             btn = QPushButton(name)
             btn.setCheckable(True)
             btn.setChecked(i == 0)
-            btn.setFixedHeight(24)
+            btn.setFixedHeight(dp(24))
             btn.setStyleSheet(
                 "QPushButton{background:#161B22;color:#8B949E;border:1px solid #21262D;"
-                "border-radius:6px;padding:2px 10px;font-size:12px}"
+                "border-radius:6px;padding:2px 10px;font-size:20px}"
                 "QPushButton:hover{background:#1C2128}"
                 "QPushButton:checked{background:rgba(212,165,116,0.10);color:#D4A574;"
                 "border-color:#D4A574}"
@@ -84,7 +85,7 @@ class DCPanel(QWidget):
         lo.addWidget(self._stack, 1)
 
         self._status_bar = QLabel("")
-        self._status_bar.setStyleSheet("color:#484F58;font-size:12px;padding:2px 4px;background:transparent")
+        self._status_bar.setStyleSheet("color:#484F58;font-size:20px;padding:2px 4px;background:transparent")
         lo.addWidget(self._status_bar)
 
     def _switch_mode(self, idx):
@@ -99,7 +100,7 @@ class DCPanel(QWidget):
         body.setSpacing(6)
         body.setContentsMargins(0, 0, 0, 0)
         self.tree = QTreeWidget()
-        self.tree.setFixedWidth(220)
+        self.tree.setFixedWidth(dp(220))
         self.tree.setHeaderLabel("数据表")
         self.tree.itemClicked.connect(self._on_tree_select)
         self.tree.setStyleSheet("QTreeWidget{background:#0D1117;color:#C9D1D9;border:1px solid #21262D}")
@@ -121,7 +122,7 @@ class DCPanel(QWidget):
         self.table.horizontalHeader().sectionClicked.connect(self._on_header_click)
         self.table.setStyleSheet("QTableWidget{background:#0D1117;color:#E6EDF3;gridline-color:#1A1F28}"
                                  "QHeaderView::section{background:#161B22;color:#8B949E;"
-                                 "border:1px solid #21262D;padding:3px;font-size:11px}")
+                                 "border:1px solid #21262D;padding:3px;font-size:19px}")
         right.addWidget(self.table, 1)
         body.addLayout(right, 1)
         return w
@@ -147,7 +148,7 @@ class DCPanel(QWidget):
         right = QVBoxLayout()
         right.setSpacing(4)
         self.stock_info = QLabel("请从左侧选择一只股票")
-        self.stock_info.setStyleSheet("color:#8B949E;padding:2px 4px;font-size:11px;background:transparent")
+        self.stock_info.setStyleSheet("color:#8B949E;padding:2px 4px;font-size:19px;background:transparent")
         right.addWidget(self.stock_info)
         self.stock_table = QTableWidget()
         self.stock_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -159,7 +160,7 @@ class DCPanel(QWidget):
         self.stock_table.horizontalHeader().sectionClicked.connect(self._on_stock_header_click)
         self.stock_table.setStyleSheet("QTableWidget{background:#0D1117;color:#E6EDF3;gridline-color:#1A1F28}"
                                        "QHeaderView::section{background:#161B22;color:#8B949E;"
-                                       "border:1px solid #21262D;padding:3px;font-size:11px}")
+                                       "border:1px solid #21262D;padding:3px;font-size:19px}")
         right.addWidget(self.stock_table, 1)
 
         body.addLayout(left_panel, 1)
@@ -223,23 +224,23 @@ class DCPanel(QWidget):
         for info in db_infos:
             card = QFrame()
             card.setObjectName("card")
-            card.setFixedSize(160, 52)
+            card.setFixedSize(dp(160), dp(52))
             cl = QVBoxLayout(card)
             cl.setContentsMargins(8, 3, 8, 3)
             cl.setSpacing(1)
             if info["found"]:
                 title = QLabel(info["label"])
-                title.setStyleSheet(f"color:{info['color']};font-size:12px;font-weight:bold;background:transparent")
+                title.setStyleSheet(f"color:{info['color']};font-size:20px;font-weight:bold;background:transparent")
                 title.setAlignment(Qt.AlignCenter)
                 cl.addWidget(title)
                 detail = QLabel(f"{info['size_mb']:.0f}MB  ·  {info['table_count']}表  ·  {info['total_rows']:,}行")
-                detail.setStyleSheet("color:#666;font-size:10px;background:transparent")
+                detail.setStyleSheet("color:#666;font-size:19px;background:transparent")
                 detail.setAlignment(Qt.AlignCenter)
                 cl.addWidget(detail)
                 card.setToolTip(f"{info['label']}: {info['size_mb']:.1f}MB, {info['table_count']} tables, {info['total_rows']:,} rows")
             else:
                 title = QLabel(info["label"] + "\n未找到")
-                title.setStyleSheet(f"color:{info['color']};font-size:11px;font-weight:bold;background:transparent")
+                title.setStyleSheet(f"color:{info['color']};font-size:19px;font-weight:bold;background:transparent")
                 title.setAlignment(Qt.AlignCenter)
                 cl.addWidget(title)
             self.overview.addWidget(card)
@@ -361,7 +362,7 @@ class DCPanel(QWidget):
                         cell.setFont(QFont("Consolas", 10))
                 cell.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
                 table.setItem(r, c + 1, cell)
-        table.setColumnWidth(0, 40)
+        table.setColumnWidth(0, dp(40))
         for i in range(n_cols):
             mx = 80
             for j in range(min(50, n_rows)):

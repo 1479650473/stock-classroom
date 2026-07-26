@@ -3,6 +3,7 @@ import sqlite3, traceback
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QFrame, QAbstractItemView,
     QPushButton)
+from frontend.platform.theme import dp, dps
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QFont
 from frontend.platform.local_worker import LocalWorker
@@ -52,10 +53,10 @@ class MarketPanel(QWidget):
         for key, text in [("date", "日期"), ("up", "上涨"), ("dn", "下跌"),
                           ("cnt", "总数"), ("vol", "成交额")]:
             w = QLabel("--")
-            w.setStyleSheet(f"color:{C_SUBTEXT};font-size:12px;font-weight:500;background:transparent")
+            w.setStyleSheet(f"color:{C_SUBTEXT};font-size:20px;font-weight:500;background:transparent")
             w._key = key
             lbl = QLabel(text)
-            lbl.setStyleSheet(f"color:#484F58;font-size:11px;background:transparent")
+            lbl.setStyleSheet(f"color:#484F58;font-size:19px;background:transparent")
             bl.addWidget(lbl)
             bl.addWidget(w)
             bl.addSpacing(16)
@@ -76,11 +77,11 @@ class MarketPanel(QWidget):
         self._btn_cpt.clicked.connect(lambda: (setattr(self, "_sector_type", "concept"),
             self._btn_cpt.setChecked(True), self._btn_ind.setChecked(False), self._load_sectors()))
         for btn in [self._btn_ind, self._btn_cpt]:
-            btn.setFixedHeight(26)
+            btn.setFixedHeight(dp(26))
             btn.setCursor(Qt.PointingHandCursor)
             btn.setStyleSheet(
                 "QPushButton{background:#161B22;color:#8B949E;border:1px solid #21262D;"
-                "border-radius:6px;padding:3px 14px;font-size:12px;}"
+                "border-radius:6px;padding:3px 14px;font-size:20px;}"
                 "QPushButton:checked{background:rgba(212,165,116,0.10);color:#D4A574;border-color:#D4A574}")
             self._sector_tabs.addWidget(btn)
         self._sector_tabs.addStretch()
@@ -206,7 +207,7 @@ class MarketPanel(QWidget):
         for d in indices:
             card = QFrame()
             card.setObjectName("card")
-            card.setFixedSize(172, 72)
+            card.setFixedSize(dp(172), dp(72))
             card.setCursor(Qt.PointingHandCursor)
             card.setStyleSheet(
                 "QFrame#card{background:#161B22;border:1px solid #21262D;border-radius:8px}"
@@ -229,17 +230,17 @@ class MarketPanel(QWidget):
             cl.setSpacing(2)
 
             nm = QLabel(d.get("name", ""))
-            nm.setStyleSheet(f"color:{C_SUBTEXT};font-size:11px;background:transparent")
+            nm.setStyleSheet(f"color:{C_SUBTEXT};font-size:19px;background:transparent")
             cl.addWidget(nm)
 
             p = QLabel("{:.2f}".format(d.get("price", 0)))
-            p.setStyleSheet(f"color:{C_TEXT};font-size:18px;font-weight:700;background:transparent")
+            p.setStyleSheet(f"color:{C_TEXT};font-size:23px;font-weight:700;background:transparent")
             cl.addWidget(p)
 
             chg = d.get("change_pct", 0)
             color = C_RISE if chg >= 0 else C_FALL
             c = QLabel("{}{:.2f}%".format("+" if chg >= 0 else "", chg))
-            c.setStyleSheet(f"color:{color};font-size:12px;font-weight:600;background:transparent")
+            c.setStyleSheet(f"color:{color};font-size:20px;font-weight:600;background:transparent")
             cl.addWidget(c)
 
             self.card_row.addWidget(card)
@@ -247,11 +248,11 @@ class MarketPanel(QWidget):
         fmt_vol = lambda v: "{:.0f}亿".format(v / 1e8) if v else "--"
         self.bar_widgets["date"].setText(stats.get("date", "--"))
         self.bar_widgets["up"].setText(str(stats.get("up", 0)))
-        self.bar_widgets["up"].setStyleSheet(f"color:{C_RISE};font-size:11px;font-weight:600;background:transparent")
+        self.bar_widgets["up"].setStyleSheet(f"color:{C_RISE};font-size:19px;font-weight:600;background:transparent")
         self.bar_widgets["dn"].setText(str(stats.get("dn", 0)))
-        self.bar_widgets["dn"].setStyleSheet(f"color:{C_FALL};font-size:11px;font-weight:600;background:transparent")
+        self.bar_widgets["dn"].setStyleSheet(f"color:{C_FALL};font-size:19px;font-weight:600;background:transparent")
         self.bar_widgets["cnt"].setText(str(stats.get("count", 0)))
-        self.bar_widgets["cnt"].setStyleSheet(f"color:{C_TEXT};font-size:11px;font-weight:500;background:transparent")
+        self.bar_widgets["cnt"].setStyleSheet(f"color:{C_TEXT};font-size:19px;font-weight:500;background:transparent")
         self.bar_widgets["vol"].setText(fmt_vol(stats.get("volume", 0)))
 
         if self.on_status:
@@ -288,10 +289,10 @@ class MarketPanel(QWidget):
                 self.table.setItem(i, j, it)
 
         self.table.resizeColumnsToContents()
-        self.table.setColumnWidth(0, 100)
+        self.table.setColumnWidth(0, dp(100))
         for j in range(1, len(cols)):
             if self.table.columnWidth(j) < 55:
-                self.table.setColumnWidth(j, 55)
+                self.table.setColumnWidth(j, dp(55))
 
     def _on_click(self, row, col):
         pass

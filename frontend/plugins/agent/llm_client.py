@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""LLM client — OpenAI-compatible API wrapper. Supports Ollama / OpenAI / DeepSeek / etc."""
+"""LLM client — OpenAI-compatible API wrapper with tool calling."""
 
 import openai
 
@@ -20,3 +20,25 @@ class LLMClient:
             temperature=0.7,
         )
         return resp.choices[0].message.content
+
+    def chat_with_tools(self, messages, tools):
+        resp = self._client.chat.completions.create(
+            model=self._model,
+            messages=messages,
+            tools=tools,
+            tool_choice="auto",
+        )
+        choice = resp.choices[0]
+        if choice.message.tool_calls:
+            tool_calls = []
+            for tc in choice.message.tool_calls:
+                tool_calls.append({
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                })
+            return {"tool_calls": tool_calls}
+        return {"content": choice.message.content}

@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QFont
 from frontend.platform.local_worker import LocalWorker
+from frontend.platform.theme import dp, dps
 
 
 C_BG = "#0D1117"
@@ -48,7 +49,7 @@ class HoldingsPanel(QWidget):
 
         self._hint = QLabel("点击「持仓」标签加载数据")
         self._hint.setAlignment(Qt.AlignCenter)
-        self._hint.setStyleSheet(f"color:{C_SUBTEXT};font-size:12px;")
+        self._hint.setStyleSheet(f"color:{C_SUBTEXT};font-size:23px;")
         lo.addWidget(self._hint)
 
         self.table = QTableWidget()
@@ -122,7 +123,7 @@ class HoldingsPanel(QWidget):
         for label, value, color in card_specs:
             card = QFrame()
             card.setObjectName("card")
-            card.setFixedSize(172, 70)
+            card.setFixedSize(dp(172), dp(70))
             card.setStyleSheet(
                 "QFrame#card{background:#161B22;border:1px solid #21262D;border-radius:8px}"
                 "QFrame#card:hover{border-color:#30363D}"
@@ -131,10 +132,10 @@ class HoldingsPanel(QWidget):
             cl.setContentsMargins(14, 8, 14, 8)
             cl.setSpacing(4)
             l = QLabel(label)
-            l.setStyleSheet(f"color:{C_SUBTEXT};font-size:11px;background:transparent;")
+            l.setStyleSheet(f"color:{C_SUBTEXT};font-size:19px;background:transparent;")
             cl.addWidget(l)
             v = QLabel(value)
-            v.setStyleSheet(f"color:{color};font-size:20px;font-weight:700;background:transparent;")
+            v.setStyleSheet(f"color:{color};font-size:23px;font-weight:700;background:transparent;")
             cl.addWidget(v)
             self.card_row.addWidget(card)
 
@@ -159,12 +160,12 @@ class HoldingsPanel(QWidget):
             for j, item in enumerate(items):
                 if j >= 2:
                     item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                    item.setFont(QFont("Consolas", 11))
+                    item.setFont(QFont("Consolas", 16))
                 self.table.setItem(i, j, item)
 
         self.table.resizeColumnsToContents()
-        self.table.setColumnWidth(0, 80)
-        self.table.setColumnWidth(1, 100)
+        self.table.setColumnWidth(0, dp(80))
+        self.table.setColumnWidth(1, dp(100))
 
         if self.on_status:
             pnl_status = f"{pnl_sign}{total_pnl:,.0f}"

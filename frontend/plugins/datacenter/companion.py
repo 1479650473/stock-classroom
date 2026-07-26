@@ -2,6 +2,7 @@
 """DataCenter Companion Panel — right-side table details for datacenter tab."""
 
 import sqlite3
+from frontend.platform.theme import dp, dps
 from datetime import datetime
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QFrame, QTableWidget,
@@ -63,11 +64,11 @@ class DCCompanion(QWidget):
         lo.setSpacing(10)
 
         title = QLabel("\U0001f4cb \u9009\u4e2d\u8868\u8be6\u60c5")
-        title.setStyleSheet(f"color:{C_ACCENT};font-size:13px;font-weight:600;background:transparent")
+        title.setStyleSheet(f"color:{C_ACCENT};font-size:21px;font-weight:600;background:transparent")
         lo.addWidget(title)
 
         self._info_label = QLabel("\u8bf7\u5728\u5de6\u4fa7\u9009\u62e9\u4e00\u4e2a\u6570\u636e\u8868")
-        self._info_label.setStyleSheet(f"color:{C_SUBTEXT};font-size:12px;padding:6px 0;background:transparent")
+        self._info_label.setStyleSheet(f"color:{C_SUBTEXT};font-size:20px;padding:6px 0;background:transparent")
         self._info_label.setWordWrap(True)
         lo.addWidget(self._info_label)
 
@@ -81,17 +82,17 @@ class DCCompanion(QWidget):
         self._col_table.horizontalHeader().setStretchLastSection(True)
         self._col_table.setStyleSheet(
             "QTableWidget{background:#0D1117;color:#E6EDF3;gridline-color:#1A1F28}"
-            "QHeaderView::section{background:#161B22;color:#8B949E;border:1px solid #21262D;padding:3px;font-size:11px}")
-        self._col_table.setColumnWidth(0, 140)
+            "QHeaderView::section{background:#161B22;color:#8B949E;border:1px solid #21262D;padding:3px;font-size:19px}")
+        self._col_table.setColumnWidth(0, dp(140))
         lo.addWidget(self._col_table)
 
         # ── Range ──
         range_section = QLabel("\U0001f4c5 \u6570\u636e\u8303\u56f4")
-        range_section.setStyleSheet(f"color:{C_ACCENT};font-size:12px;font-weight:600;background:transparent")
+        range_section.setStyleSheet(f"color:{C_ACCENT};font-size:20px;font-weight:600;background:transparent")
         lo.addWidget(range_section)
 
         self._range_label = QLabel("--")
-        self._range_label.setStyleSheet(f"color:{C_SUBTEXT};font-size:12px;padding:6px 12px;background:transparent")
+        self._range_label.setStyleSheet(f"color:{C_SUBTEXT};font-size:20px;padding:6px 12px;background:transparent")
         self._range_label.setWordWrap(True)
         lo.addWidget(self._range_label)
 

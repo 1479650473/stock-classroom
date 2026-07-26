@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QTimer
 
-from .theme import STYLE
+from .theme import STYLE, dp, dps
 from .log_window import LogStream, LogWindow
 from .plugin_base import PlatformBus, PlatformServices, PluginRegion
 from .plugin_manager import PluginManager
@@ -33,8 +33,17 @@ class PlatformShell(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("stock-classroom")
-        self.setGeometry(50, 20, 1500, 920)
-        self.setMinimumSize(1100, 700)
+
+        ws = "large"
+        try:
+            from frontend.plugins.settings.config import load_settings
+            ws = load_settings().get("window_size", "large")
+        except Exception:
+            pass
+        sizes = {"small": (1400, 850), "medium": (1550, 950), "large": (1980, 1280)}
+        w, h = sizes.get(ws, sizes["large"])
+        self.setGeometry(50, 20, w, h)
+        self.setMinimumSize(1200, 800)
 
         # ── Ensure data dir exists ──
         os.makedirs(os.path.join(PROJECT_DIR, "data"), exist_ok=True)
@@ -98,7 +107,7 @@ class PlatformShell(QMainWindow):
 
         # ═══ Top Bar ═══
         topbar = QFrame()
-        topbar.setFixedHeight(48)
+        topbar.setFixedHeight(dp(48))
         topbar.setStyleSheet("background:#161B22; border-bottom:1px solid #21262D;")
         tl = QHBoxLayout(topbar)
         tl.setContentsMargins(16, 0, 16, 0)
@@ -108,7 +117,7 @@ class PlatformShell(QMainWindow):
         logo_lo.setContentsMargins(0, 0, 0, 0)
         logo_lo.setSpacing(4)
         lbl_brand = QLabel("stock-classroom")
-        lbl_brand.setStyleSheet("color:#D4A574; font-size:17px; font-weight:700; border:none;")
+        lbl_brand.setStyleSheet(f"color:#D4A574; font-size:{dps(17)}; font-weight:700; border:none;")
         logo_lo.addWidget(lbl_brand)
         tl.addWidget(logo)
         tl.addStretch()
@@ -125,16 +134,16 @@ class PlatformShell(QMainWindow):
 
         refresh = QPushButton("刷新")
         refresh.setObjectName("refreshBtn")
-        refresh.setFixedHeight(30)
+        refresh.setFixedHeight(dp(30))
         refresh.clicked.connect(lambda: self._plugin_mgr.refresh_current())
         tl.addWidget(refresh)
 
         log_btn = QPushButton("日志")
-        log_btn.setFixedSize(48, 30)
+        log_btn.setFixedSize(dp(48), dp(30))
         log_btn.setCursor(Qt.PointingHandCursor)
         log_btn.setStyleSheet(
-            "QPushButton{background:#161B22;color:#8B949E;border:1px solid #30363D;"
-            "border-radius:6px;font-size:11px}"
+            f"QPushButton{{background:#161B22;color:#8B949E;border:1px solid #30363D;"
+            f"border-radius:{dps(6)};font-size:{dps(11)}}}"
             "QPushButton:hover{background:#1C2128;border-color:#484F58}")
         log_btn.clicked.connect(lambda: self._log_window.show()
                                 if self._log_window.isHidden()
@@ -153,7 +162,7 @@ class PlatformShell(QMainWindow):
         left_lo.setSpacing(0)
 
         nav_panel = QWidget()
-        nav_panel.setFixedWidth(72)
+        nav_panel.setFixedWidth(dp(72))
         nav_panel.setStyleSheet("background:#0D1117; border-right:1px solid #21262D;")
         nav_lo = QVBoxLayout(nav_panel)
         nav_lo.setContentsMargins(6, 12, 6, 12)
@@ -190,16 +199,16 @@ class PlatformShell(QMainWindow):
         # ═══ Watermark (platform layer) ═══
         self._watermark = QLabel("develop by siyuan-chen & xiaoguang", self)
         self._watermark.setStyleSheet(
-            "color:rgba(139,148,158,60);font-size:10px;background:transparent;border:none;")
+            f"color:rgba(139,148,158,60);font-size:{dps(10)};background:transparent;border:none;")
         self._watermark.adjustSize()
 
         # ═══ Status Bar ═══
         self.status = QStatusBar()
         self.status.setStyleSheet(
-            "QStatusBar{background:#161B22;color:#8B949E;border-top:1px solid #21262D;"
-            "font-size:12px;padding:2px 12px;}")
+            f"QStatusBar{{background:#161B22;color:#8B949E;border-top:1px solid #21262D;"
+            f"font-size:{dps(12)};padding:2px 12px;}}")
         self._status_dot = QLabel("\u25cf")
-        self._status_dot.setStyleSheet("color:#3fb950;font-size:10px;border:none;padding-right:4px;")
+        self._status_dot.setStyleSheet(f"color:#3fb950;font-size:{dps(10)};border:none;padding-right:4px;")
         self.status.addPermanentWidget(self._status_dot)
         self.setStatusBar(self.status)
 
@@ -208,7 +217,7 @@ class PlatformShell(QMainWindow):
         btn = QPushButton()
         btn.setObjectName("navBtn")
         btn.setCheckable(True)
-        btn.setFixedSize(60, 56)
+        btn.setFixedSize(dp(60), dp(56))
         btn.setCursor(Qt.PointingHandCursor)
         btn.setText(f"{icon}\n{name}")
         btn.setStyleSheet("""
@@ -218,7 +227,6 @@ class PlatformShell(QMainWindow):
                 border: none;
                 border-radius: 6px;
                 padding: 0px;
-                font-size: 14px;
                 font-weight: 500;
             }
             QPushButton#navBtn:hover {

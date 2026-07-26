@@ -2,6 +2,7 @@
 """DataPipeline Panel — data update dashboard with one-click fetch + per-step retry."""
 
 import sqlite3, os
+from frontend.platform.theme import dp, dps
 from datetime import datetime, time as dtime
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -46,16 +47,16 @@ class PipelinePanel(QWidget):
         # ── Header ──
         hdr = QHBoxLayout()
         icon = QLabel("\U0001f4e6")
-        icon.setStyleSheet("font-size:20px;background:transparent")
+        icon.setStyleSheet("font-size:23px;background:transparent")
         hdr.addWidget(icon)
 
         title = QLabel("\u6570\u636e\u7ba1\u9053")
-        title.setStyleSheet(f"color:{C_TEXT};font-size:16px;font-weight:700;background:transparent")
+        title.setStyleSheet(f"color:{C_TEXT};font-size:23px;font-weight:700;background:transparent")
         hdr.addWidget(title)
         hdr.addStretch()
 
         self._auto_hint = QLabel("")
-        self._auto_hint.setStyleSheet(f"color:{C_GREEN};font-size:11px;background:transparent")
+        self._auto_hint.setStyleSheet(f"color:{C_GREEN};font-size:19px;background:transparent")
         hdr.addWidget(self._auto_hint)
         lo.addLayout(hdr)
 
@@ -69,11 +70,11 @@ class PipelinePanel(QWidget):
         cl.setSpacing(4)
 
         self._last_date = QLabel("\u4e0a\u6b21\u66f4\u65b0: --")
-        self._last_date.setStyleSheet(f"color:{C_TEXT};font-size:14px;font-weight:600;background:transparent")
+        self._last_date.setStyleSheet(f"color:{C_TEXT};font-size:22px;font-weight:600;background:transparent")
         cl.addWidget(self._last_date)
 
         self._last_status = QLabel("\u72b6\u6001: \u672a\u77e5")
-        self._last_status.setStyleSheet(f"color:{C_SUBTEXT};font-size:12px;background:transparent")
+        self._last_status.setStyleSheet(f"color:{C_SUBTEXT};font-size:23px;background:transparent")
         cl.addWidget(self._last_status)
         lo.addWidget(self._status_card)
 
@@ -85,11 +86,11 @@ class PipelinePanel(QWidget):
         self._step_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._step_table.verticalHeader().setVisible(False)
         self._step_table.setShowGrid(False)
-        self._step_table.setFixedHeight(340)
+        self._step_table.setFixedHeight(dp(340))
         self._step_table.horizontalHeader().setStretchLastSection(True)
         self._step_table.setStyleSheet(
             "QTableWidget{background:#0D1117;color:#E6EDF3;gridline-color:#1A1F28}"
-            "QHeaderView::section{background:#161B22;color:#8B949E;border:1px solid #21262D;padding:3px;font-size:11px}")
+            "QHeaderView::section{background:#161B22;color:#8B949E;border:1px solid #21262D;padding:3px;font-size:19px}")
         self._step_table.setRowCount(len(STEP_NAMES))
         for i, name in enumerate(STEP_NAMES):
             nm = QTableWidgetItem(name)
@@ -113,9 +114,11 @@ class PipelinePanel(QWidget):
             self._step_table.setItem(i, 2, st)
 
             self._step_table.setCellWidget(i, 3, QWidget())
-        self._step_table.setColumnWidth(0, 130)
-        self._step_table.setColumnWidth(1, 80)
-        self._step_table.setColumnWidth(2, 50)
+        self._step_table.setColumnWidth(0, dp(130))
+        self._step_table.setColumnWidth(1, dp(80))
+        self._step_table.setColumnWidth(2, dp(50))
+        self._step_table.setColumnWidth(1, dp(80))
+        self._step_table.setColumnWidth(2, dp(50))
         lo.addWidget(self._step_table)
 
         # ── Progress bar ──
@@ -123,7 +126,7 @@ class PipelinePanel(QWidget):
         self._progress.setRange(0, 100)
         self._progress.setValue(0)
         self._progress.setTextVisible(False)
-        self._progress.setFixedHeight(6)
+        self._progress.setFixedHeight(dp(6))
         self._progress.setStyleSheet(
             "QProgressBar{background:#161B22;border:none;border-radius:3px}"
             "QProgressBar::chunk{background:#D4A574;border-radius:3px}")
@@ -133,11 +136,11 @@ class PipelinePanel(QWidget):
         btn_row = QHBoxLayout()
         btn_row.addStretch()
         self._btn_fetch = QPushButton("\U0001f504 \u4e00\u952e\u62c9\u53d6\u5168\u90e8\u6570\u636e")
-        self._btn_fetch.setFixedSize(200, 38)
+        self._btn_fetch.setFixedSize(dp(200), dp(38))
         self._btn_fetch.setCursor(Qt.PointingHandCursor)
         self._btn_fetch.setStyleSheet(
             "QPushButton{background:#D4A574;color:#0D1117;border:none;"
-            "border-radius:8px;font-size:13px;font-weight:700}"
+            "border-radius:8px;font-size:21px;font-weight:700}"
             "QPushButton:hover{background:#E0B888}"
             "QPushButton:disabled{background:#30363D;color:#484F58}")
         self._btn_fetch.clicked.connect(self._on_fetch)
@@ -167,13 +170,13 @@ class PipelinePanel(QWidget):
                 detail = f"\u72b6\u6001: {status_text}  \u00b7  \u65b0\u589e {row[3] or 0} \u884c  \u00b7  \u8017\u65f6 {row[5]}s"
                 self._last_status.setText(detail)
                 if row[1] == "ok":
-                    self._last_status.setStyleSheet(f"color:{C_GREEN};font-size:12px;background:transparent")
+                    self._last_status.setStyleSheet(f"color:{C_GREEN};font-size:23px;background:transparent")
                 else:
-                    self._last_status.setStyleSheet(f"color:{C_RED};font-size:12px;background:transparent")
+                    self._last_status.setStyleSheet(f"color:{C_RED};font-size:23px;background:transparent")
             else:
                 self._last_date.setText("\u4e0a\u6b21\u66f4\u65b0: \u65e0\u8bb0\u5f55")
                 self._last_status.setText("\u72b6\u6001: \u5c1a\u672a\u6267\u884c\u8fc7\u66f4\u65b0")
-                self._last_status.setStyleSheet(f"color:{C_SUBTEXT};font-size:12px;background:transparent")
+                self._last_status.setStyleSheet(f"color:{C_SUBTEXT};font-size:23px;background:transparent")
         except Exception:
             pass
 
@@ -189,23 +192,23 @@ class PipelinePanel(QWidget):
             market_close = dtime(15, 30)
             if not row and now > market_close:
                 self._auto_hint.setText("\u4eca\u65e5\u6570\u636e\u672a\u66f4\u65b0, \u53ef\u70b9\u51fb\u4e00\u952e\u62c9\u53d6")
-                self._auto_hint.setStyleSheet(f"color:#FFE0C2;font-size:11px;background:transparent")
+                self._auto_hint.setStyleSheet(f"color:#FFE0C2;font-size:19px;background:transparent")
             elif not row:
                 self._auto_hint.setText("\u76d8\u4e2d, \u6570\u636e\u5f85\u66f4\u65b0")
-                self._auto_hint.setStyleSheet(f"color:{C_SUBTEXT};font-size:11px;background:transparent")
+                self._auto_hint.setStyleSheet(f"color:{C_SUBTEXT};font-size:19px;background:transparent")
             else:
                 self._auto_hint.setText("\u2714 \u4eca\u65e5\u5df2\u66f4\u65b0")
-                self._auto_hint.setStyleSheet(f"color:{C_GREEN};font-size:11px;background:transparent")
+                self._auto_hint.setStyleSheet(f"color:{C_GREEN};font-size:19px;background:transparent")
         except Exception:
             pass
 
     def _build_retry_btn(self, step_idx):
         btn = QPushButton("\u91cd\u8bd5")
-        btn.setFixedSize(48, 24)
+        btn.setFixedSize(dp(48), dp(24))
         btn.setCursor(Qt.PointingHandCursor)
         btn.setStyleSheet(
             "QPushButton{background:transparent;color:#D4A574;border:1px solid rgba(212,165,116,0.3);"
-            "border-radius:4px;font-size:11px}"
+            "border-radius:4px;font-size:19px}"
             "QPushButton:hover{background:rgba(212,165,116,0.10);border-color:#D4A574}")
         btn.clicked.connect(lambda: self._on_retry(step_idx))
         return btn
@@ -288,7 +291,7 @@ class PipelinePanel(QWidget):
                 self.on_status(f"\u66f4\u65b0\u5b8c\u6210: +{total} \u884c, \u8017\u65f6 {elapsed}s")
             self._load_last_status()
             self._auto_hint.setText("\u2714 \u4eca\u65e5\u5df2\u66f4\u65b0")
-            self._auto_hint.setStyleSheet(f"color:{C_GREEN};font-size:11px;background:transparent")
+            self._auto_hint.setStyleSheet(f"color:{C_GREEN};font-size:19px;background:transparent")
         else:
             if self.on_status:
                 self.on_status(f"\u66f4\u65b0\u5931\u8d25: {result.get('error', '\u672a\u77e5\u9519\u8bef')}")

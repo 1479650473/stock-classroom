@@ -6,8 +6,10 @@
     "market",
     "picks",
     "holdings",
+    "trade",
     "datapipeline",
     "datacenter",
+    "trainer",
     "kline"
   ],
   "default_left": "market",

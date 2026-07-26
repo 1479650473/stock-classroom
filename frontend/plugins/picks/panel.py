@@ -2,6 +2,7 @@
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QCheckBox, QPushButton)
 from PyQt5.QtCore import Qt
+from frontend.platform.theme import dp, dps
 from PyQt5.QtGui import QColor, QFont
 from frontend.platform.local_worker import LocalWorker
 
@@ -52,10 +53,10 @@ class PicksPanel(QWidget):
         self._btn_apply = QPushButton("应用过滤")
         self._btn_apply.setObjectName("refreshBtn")
         self._btn_apply.setCursor(Qt.PointingHandCursor)
-        self._btn_apply.setFixedHeight(28)
+        self._btn_apply.setFixedHeight(dp(28))
         self._btn_apply.setStyleSheet(
             "QPushButton{background:rgba(212,165,116,0.10);color:#D4A574;"
-            "border:1px solid #D4A574;border-radius:6px;padding:4px 16px;font-size:11px;font-weight:500}"
+            "border:1px solid #D4A574;border-radius:6px;padding:4px 16px;font-size:19px;font-weight:500}"
             "QPushButton:hover{background:rgba(212,165,116,0.18)}")
         self._btn_apply.clicked.connect(self.load)
         filter_bar.addWidget(self._btn_apply)
@@ -134,9 +135,9 @@ class PicksPanel(QWidget):
                     it.setFont(QFont("", -1, QFont.Bold))
                 self.table.setItem(i, j, it)
         self.table.resizeColumnsToContents()
-        self.table.setColumnWidth(0, 30)
-        self.table.setColumnWidth(1, 65)
-        self.table.setColumnWidth(2, 90)
+        self.table.setColumnWidth(0, dp(30))
+        self.table.setColumnWidth(1, dp(65))
+        self.table.setColumnWidth(2, dp(90))
         if self.on_status:
             self.on_status(f"选股已加载 - {len(picks)}只")
 

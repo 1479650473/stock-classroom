@@ -10,7 +10,7 @@ from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont
 
 from .config import load_settings, save_settings
-from frontend.platform.theme import build_style, fs
+from frontend.platform.theme import build_style, fs, dp, dps
 
 C_BG = "#0D1117"
 C_PANEL = "#161B22"
@@ -100,7 +100,7 @@ class SettingsWindow(QWidget):
         self._app = QApplication.instance()
 
         self.setWindowTitle(u"\u8bbe\u7f6e")
-        self.setFixedSize(1080, 950)
+        self.setFixedSize(dp(1080), dp(950))
         self.setStyleSheet(f"background:{C_BG}")
         self._build_ui()
         self._update_preview()
@@ -112,7 +112,7 @@ class SettingsWindow(QWidget):
 
         # ── Header ──
         hdr = QWidget()
-        hdr.setFixedHeight(48)
+        hdr.setFixedHeight(dp(48))
         hdr.setStyleSheet(f"background:{C_PANEL};border-bottom:1px solid {C_BORDER}")
         hl = QHBoxLayout(hdr)
         hl.setContentsMargins(20, 0, 20, 0)
@@ -131,7 +131,7 @@ class SettingsWindow(QWidget):
         body.setSpacing(0)
 
         self._nav = QListWidget()
-        self._nav.setFixedWidth(140)
+        self._nav.setFixedWidth(dp(140))
         self._nav.setStyleSheet(NAV_STYLE)
         self._nav.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._nav.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -164,14 +164,15 @@ class SettingsWindow(QWidget):
 
         # ── Footer ──
         footer = QWidget()
-        footer.setFixedHeight(48)
+        footer.setFixedHeight(dp(48))
         footer.setStyleSheet(f"background:{C_PANEL};border-top:1px solid {C_BORDER}")
         fl = QHBoxLayout(footer)
         fl.setContentsMargins(20, 0, 20, 0)
         fl.addStretch()
 
         cancel = QPushButton(u"\u53d6\u6d88")
-        cancel.setFixedSize(80, 32)
+        cancel.setFixedSize(dp(80), dp(32))
+        cancel.setCursor(Qt.PointingHandCursor)
         cancel.setCursor(Qt.PointingHandCursor)
         cancel.setStyleSheet(
             f"QPushButton{{background:{C_PANEL};color:{C_SUBTEXT};border:1px solid {C_BORDER};"
@@ -181,7 +182,7 @@ class SettingsWindow(QWidget):
         fl.addWidget(cancel)
 
         apply_btn = QPushButton(u"\u5e94\u7528")
-        apply_btn.setFixedSize(80, 32)
+        apply_btn.setFixedSize(dp(80), dp(32))
         apply_btn.setCursor(Qt.PointingHandCursor)
         apply_btn.setStyleSheet(
             f"QPushButton{{background:{C_ACCENT};color:#0D1117;border:none;"
@@ -212,7 +213,7 @@ class SettingsWindow(QWidget):
         fs_row.addWidget(fs_label)
 
         self._font_combo = QComboBox()
-        self._font_combo.setFixedWidth(140)
+        self._font_combo.setFixedWidth(dp(140))
         current_idx = 1
         for i, (val, name) in enumerate(FONT_OPTIONS):
             self._font_combo.addItem(name, val)
@@ -230,6 +231,32 @@ class SettingsWindow(QWidget):
         fs_row.addWidget(self._font_combo)
         fs_row.addStretch()
         lo.addLayout(fs_row)
+
+        # Window size
+        win_row = QHBoxLayout()
+        win_row.setSpacing(12)
+        win_label = QLabel("\u7a97\u53e3\u5927\u5c0f")
+        win_label.setStyleSheet(LABEL_STYLE)
+        win_row.addWidget(win_label)
+
+        self._win_combo = QComboBox()
+        self._win_combo.setFixedWidth(dp(140))
+        win_opts = [("small", "\u5c0f (1400\u00d7850)"), ("medium", "\u4e2d (1550\u00d7950)"), ("large", "\u5927 (1980\u00d71280)")]
+        current_ws = self._settings.get("window_size", "large")
+        for i, (val, name) in enumerate(win_opts):
+            self._win_combo.addItem(name, val)
+            if val == current_ws:
+                self._win_combo.setCurrentIndex(i)
+        self._win_combo.setStyleSheet(
+            f"QComboBox{{background:{C_BG};color:{C_TEXT};border:1px solid {C_BORDER};"
+            f"border-radius:4px;padding:5px 10px;font-size:{fs(12)}}}"
+            f"QComboBox:hover{{border-color:#484F58}}"
+            f"QComboBox QAbstractItemView{{background:{C_PANEL};color:{C_TEXT};"
+            f"selection-background:{C_ACCENT};selection-color:#0D1117;border:1px solid {C_BORDER}}}"
+        )
+        win_row.addWidget(self._win_combo)
+        win_row.addStretch()
+        lo.addLayout(win_row)
 
         preview_frame = QFrame()
         preview_frame.setObjectName("preview")
@@ -331,7 +358,7 @@ class SettingsWindow(QWidget):
         test_row = QHBoxLayout()
         test_row.setSpacing(10)
         self._test_btn = QPushButton(u"\u6d4b\u8bd5\u8fde\u63a5")
-        self._test_btn.setFixedSize(88, 30)
+        self._test_btn.setFixedSize(dp(88), dp(30))
         self._test_btn.setCursor(Qt.PointingHandCursor)
         self._test_btn.setStyleSheet(
             f"QPushButton{{background:{C_ACCENT};color:#0D1117;border:none;"
@@ -435,6 +462,10 @@ class SettingsWindow(QWidget):
         idx = self._font_combo.currentIndex()
         new_font_size = FONT_OPTIONS[idx][0]
         self._settings["font_size"] = new_font_size
+
+        ws = self._win_combo.currentData()
+        if ws:
+            self._settings["window_size"] = ws
 
         self._settings["agent"] = {
             "api_base": self._ai_url.text().strip(),

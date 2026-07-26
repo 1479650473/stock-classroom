@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import (
 
 from frontend.platform.plugin_base import IPlugin, PluginRegion
 from frontend.platform.local_worker import LocalWorker
+from frontend.platform.theme import dp, dps
 
 
 # Ensure backend/ is importable for data_manager + indicators
@@ -40,25 +41,25 @@ class KlinePlugin(IPlugin):
         self._k_search = QLineEdit()
         self._k_search.setPlaceholderText("搜索股票代码或名称")
         self._k_search.setStyleSheet(
-            "QLineEdit{background:#161B22;color:#E6EDF3;border:1px solid #30363D;"
-            "border-radius:6px;padding:5px 12px;font-size:12px;}"
-            "QLineEdit:focus{border-color:#D4A574;}")
+            f"QLineEdit{{background:#161B22;color:#E6EDF3;border:1px solid #30363D;"
+            f"border-radius:{dps(6)};padding:5px 12px;font-size:{dps(12)}}}"
+            f"QLineEdit:focus{{border-color:#D4A574;}}")
         self._k_search.returnPressed.connect(self._search_stock)
         k_bar.addWidget(self._k_search, 1)
 
-        k_bar.addWidget(QLabel("指标", styleSheet="color:#8B949E;font-size:12px;font-weight:500;"))
+        k_bar.addWidget(QLabel("指标", styleSheet=f"color:#8B949E;font-size:{dps(12)};font-weight:500;"))
 
         self._btn_macd = QPushButton("MACD")
         self._btn_macd.setObjectName("indBtn")
         self._btn_macd.setCheckable(True)
         self._btn_macd.setChecked(True)
-        self._btn_macd.setFixedHeight(26)
+        self._btn_macd.setFixedHeight(dp(26))
         self._btn_macd.clicked.connect(lambda: self._switch_indicator("macd"))
 
         self._btn_rsi = QPushButton("RSI")
         self._btn_rsi.setObjectName("indBtn")
         self._btn_rsi.setCheckable(True)
-        self._btn_rsi.setFixedHeight(26)
+        self._btn_rsi.setFixedHeight(dp(26))
         self._btn_rsi.clicked.connect(lambda: self._switch_indicator("rsi"))
 
         k_bar.addWidget(self._btn_macd)

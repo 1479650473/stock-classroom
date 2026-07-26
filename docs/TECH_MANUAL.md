@@ -1,557 +1,219 @@
 ﻿# stock-classroom — 技术手册
 
 > 项目路径: `D:\小光工作区\projects\stock-classroom`
-> 版本: v4.1 | 最后更新: 2026-07-24
+> 版本: v4.2 | 最后更新: 2026-07-27
 > 主题: 暗色 (#0D1117 / #161B22 / #D4A574)
 
 ---
 
 ## 一、项目概述
 
-A 股量化选股桌面应用。v4.1 在插件化架构上扩展了**AI 助手**、**设置面板**、**数据管道**和**伴侣面板**机制。平台骨架独立运行，功能模块以插件形式挂载，单插件崩溃不影响全局。
+A 股量化选股桌面应用。v4.2 在插件化架构上新增了**模拟交易系统**（独立后端引擎 + 前端交易面板）、**AI Agent 工具调用**（自主下单关联交易）、**UI 自适应缩放**系统（dp 函数 + 19-23px 字体）和**窗口大小设置**。
 
-桌面端入口: `desktop_app.py` (启动器 30 行)，平台壳: `frontend/platform/platform_shell.py`。
-Flask API 入口: `run_server.py` (可选，桌面端直连 SQLite 不依赖)。
-数据通过 AKShare / Sina API 在线获取。
+桌面端入口: `desktop_app.py` (30行)，平台壳: `frontend/platform/platform_shell.py`。
 
 ### 核心功能
 
-- 三大指数实时行情 + K 线图 (QPainter 原生绘制, MA5/10/20/60 + MAVOL5, MACD/RSI)
-- 多因子选股 Top 20 (43 因子 + DSL 条件引擎, 外置 JSON 评分卡)
-- 筹码分布计算 (获利比例/平均成本/集中度, JS 引擎本地计算)
-- 周K线自动聚合 (从日线 SQL 窗口函数生成)
-- 数据中心面板 (表浏览 + 股票分层双模式, 线程安全)
-- 内置日志终端 (stdout/stderr 重定向, 暗色等宽字体)
-- 全量数据自动维护 (Task Scheduler 每日 18:00 触发)
-- 暗色主题全局 UI
+- 模拟交易系统: 账户管理、市价/限价下单、撮合引擎、持仓管理、成交记录、风控(T+1/仓位30%)
+- AI Agent 自主交易: 6工具 function calling，查行情→分析→下单全自动
+- K 线图表: QPainter 60fps+，MA/MACD/RSI/BOLL，十字光标+信息卡
+- 多因子选股 Top 20: 43因子 DSL 引擎
+- 筹码分布: JS 引擎本地计算
+- 数据管道: 11步一键更新
+- 数据中心: 表浏览 + 股票分层
+- 动态主题: dp() 缩放 + fs() 字体 + 窗口大小可选
 
 ---
 
-## 二、UI 架构 (v4.0 插件化)
+## 二、UI 架构
 
-### 2.1 平台设计
+### 2.1 插件清单 (11个)
 
-v4.0 从"上帝类"重构为**插件化平台架构**。`PlatformShell` (~200行) 是平台骨架，所有功能以插件形式挂载：
+| 插件ID | 显示名 | 区域 | 说明 |
+|--------|--------|------|------|
+| search | 搜索 | TOPBAR | 顶栏搜索框 |
+| settings | 设置 | TOPBAR | 字体/窗口/供应商配置 |
+| agent | AI助手 | TOPBAR | ⭐ 浮动聊天窗 + 工具调用 |
+| market | 市场 | LEFT | 大盘指数 + 板块 |
+| picks | 选股 | LEFT | 43因子评分 Top 20 |
+| holdings | 持仓 | LEFT | 模拟持仓 |
+| trade | 交易 | LEFT | **模拟交易面板 (v4.2)** |
+| datapipeline | 数据管道 | LEFT | 11步数据更新 |
+| datacenter | 数据中心 | LEFT | 表浏览 + 股票分层 |
+| trainer | 回测训练 | LEFT | **占位 (外部独立开发)** |
+| kline | K线 | RIGHT | K线图 + 指标切换 |
 
-```
-PlatformShell (platform_shell.py)
-├─ TopBar: Brand │ [TOPBAR: SearchPlugin] [SettingsPlugin ⚙] [AgentPlugin ⭐] │ 刷新 │ 日志
-├─ 左侧导航栏 (72px, 动态生成, icon+文字竖排)
-│   📊市场  🔍选股  📦持仓  🗄数据  📈K线
-├─ QSplitter
-│   ├─ Left Widget Stack   ← LEFT 区域插件 ErrorBoundary 包裹
-│   └─ Right Widget Stack  ← RIGHT 区域插件 ErrorBoundary 包裹
-├─ StatusBar + LogWindow (日志终端)
-└─ 水印: develop by siyuan-chen & xiaoguang
-```
-
-**核心原则**: Platform Shell 不 import 任何 panel，只 hold PluginManager。插件崩溃仅影响自身区域，平台照常运行。
-
-### 2.2 插件清单
-
-| 插件ID | 显示名 | 图标 | 区域 | 面板文件 | 说明 |
-|--------|--------|------|------|----------|------|
-| search | 搜索 | 🔎 | TOPBAR | `plugins/search/plugin.py` | 顶栏搜索框，Enter 搜索股票 |
-| settings | 设置 | ⚙ | TOPBAR | `plugins/settings/plugin.py` → `dialog.py` | 字体大小 + AI 供应商配置 |
-| agent | AI助手 | ⭐ | TOPBAR | `plugins/agent/plugin.py` → `chat_window.py` | 浮动 AI 聊天窗 (DeepSeek/智谱/Kimi) |
-| market | 市场 | 📊 | LEFT | `plugins/market/plugin.py` → `panel.py` | 大盘指数 + 板块 |
-| picks | 选股 | 🔍 | LEFT | `plugins/picks/plugin.py` → `panel.py` | 43因子评分 |
-| holdings | 持仓 | 📦 | LEFT | `plugins/holdings/plugin.py` → `panel.py` | 模拟持仓 |
-| datapipeline | 数据管道 | 🔄 | LEFT | `plugins/datapipeline/plugin.py` | 10步数据更新 + 伴侣面板 |
-| datacenter | 数据中心 | 🗄 | LEFT | `plugins/datacenter/plugin.py` | 表浏览 + 股票分层 + 伴侣面板 |
-| kline | K线 | 📈 | RIGHT | `plugins/kline/plugin.py` | K线图 + 指标切换 |
-
-### 2.3 插件系统核心文件
+### 2.2 插件系统核心文件
 
 | 文件 | 职责 |
 |------|------|
-| `frontend/platform/plugin_base.py` | `IPlugin` 抽象接口 + `PluginRegion` 枚举 + `PlatformBus` 信号总线 + `PlatformServices` 服务注入 |
-| `frontend/platform/plugin_manager.py` | `PluginManager`: 扫描 `plugins/` → importlib 加载 → 注册 → 激活/切换 → `ErrorBoundary` 错误隔离 |
-| `frontend/platform/theme.py` | 全局 STYLE 样式表 + COLORS 配色字典 |
-| `frontend/platform/log_window.py` | `LogStream` (stdout重定向) + `LogWindow` (浮动终端) |
+| `frontend/platform/plugin_base.py` | IPlugin 接口 + PluginRegion + PlatformBus + PlatformServices |
+| `frontend/platform/plugin_manager.py` | PluginManager: 发现/注册/激活/ErrorBoundary |
+| `frontend/platform/theme.py` | 全局样式 + build_style() + fs()/dp() 缩放函数 |
+| `frontend/platform/log_window.py` | LogStream + LogWindow 日志终端 |
 | `frontend/platform/local_worker.py` | 统一后台线程 QThread |
-| `frontend/platform/platform_shell.py` | 平台骨架 QMainWindow (~200行) |
-| `desktop_app.py` | 启动入口 (~30行) |
+| `frontend/platform/platform_shell.py` | 平台骨架 QMainWindow |
 
-### 2.4 错误隔离 (ErrorBoundary)
+### 2.3 动态主题与自适应缩放 (v4.2)
 
-每个插件的 `create_widget()` 和 `on_activate()` 被 `ErrorBoundary` 包裹：
-- 创建失败 → 显示 "插件加载失败" + 重试按钮
-- 激活失败 → 打印 traceback，不影响其他插件
-- 任何插件抛异常都只在自身区域内展示错误，平台不崩溃
+`theme.py` 提供三层缩放机制:
 
-### 2.5 异步数据加载
+```python
+fs(size)    # 字体: fs(13) at base 21 → "21px"
+dp(size)    # 尺寸: dp(48) at base 21 → 78 (int)
+dps(size)   # 尺寸CSS: dps(10) at base 21 → "16px"
+```
 
-统一使用 **LocalWorker** (QThread, `frontend/platform/local_worker.py`) 加载本地数据：
+所有插件使用 `dp(x)` 代替硬编码像素，widget尺寸自动跟随字体比例 (×1.62 at base 21)。全局 CSS 用 `$fsXX` 占位符自动替换。
 
-- 桌面端纯本地运行，直连 SQLite，不经 Flask API
-- K 线数据: LocalWorker → `get_kline_data()` + `enrich_kline()`
-- 评分计算: LocalWorker → `FactorScorer.score_batch()`
-- 筹码数据: 如需刷新则直接调用 JS 引擎本地计算
+**字体范围: 19-23px** (基准 21px), 窗口默认 1980×1280，Settings → 个性显示可切换小/中/大。
 
-### 2.6 日志终端
+### 2.4 窗口大小设置 (v4.2)
 
-`frontend/platform/log_window.py` (提取自旧 desktop_app.py):
+`backend/configs/settings.json` 中 `window_size` 字段:
+- `small`: 1400×850
+- `medium`: 1550×950
+- `large`: 1980×1280 (默认)
 
-- `LogStream(QObject)`: 重写 `write()` / `flush()`，通过 `text_written` 信号发射
-- `LogWindow(QWidget)`: QPlainTextEdit 容器，支持自动滚底、清空、行数统计
-- 顶栏 "日志" 按钮 toggle 显示/隐藏
-- 启动时自动将 sys.stdout / sys.stderr 重定向到 LogStream
-
-### 2.7 全局样式
-
-`frontend/platform/theme.py` 中 STYLE 常量定义。
-
-核心配色 (暗色):
-
-| 元素 | 色值 | 说明 |
-|------|------|------|
-| 底色 | `#0D1117` | 最深层背景 |
-| 面板/卡片 | `#161B22` | 面板底色 |
-| 边框 | `#21262D` | 边框/分割线 |
-| 主文字 | `#C9D1D9` | 高对比白 |
-| 辅助文字 | `#8B949E` | 灰色 |
-| 强调色 | `#D4A574` | 暖金 (选中/高亮/品牌) |
-| 选中背景 | `#1A2332` | 导航选中底色 |
-| 次强调 | `#1C2128` | hover 背景 |
-| 涨 (A股红) | `#E54D2E` | 上涨/阳线 |
-| 跌 (A股绿) | `#3FB950` | 下跌/阴线 |
-| 均线5 | `#FFA726` | MA5 橙色 |
-| 均线10 | `#FDBF6E` | MA10/DEA 暖黄 |
-| 均线20 | `#CE93D8` | MA20 紫色 |
-| 均线60 | `#64B5F6` | MA60 蓝色 |
-| DIF | `#FF6B6B` | MACD DIF |
-| MACD柱 | `#E54D2E` / `#3FB950` | MACD 红涨绿跌 |
-
-全局字号: 基准 13px，导航 14px，表头/标签 12px，K线坐标轴 9pt，日志终端 11px。
-
-含完整 ScrollBar、Tooltip、QHeaderView、QLineEdit、QCheckBox、QComboBox 等控件全面样式覆盖。
-
-### 2.8 动态主题 (v4.1)
-
-`theme.py` 使用 `build_style(base_fs)` 动态生成 CSS 样式表，`$fs` 占位符在模板中被替换。`fs()` / `fsi()` 辅助函数供面板代码使用。
-
-用户在设置中切换字体大小 → `build_style(new_size)` 重新生成 → `app.setStyleSheet()` 即时生效，无需重启。
-
-### 2.9 AI 助手 (Agent 插件) — v4.1 新增
-
-`frontend/plugins/agent/` — TOPBAR ⭐ 按钮打开浮动 AI 聊天窗。
-
-| 文件 | 职责 |
-|------|------|
-| `chat_window.py` | 浮动 QDialog，对话历史、聊天气泡、Enter 发送 |
-| `llm_client.py` | 封装 openai SDK，兼容 OpenAI / Ollama / DeepSeek / 智谱 / Kimi 全部 OpenAI 兼容 API |
-| `chat_worker.py` | QThread 包装 LLM 调用，避免阻塞 UI |
-| `config.py` | 读写 `settings.json` 中 agent 配置段 |
-
-**热配置加载**: 每次 `_send()` 前调用 `load_agent_config()` 重建 `LLMClient`，设置变更无需重启聊天窗。
-
-**供应商预设** (设置面板 AI 标签页):
-
-| 供应商 | API URL | 默认模型 |
-|--------|---------|---------|
-| DeepSeek V4 Pro | `https://api.deepseek.com/v1` | `deepseek-v4-pro` |
-| DeepSeek V4 Flash | `https://api.deepseek.com/v1` | `deepseek-v4-flash` |
-| 智谱 GLM-4 Flash | `https://open.bigmodel.cn/api/paas/v4` | `glm-4-flash` |
-| Kimi K2.6 | `https://api.moonshot.cn/v1` | `kimi-k2.6` |
-
-选择供应商自动填入 URL + 模型名，填 API Key → 测试连接 → 应用即时生效。
-
-### 2.10 设置面板 (Settings 插件)
-
-`frontend/plugins/settings/` — 左导航 (QListWidget) + 右内容 (QStackedWidget)，窗口 1080×950。
-
-- **显示标签页**: 字体大小选择 (小11/中13/大15/特大17) + 实时预览
-- **AI 标签页**: 供应商下拉框 + API URL / Key / Model + 测试连接按钮
-
-配置持久化到 `backend/configs/settings.json`，启动时 `load_settings()` 加载并与 `DEFAULTS` 深合并。
+启动时 platform_shell 读取设置并 setGeometry，设置面板可视切换，重启生效。
 
 ---
 
-## 三、K 线图 (QPainter 原生绘制)
+## 三、模拟交易系统 (v4.2 新增)
 
-### 3.1 技术选型演进
+### 3.1 架构
 
-组件位于 `frontend/plugins/kline/widget.py` (v4.0):
+```
+frontend/plugins/trade/panel.py (UI)
+  └─ backend/trade_engine/engine.py (TradeEngine)
+       └─ sim_trade.db (SQLite)
+```
 
-| 版本 | 引擎 | 帧率 | 状态 |
-|------|------|------|------|
-| v2.8 | matplotlib (FigureCanvasQTAgg) | ~3fps | 已移除 |
-| v3.0 | pyqtgraph | — | 已移除 |
-| v3.1+ | **QPainter (当前)** | **60fps+** | 使用中 |
+### 3.2 TradeEngine
 
-### 3.2 渲染架构
+| 类别 | 方法 | 说明 |
+|------|------|------|
+| 账户 | create/get/list/reset | 完整CRUD |
+| 下单 | place_order(..., market/limit, current_price) | 市价立即成交，限价挂单冻结 |
+| 撤单 | cancel_order(order_id) | 解冻资金/股票 |
+| 撮合 | check_orders(account_id, code, price) | 价格到达触发限价单成交 |
+| 持仓 | get_positions / update_position_price | 现价更新 + 浮动盈亏 |
+| 费率 | 佣金0.03%(万三) + 卖出印花税0.05% | A股标准 |
+| 风控 | 仓位30%上限 + T+1禁止当日卖出 | A股规则 |
 
-单次 paintEvent 内完成全图绘制:
+### 3.3 交易面板 UI
+
+| 组件 | 功能 |
+|------|------|
+| AccountBar | 账户选择/新建/重置 |
+| SummaryCards | 总资产/可用/冻结/市值/浮盈/累计 6指标 |
+| StockSearch | 输入代码/名称 250ms防抖搜索，下拉选股 |
+| OrderPanel | 买/卖切换，市价/限价，数量，价格，预估成本 |
+| PendingOrders | 限价委托待成交 + 撤单按钮 |
+| PositionTable | 持仓明细，点击预填卖单+打开K线 |
+| TradeHistory | 成交流水 |
+
+### 3.4 价格轮询
+
+QTimer 每5秒: fetch_realtime_prices(持仓+挂单代码) → update_position_price → check_orders → 刷新UI。
+
+---
+
+## 四、AI Agent 工具调用 (v4.2 新增)
+
+### 4.1 架构
+
+```
+用户输入 → ChatWindow._send()
+  → ChatWorker(QThread).run()
+    → loop (max 5 rounds):
+      → LLMClient.chat_with_tools(messages, TOOLS)
+      → if tool_calls: execute_tool() → append result → loop
+      → if content: emit response → display bubble
+```
+
+### 4.2 6 个工具
+
+| 工具 | 输入 | 输出 |
+|------|------|------|
+| `get_account_summary` | — | 总资产/可用/冻结/市值/盈亏 |
+| `get_positions` | — | 持仓明细列表 |
+| `get_stock_price` | code | 实时现价/涨跌幅 |
+| `search_stock` | keyword | 模糊搜索匹配列表 |
+| `place_order` | code,name,side,type,price,qty | 成交结果/挂单确认 |
+| `cancel_order` | order_id | 撤单确认 |
+
+### 4.3 AI账户
+
+Agent 使用独立的 "AI账户" (100,000 初始资金)，与主账户隔离。启动时自动创建。
+
+### 4.4 文件
+
+| 文件 | 职责 |
+|------|------|
+| `agent/tools.py` | 6工具 schema + ToolExecutor(TradeEngine绑定) |
+| `agent/llm_client.py` | chat_with_tools() — OpenAI function calling |
+| `agent/chat_worker.py` | QThread 工具调用循环 (max 5 rounds) |
+| `agent/config.py` | system_prompt: 量化交易AI，自主决策 |
+
+---
+
+## 五、K 线图表
+
+### 5.1 QPainter 渲染架构
 
 ```
 paintEvent()
   +-- _draw_price()  -- K线蜡烛 + MA5/10/20/60 + Y轴标注
-  +-- _draw_vol()    -- 成交量柱 (红涨绿跌) + MAVOL5 + Y轴
-  +-- _draw_ind()    -- 副图: MACD (DIF/DEA/柱) 或 RSI14 (30/50/70线)
-  +-- _draw_dates()  -- 底部日期标签
-  +-- _draw_title()  -- 顶部标题栏: 代码 | 名称 | 总K线数 | 最新价 | 涨跌幅
-  +-- _draw_cross()  -- 十字光标 + 信息卡片 (日期/O/H/L/C/成交量/指标值)
+  +-- _draw_vol()    -- 成交量柱 (红涨绿跌) + MAVOL5
+  +-- _draw_ind()    -- MACD (DIF/DEA/柱) 或 RSI14 (30/50/70线)
+  +-- _draw_dates()  -- 日期标签
+  +-- _draw_title()  -- 代码 | 名称 | K线数 | 最新价 | 涨跌幅
+  +-- _draw_cross()  -- 十字光标 + 信息卡片
 ```
 
-### 3.3 配色常量
-
-| 常量 | 色值 | 用途 |
-|------|------|------|
-| `_BG` | `#0D1117` | 画布底色 |
-| `_UP` | `#E54D2E` | 阳线 (收盘≥开盘) |
-| `_DOWN` | `#3FB950` | 阴线 (收盘<开盘) |
-| `_ACCENT` | `#D4A574` | 十字光标/标题代码/选中高亮 |
-| `_MA5` | `#FFA726` | MA5 均线 |
-| `_MA10` | `#FDBF6E` | MA10 / DEA |
-| `_MA20` | `#CE93D8` | MA20 |
-| `_MA60` | `#64B5F6` | MA60 |
-| `_DIF` | `#FF6B6B` | MACD DIF 线 |
-| `_GRID` | `#1C2128` | 网格线 |
-| `_TEXT` | `#C9D1D9` | 主文字 |
-| `_SUBTEXT` | `#8B949E` | 次文字/坐标标注 |
-| `_VOL_UP` | `#E54D2E` | 成交量阳柱 |
-| `_VOL_DOWN` | `#3FB950` | 成交量阴柱 |
-| `_CROSS` | `#D4A574` | 十字光标线 |
-
-### 3.4 交互机制
-
-| 交互 | 事件 | 行为 |
-|------|------|------|
-| 缩放 | wheelEvent | 以鼠标位置为中心, 缩放比 3/4 (放大) / 4/3 (缩小), 范围 10~全量K线 |
-| 平移 | mousePressEvent + mouseMoveEvent | 左键拖动, 记录起始 visible range 实时更新 _vs/_ve |
-| 光标 | mouseMoveEvent | 鼠标 x 映射到 K线索引 _ch, 三面板同步十字线 |
-| 信息卡 | mouseMoveEvent | 显示日期/O/H/L/C/成交量/指标值, 位置自适应不越界 |
-| 切换 | switch_indicator(t) | MACD <-> RSI 副图切换, 顶部 segmented control 按钮 highlight |
-
-### 3.5 数据流 (v3.2 本地模式)
-
-KlineWidget 通过 `open_kline(code)` 触发数据加载:
-
-1. `LocalWorker` (QThread) 直接调用 `get_kline_data(code)` 从 kline.db 查询日K线
-2. 调用 `enrich_kline()` 计算 MA/MACD/RSI 指标 (基于 indicators.py)
-3. work 完成后通过 `result("kline", data)` 信号回主线程
-4. 主线程 `_on_kline_loaded()` 调用 `kline_widget.set_data(data)`
-5. 整体加载耗时约 8ms，零 HTTP 请求
-
-对比旧版 ApiThread → Flask → kline.db 链路，延迟从 ~50ms 降至 ~8ms，且彻底解除桌面端对 Flask 的依赖。
+v4.2: 图表边距(ml/mt/mb) + 文字坐标 + 交互菜单位置全部使用 dp() 等比缩放。
 
 ---
 
-## 四、多因子评分引擎
+## 六、多因子评分引擎
 
-### 4.1 整体架构
-
-`backend/factor_engine/` 完整评分框架:
-
-```
-评分卡 JSON (backend/configs/default_scorecard.json)
-  -> FactorScorer.score_batch(db_path, top_n=20)
-    -> sqlite3 批量查询 (一次性加载候选股60根K线)
-      -> FactorCalculator.compute_all() -- 43因子
-      -> evaluate_indicator_conditions() -- DSL 26条件
-      -> 加权汇总 -> clamp [0, 100]
-        -> StockScore (to_api_dict -> JSON)
-          -> picks_panel.py (QTableWidget + tooltip)
-```
-
-前端通过 LocalWorker (QThread) 异步调用。
-
-### 4.2 文件结构
-
-```
-backend/
-  factor_engine/
-    __init__.py     -- 导出 FactorScorer / FactorCalculator
-    models.py       -- 数据模型 (StockScore / FactorGroupResult / ConditionResult 等 dataclass)
-    calculator.py   -- 43 个因子计算, @register_factor 装饰器注册
-    dsl.py          -- 条件 DSL 求值器 (支持递归 and/or/not)
-    config.py       -- 评分卡 JSON 加载/校验
-    scorer.py       -- 评分调度主类 (FactorScorer)
-    filters.py      -- 硬性过滤 (退市/ST/停牌/次新股)
-  configs/
-    default_scorecard.json  -- 5 因子组, 26 条条件
-```
-
-### 4.3 默认评分卡
-
-5 大因子组, 权重合计 100%, 总分 0~100:
-
-| 因子组 | 权重 | 最大 | 最小 | 指标数 | 条件数 | 评分重点 |
-|------|------|------|------|-------|-------|---------|
-| 趋势 | 30% | 30 | -20 | 3 | 8 | 均线多头排列, MA60支撑, 趋势方向 |
-| 动量 | 25% | 25 | -20 | 2 | 6 | MACD金叉零轴红柱, RSI多空区间 |
-| 量价 | 20% | 20 | -15 | 2 | 5 | 放量缩量, 量增价涨 |
-| 价格形态 | 15% | 15 | -10 | 2 | 4 | 日涨幅区间, 振幅 |
-| 稳定性 | 10% | 10 | -10 | 1 | 3 | 连涨天数, 振幅, 10日涨跌 |
-
-评分规则: 组内各指标得分独立计算后累加 -> 分别 clamp 到各组 [min, max] -> 各组加权得分直接相加 -> 整体 clamp 到 [0, 100]。
-
-### 4.4 DSL 条件引擎
-
-每条条件由 JSON 片段定义, 支持递归组合:
-
-```json
-{"type": "gt", "args": ["MA5", "MA10"], "score": 4, "max": 4, "reason": "MA5在MA10之上"}
-```
-
-| 类型 | 参数 | 语义 |
-|------|------|------|
-| gt / gte | 2 | 大于/大于等于 |
-| lt / lte | 2 | 小于/小于等于 |
-| between | 3 | 闭区间 |
-| cross_above | 2 | 上穿 (前一周不满足) |
-| cross_below | 2 | 下穿 |
-| and / or | N | 逻辑组合 |
-| not | 1 | 逻辑非 |
-| true | 0 | 恒通过 |
-
-参数字符串从因子值字典查值, 数字直接使用。score 可正可负, max 限制正分上限。
-
-### 4.5 43 个注册因子
-
-| 分类 | 因子 ID | 最少K线 |
-|------|---------|---------|
-| 基本 | CLOSE / OPEN / HIGH / LOW / VOLUME | 1 |
-| 价格 | CHANGE_PCT / AMP | 2 |
-| 均线 | MA5 / MA10 / MA20 / MA60 | 5~60 |
-| 均线比较 | MA5_GT_MA10 / MA10_GT_MA20 / MA_ALIGN_SCORE | 10~20 |
-| 价格vs均线 | CLOSE_GT_MA5 / CLOSE_GT_MA10 / CLOSE_GT_MA20 / CLOSE_GT_MA60 | 5~60 |
-| 均线斜率 | MA5_SLOPE | 6 |
-| 动量 | MACD_DIF / MACD_DEA / MACD_BAR | 26 |
-| MACD信号 | MACD_ABOVE_ZERO / MACD_CROSS / MACD_BAR_RISING | 26~27 |
-| 超买超卖 | RSI6 / RSI14 / RSI_OVERSOLD / RSI_OVERBOUGHT | 7~15 |
-| 布林 | BOLL_UP / BOLL_MID / BOLL_DN / BOLL_POS | 20 |
-| 成交量 | VOL_RATIO_5 / VOL_RATIO_10 / VOL_UP_WITH_PRICE | 5~10 |
-| 价格位置 | PRICE_POS_20 / PRICE_POS_60 | 20~60 |
-| 价格趋势 | PRICE_CHANGE_5D / PRICE_CHANGE_10D / PRICE_CHANGE_20D | 6~21 |
-| 连续 | CONSECUTIVE_UP / CONSECUTIVE_DOWN | 2 |
-
-新增因子: calculator.py 中用 @register_factor("FACTOR_ID") 注册。
-
-### 4.6 性能
-
-| 场景 | 耗时 |
-|------|------|
-| 批量扫描 4000 只 (含SQL+计算+评分) | 8~9 秒 |
-| 单只评分 (60根K线, 43因子, 26条件) | ~2ms |
-| 数据库策略 | 200只一批, 避免SQL过长 |
-
-### 4.7 使用方式
-
-```python
-from backend.factor_engine import FactorScorer
-
-scorer = FactorScorer()
-score = scorer.score_stock("600519", "贵州茅台", klines)
-print(scorer.explain(score))
-
-scores = scorer.score_batch("data/kline.db", top_n=20)
-for s in scores:
-    print(s.code, s.name, s.total_score)
-
-scores = scorer.score_custom_list("data/kline.db", ["600519", "000858"])
-```
+`backend/factor_engine/` — 43因子 DSL 引擎，5组26条件，总分0-100，8-9秒扫4000只。
 
 ---
 
-## 五、数据层
+## 七、数据层
 
-### 5.1 文件职责
-
-| 文件 | 职责 |
-|------|------|
-| app.py | Flask API (26 路由), 数据对外接口 |
-| data_manager.py | SQLite DML + AKShare 调度 + 筹码/周线/CLI |
-| akshare_source.py | AKShare 调用封装 + API 自文档字典 |
-| indicators.py | 技术指标: MACD/RSI/MA/布林带 + enrich_kline() |
-| cache_modules.py | 资金流向/涨停板缓存 (扩展) |
-| strategy_engine.py | 旧版 6 维评分 (Flask API 端仍在用, 桌面端已用 FactorScorer 替代) |
-
-### 5.2 数据源
-
-| 数据源 | API | 用途 |
-|--------|-----|------|
-| AKShare 东方财富 | stock_zh_a_spot_em() | 实时行情 (5456只) |
-| AKShare 东方财富 | stock_zh_index_spot_em() | 指数行情 |
-| Sina API | stock_zh_a_daily() | 历史K线 (含 turnover) |
-| AKShare | stock_zt_pool_em() | 涨停池 |
-| JS引擎 | cyq_calculator.js | 筹码分布 (py_mini_racer 执行) |
-
-### 5.3 数据流
-
-```
-Sina API -> ak_fetch_kline() -> kline_{year} 分年表 (9字段含turnover)
-                                   |
-                                 kline_daily 视图 (UNION ALL 27张)
-                                   |
-                                 build_weekly_kline() -> kline_weekly
-                                   |
-                                 ak_get_cyq_chip_data() -> chip_distribution
-```
-
-### 5.4 重要约定
-
-- data_manager.py 写入分年表: INSERT INTO kline_{year} (非 kline_daily 视图)
-- 东财 push2/push2his API 在 Python 中全部被墙 (OpenSSL 指纹), 用 Sina API 替代
-- JS 引擎: py_mini_racer.MiniRacer 执行 cyq_calculator.js
-
----
-
-## 六、数据库架构
-
-### 6.1 双库设计
+### 数据库
 
 | 数据库 | 大小 | 用途 |
 |--------|------|------|
-| data/kline.db | ~510 MB | 主库: 所有持久化历史数据 |
-| data/stock_cache.db | ~4 MB | 缓存库: 仅实时快照 |
+| kline.db | ~510 MB | 主库: K线/股票列表/筹码/资金流/龙虎榜 |
+| stock_cache.db | ~4 MB | 缓存库: 实时快照 |
+| sim_trade.db | ~10 KB | **模拟交易 (v4.2)**: accounts/orders/positions/trades |
 
-### 6.2 kline.db 主库
+### 数据源
 
-kline_daily 按年份拆分为 27 张分年表 (kline_2000~kline_2026), UNION ALL 视图兼容旧查询。
-
-| 表 | 行数 | 说明 |
-|------|------|------|
-| kline_daily (视图) | 3,411,365 | 日K线 UNION ALL 27张分年表 |
-| kline_2000~kline_2026 | 27张 x ~126K/年 | 分年表 (含 turnover 列) |
-| kline_weekly | 10,379 | 周K线 (从日线聚合) |
-| stock_list | 5,209 | 股票名录 |
-| chip_distribution | 26,244 | 筹码分布 |
-| north_flow | 2,706 | 北向资金 |
-| lhb_stock | 1,093 | 龙虎榜 |
-| high_low | 502 | 创新高新低 |
-| limit_up | 47 | 涨停池 |
-| lhb_daily | — | 龙虎榜详情（东方财富 akshare 导入）|
-| market_daily | 881 | 市场日线 |
-| fund_flow | 0 | 资金流向 (暂不可用) |
-| sector_data | 0 | 板块行情 (交易时段) |
-| data_update_log | 2 | 更新日志 |
-
-K线时间范围: 2000-01-04 ~ 至今。每张分年表独立 (code, date) 索引。
-
-### 6.3 stock_cache.db 缓存库
-
-| 表 | 说明 |
-|------|------|
-| stock_spot | 沪深A股实时行情快照 (含PE/PB/市值) |
-
-仅存储可丢弃的实时快照，减少对 API 的重复请求。
+AKShare / Sina API。东财 push2 API Python 被墙 (OpenSSL 指纹)，用 Sina API 替代。
 
 ---
 
-## 七、API 路由
-
-| 路由 | 说明 | 数据源 |
-|------|------|--------|
-| GET /api/market | 三大指数实时行情 | stock_cache.db |
-| GET /api/market/overview | 市场概览 | kline.db |
-| GET /api/market/sectors | 板块行情 | kline.db |
-| GET /api/market/north-flow | 北向资金 | kline.db -> north_flow |
-| GET /api/market/lhb | 龙虎榜 | kline.db -> lhb_stock |
-| GET /api/market/limit-up | 涨停池 | kline.db -> limit_up |
-| GET /api/market/high-low | 创新高新低 | kline.db -> high_low |
-| GET /api/picks | 选股 Top 20 | strategy_engine (Flask端) |
-| GET /api/kline?code=X&days=180 | K线数据 | kline.db -> kline_daily 视图 |
-| GET /api/kline/weekly?code=X&days=52 | 周K线 | kline.db -> kline_weekly |
-| GET /api/cyq?code=X | 筹码分布 | kline.db -> chip_distribution |
-| GET /api/cyq/refresh?code=X | 刷新筹码缓存 | JS引擎计算后写入 |
-| GET /api/holdings | 模拟持仓列表 | DUMMY_HOLDS / 占位数据 |
-| GET /api/holdings/summary | 持仓汇总 | 持仓数据聚合 |
-| GET /api/stock/list | 股票名录 | kline.db -> stock_list |
-| GET /api/stock/search?q=X | 模糊搜索 | kline.db -> stock_list |
-| GET /api/stock/stats | 数据库统计 | kline.db |
-| GET /api/stock/delisted | 退市股票 | kline.db -> stock_list |
-| GET /api/stock/update-logs | 更新日志 | kline.db -> data_update_log |
-| GET /api/stock/klines-by-year?code=X | 股票分年K线 | kline_{year} |
-| GET /db/monitor | 数据库监控 | kline.db |
-| GET /db/tables | 表结构信息 | kline.db |
-| GET /db/table/{tbl} | 分页查询表数据 | kline.db |
-| GET /db/dc/stock-layers?code=X | 股票K线分层详情 | kline.db |
-| GET /diagnose_akshare | AKShare 连通性诊断 | AKShare API |
-| GET / | index.html | 静态首页 |
-
-桌面端 v3.2 已不依赖任何 HTTP 路由，直接通过 LocalWorker 访问本地数据库和计算引擎。
-
----
-
-## 八、每日自动维护
-
-### 8.1 维护流程
-
-`scripts/daily_maintenance.py`，周一~周五 18:00 (Task Scheduler) 执行:
-
-| 步骤 | 内容 | 说明 |
-|------|------|------|
-| 1 | K线数据更新 | 增量拉取最新日K线, 写入对应分年表 |
-| 2 | 周K线聚合 | 从日线实时聚合最新一周 |
-| 3 | 缓存刷新 | 北向资金/龙虎榜/创新高/涨停池 |
-| 4 | 筹码分布 | 选股列表 Top20 重新计算 |
-| 5 | 日志归档 | 清理 30 天前旧日志 |
-
-### 8.2 手动运行
-
-```bash
-python scripts/daily_maintenance.py
-python scripts/daily_maintenance.py --date 20260710 --catch-up 30
-python scripts/daily_maintenance.py --rebuild-weekly
-python scripts/daily_maintenance.py --skip-cache --skip-cyq
-```
-
-### 8.3 定时任务
-
-```powershell
-schtasks.exe /CREATE /XML "scripts\daily_stock_update.xml" /TN "stock-classroom-daily"
-```
-
-### 8.4 日志
-
-```
-scripts/logs/maintenance_YYYYMMDD.log
-```
-
----
-
-## 九、筹码分布
-
-- 数据来源: Sina API stock_zh_a_daily() (含 turnover/outstanding_share)
-- 计算引擎: frontend/cyq_calculator.js (从 AKShare stock_cyq_em 提取)
-- 执行器: py_mini_racer.MiniRacer
-- 参数: ak_get_cyq_chip_data(code, days=1250, window=250) 滑动窗口
-- 缓存: kline.db -> chip_distribution
-
----
-
-## 十、已知问题与待办
+## 八、已知问题与待办
 
 ### 已知问题
 
-1. **kline.db 偶尔 WAL 锁** — 并发读写偶发, 需在启动时 wal_checkpoint
-2. **缓存库 schema 分散** — fund_flow/limit_up 在 cache_modules.py 散布建表
-
-### v3.2 已修复
-
-| 问题 | 修复方式 |
-|------|---------|
-| app.py 缺少 diagnose_akshare import | 已添加 `from akshare_source import diagnose_akshare` |
-| dc_panel 线程不安全 (工作线程操作 GUI) | GUI 操作从 _work_load() 移到 _on_loaded() 主线程 |
-| K线加载依赖 HTTP/Flask API | open_kline 改为 LocalWorker 直调 get_kline_data() + enrich_kline() |
-| 右侧 dc_page 死代码 (Page 1 + 5 死方法) | 已清理, right_stack 不再切换 |
-| 全局字号偏小 (12px 基准) | 调至 13px 基准, 各组件等比放大 |
+1. kline.db 偶发 WAL 锁 — 并发读写
+2. 缓存库 schema 分散
 
 ### 待办
 
-1. 分钟K线扩展: Sina stock_zh_a_minute() 已验证, 待建 kline_minute 表
-2. Tick 数据: 腾讯 stock_zh_a_tick_tx_js() 可用, 待建表
-3. [x] 评分引擎统一: Flask 端已使用 FactorScorer（strategy_engine.py 已移除）
-4. [x] 持仓面板: 已实现（HoldingsPanel, 摘要卡片+明细表格）
-5. [x] 龙虎榜详情: data_lhb.py 已集成到 daily_maintenance.py + app.py
-6. [x] K线图迁移: matplotlib/pyqtgraph 旧代码已清理
-7. [x] 全局主题升级: Caffeine → 暗色, 6 文件同步
-8. [x] 桌面端纯本地化: 零 HTTP 依赖, K线/评分/筹码全部直调
-9. [x] 日志终端: LogStream/LogWindow stdout/stderr 重定向
-10. 缓存库 schema 集中管理: 统一 DDL 入口
-11. 安装包分发: Electron 壳 vs 重构方案
-12. 持仓管理: 对接数据库持久化 (当前为 DUMMY_HOLDS 硬编码)
-
----
+| 项目 | 状态 |
+|------|------|
+| 分钟K线扩展 | 待开发 |
+| Tick 数据 | 待开发 |
+| 持仓面板 (持久化) | 已由 trade 插件替代 |
+| 评分引擎统一 | 已完成 |
+| 安装包分发 | 待调研 |
+| 回测训练营 | 外部独立开发中 |
+| 条件单/止损止盈 | 待开发 |
+| 资产曲线图表 | 待开发 |

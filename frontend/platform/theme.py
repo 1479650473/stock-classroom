@@ -5,7 +5,7 @@ FONT_BASE = 13
 
 
 def fs(size: int) -> str:
-    """Return scaled CSS font-size string, e.g. fs(13) -> '13px'."""
+    """Return scaled CSS font-size string, e.g. fs(13) -> '21px'."""
     scaled = round(size * FONT_BASE / 13)
     return f"{scaled}px"
 
@@ -13,6 +13,16 @@ def fs(size: int) -> str:
 def fsi(size: int) -> int:
     """Return scaled font-size as integer (for QFont use)."""
     return round(size * FONT_BASE / 13)
+
+
+def dp(size: int) -> int:
+    """Scale widget dimension by font ratio. dp(30) at base 21 → 48."""
+    return round(size * FONT_BASE / 13)
+
+
+def dps(size: int) -> str:
+    """Return scaled dimension as CSS string, e.g. dps(30) -> '48px'."""
+    return f"{dp(size)}px"
 
 
 def build_style(base_fs: int = 13) -> str:
@@ -190,8 +200,8 @@ QCheckBox {
     spacing: 6px;
 }
 QCheckBox::indicator {
-    width: 14px;
-    height: 14px;
+    width: 21px;
+    height: 21px;
     border: 1px solid #30363D;
     border-radius: 3px;
     background: #161B22;
@@ -214,7 +224,7 @@ QComboBox {
     font-size: $fs12;
 }
 QComboBox:hover { border-color: #484F58; }
-QComboBox::drop-down { border: none; width: 24px; }
+QComboBox::drop-down { border: none; width: 36px; }
 QComboBox QAbstractItemView {
     background: #161B22;
     color: #E6EDF3;
@@ -249,13 +259,13 @@ QTreeWidget::branch:!has-children:!has-siblings:adjoins-item {
 /* ── ScrollBar ── */
 QScrollBar:vertical {
     background: #0D1117;
-    width: 8px;
+    width: 12px;
     margin: 0;
     border-radius: 4px;
 }
 QScrollBar::handle:vertical {
     background: #30363D;
-    min-height: 30px;
+    min-height: 45px;
     border-radius: 4px;
 }
 QScrollBar::handle:vertical:hover {
@@ -266,13 +276,13 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
 }
 QScrollBar:horizontal {
     background: #0D1117;
-    height: 8px;
+    height: 12px;
     margin: 0;
     border-radius: 4px;
 }
 QScrollBar::handle:horizontal {
     background: #30363D;
-    min-width: 30px;
+    min-width: 45px;
     border-radius: 4px;
 }
 QScrollBar::handle:horizontal:hover {

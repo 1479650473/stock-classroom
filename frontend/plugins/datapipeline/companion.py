@@ -2,6 +2,7 @@
 """DataPipeline Companion Panel — right-side stats for pipeline tab."""
 
 import sqlite3, os, time
+from frontend.platform.theme import dp, dps
 from datetime import datetime
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QFrame, QScrollArea,
@@ -94,7 +95,7 @@ class PipelineCompanion(QWidget):
             row = QVBoxLayout()
             row.setContentsMargins(0, 2, 0, 2)
             lbl = QLabel(f"  {name}")
-            lbl.setStyleSheet(f"color:{C_SUBTEXT};font-size:12px;background:transparent")
+            lbl.setStyleSheet(f"color:{C_SUBTEXT};font-size:20px;background:transparent")
             row.addWidget(lbl)
             row_w = QWidget()
             row_w.setLayout(row)
@@ -109,7 +110,7 @@ class PipelineCompanion(QWidget):
         lo.addWidget(db_section)
 
         self._db_info = QLabel("")
-        self._db_info.setStyleSheet(f"color:{C_SUBTEXT};font-size:12px;padding:6px 12px;background:transparent")
+        self._db_info.setStyleSheet(f"color:{C_SUBTEXT};font-size:20px;padding:6px 12px;background:transparent")
         self._db_info.setWordWrap(True)
         lo.addWidget(self._db_info)
 
@@ -118,7 +119,7 @@ class PipelineCompanion(QWidget):
         lo.addWidget(stats_section)
 
         self._stats_info = QLabel("")
-        self._stats_info.setStyleSheet(f"color:{C_SUBTEXT};font-size:12px;padding:6px 12px;background:transparent")
+        self._stats_info.setStyleSheet(f"color:{C_SUBTEXT};font-size:20px;padding:6px 12px;background:transparent")
         self._stats_info.setWordWrap(True)
         lo.addWidget(self._stats_info)
 
@@ -131,7 +132,7 @@ class PipelineCompanion(QWidget):
 
     def _section_label(self, text):
         lbl = QLabel(text)
-        lbl.setStyleSheet(f"color:{C_ACCENT};font-size:13px;font-weight:600;background:transparent")
+        lbl.setStyleSheet(f"color:{C_ACCENT};font-size:21px;font-weight:600;background:transparent")
         return lbl
 
     def refresh(self):
@@ -151,10 +152,10 @@ class PipelineCompanion(QWidget):
                 continue
             if r["ok"]:
                 lbl.setText(f"  \u2713  {r['name']}     {r['time']:.1f}s")
-                lbl.setStyleSheet(f"color:{C_GREEN};font-size:12px;background:transparent")
+                lbl.setStyleSheet(f"color:{C_GREEN};font-size:20px;background:transparent")
             else:
                 lbl.setText(f"  \u2717  {r['name']}     \u8fde\u63a5\u5931\u8d25")
-                lbl.setStyleSheet(f"color:{C_RED};font-size:12px;background:transparent")
+                lbl.setStyleSheet(f"color:{C_RED};font-size:20px;background:transparent")
 
     def _show_db_size(self):
         if not self.db_path:

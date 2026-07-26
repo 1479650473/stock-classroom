@@ -5,6 +5,7 @@ from PyQt5.QtWidgets import QPushButton, QWidget, QHBoxLayout
 from PyQt5.QtCore import Qt
 
 from frontend.platform.plugin_base import IPlugin, PluginRegion
+from frontend.platform.theme import dp
 
 
 class AgentPlugin(IPlugin):
@@ -24,7 +25,7 @@ class AgentPlugin(IPlugin):
 
         btn = QPushButton(u"\u2b50")
         btn.setObjectName("agentBtn")
-        btn.setFixedSize(36, 36)
+        btn.setFixedSize(dp(36), dp(36))
         btn.setCursor(Qt.PointingHandCursor)
         btn.setToolTip(u"AI \u52a9\u624b")
         btn.clicked.connect(self._open_chat)
