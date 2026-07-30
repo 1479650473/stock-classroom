@@ -11,6 +11,7 @@ else:
 
 CONFIG_DIR = os.path.join(PROJECT_DIR, "backend", "configs") if getattr(sys, 'frozen', False) else os.path.join(PROJECT_DIR, "backend", "configs")
 SETTINGS_PATH = os.path.join(CONFIG_DIR, "settings.json")
+EXAMPLE_PATH = os.path.join(CONFIG_DIR, "settings.example.json")
 
 DEFAULTS = {
     "font_size": 13,
@@ -38,7 +39,19 @@ def _deep_merge(defaults, overrides):
     return result
 
 
+def _init_settings():
+    if not os.path.exists(SETTINGS_PATH) and os.path.exists(EXAMPLE_PATH):
+        try:
+            os.makedirs(CONFIG_DIR, exist_ok=True)
+            with open(EXAMPLE_PATH, "r", encoding="utf-8") as src:
+                with open(SETTINGS_PATH, "w", encoding="utf-8") as dst:
+                    dst.write(src.read())
+        except Exception:
+            pass
+
+
 def load_settings():
+    _init_settings()
     try:
         if os.path.exists(SETTINGS_PATH):
             with open(SETTINGS_PATH, "r", encoding="utf-8") as f:

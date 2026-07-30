@@ -39,6 +39,9 @@ package/__pycache__/
 package/dist/
 package/build/
 
+# User settings (contains API key)
+backend/configs/settings.json
+
 # OS
 Thumbs.db
 .DS_Store
