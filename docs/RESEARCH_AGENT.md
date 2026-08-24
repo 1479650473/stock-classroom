@@ -100,6 +100,35 @@
 **ICIR 分档**(high≥1.0 / medium≥0.5 / weak≥0.3 / reject<0.3)给出置信度 strength，自动写入
 `{dsl_key, direction, ic, icir, confidence, threshold, ...}` 供生成端使用；不达标返回 None → 回退样例策略。
 
+价值因子标定(全市场实证, `factor_selector`)：
+- `VALUE_BANDS`(1.0/0.5/0.3 分档) + `VALUE_DEFAULTS`(min_ic 0.004——价值 IC 量级小于价量因子)，
+  门槛依据 **全市场 5149 只** 实证：**BP ICIR 1.54(high) / EP 0.83(medium) / ROE -0.23(reject, 跨行业不可比)**。
+- `classify_value_records(vres)` 批量附 confidence/strength/direction 并返回最优；`recommend_value(codes,...)`
+  选出最强价值因子；`validate_value_selection(contract)` 白名单硬校验**价值选股**契约
+  `{factor∈{EP,BP,ROE}, direction∈{high,low}, hold_top_k_pct∈[0.01,0.5], rebalance_bars≥5, risk}`。
+- `research_loop` 2c 产出 `context["recommended_value_factor"]`(分类后) + LLM `_prompt` 注入价值证据块。
+
+### 因子有效性三层分离(IC ≠ 组合 ≠ 基准) — 最重要方法论
+评价一个量化因子**不要混为一谈**，三层回答的是**不同问题**，结论可能互相冲突：
+
+| 层 | 度量 | 问题 | 价值因子(低PB)实测(2024→now) |
+|----|------|------|------|
+| ① **信号层** | IC / ICIR(截面 rank 相关→点时间短前向收益) | **按因子排序能否预测收益**? | IC≈0.04~0.07 为正、rank 稳定(自相关≈0.99) → **真但弱** |
+| ② **组合层** | 多头选股组合(持有前 K% 等权, 定期调仓, 含成本) | **该因子做多头组合能赚多少**? | 前20%低PB组合 +29%~+44%(含调仓成本) |
+| ③ **基准层** | 等权买持(整个池) | **相对宽基买持有无超额**? | 等权买持 +51.34% → **组合跑输基准 ~16%** |
+
+**教训(用实际数据支撑)**：
+- **IC 为正 ≠ 多头组合跑赢宽基**：价值 IC 真(便宜>贵, 周多空价差 +2.27%)，但成长领涨的 risk-on 里
+  价值跑输宽基 beta(2026 基准 +2.97% 而价值组合 -4~-9%)——**风格轮动/价值陷阱**。
+- **价值 alpha 是短周期**：月度(长持有)多空价差转负(-6.52%)，被调仓成本/期限侵蚀；周周期才为正。
+- **单标的择时≠截面选股**：价值作单票择时 ≈ 买持(无超额)；加 `CLOSE>MA20` 趋势叠加反而**更差**(抖出轨切碎择时，
+  `verify_value_overlay` 实测:纯价值 +24.06% ≈ 买持 +23.96%; 价值+趋势(进出) +7.74%)。保留一个「趋势确认入场+价值离场」(避免抖出) +18.70%, 仍不敌纯价值。
+- **结论用语必须分层**：不要只说"因子有效/无效"。要说清**在哪一层**(信号/组合/基准)有效、**口径**(周/月)、**窗口**(regime)。
+  "价值因子有效(IC 真但弱、短周期)" 与 "价值选股组合长期未稳定跑赢买持(成长领涨窗口)" 是两件不冲突的事。
+
+**相关口径**：`factor_selector` 把价值研究结果(IC/ICIR/confidence) 交给 LLM；但**生成端必须知道这只说明"信号层",
+组合层可能跑输**——决策门(第⑧步)是独立审校, `verify_value_selection` 里决策门返回 hold 正是对"价值短期跑输"的保护。
+
 ---
 
 ## 四、安全模型
@@ -142,12 +171,22 @@ C:/Python314/python.exe backend/strategy/verify_value_wide.py    # 跨板块价�
 C:/Python314/python.exe backend/strategy/run_vertical_slice.py   # 回测引擎自检
 C:/Python314/python.exe backend/strategy/verify_local_cache.py  # 数据本地化(读路径不联网) 4/4
 C:/Python314/python.exe backend/agent/verify_llm_run.py     # 真 LLM 端到端(需 settings.json 配 key)
+C:/Python314/python.exe backend/strategy/verify_value_selection.py  # 价值选股(LLM生成+截面回测+决策门) timeout 600
+C:/Python314/python.exe backend/strategy/verify_value_overlay.py    # 价值作为过滤/择时叠加层(纯价值/价值+趋势/纯动量/买持)
+C:/Python314/python.exe backend/strategy/verify_value_cycle.py      # 跨周期稳健性(2023-2026 逐年 IC/多空/组合/基准) timeout 600
 ```
 
 ## 七、诚实约束 / 已知限制
 
 - **全市场基本面抓取是硬约束**：东财估值只能逐股抓(~2.5s/只 → 5191 只约 2.5-3h)，无批量接口；故用**可恢复预抓**(`prefetch_value_pool.py`, `VALUE_POOL_FULL=1`)流式缓存。
 - **截面 IC ≠ 单标的择时**：研究因子(选哪只票)作单票信号未必盈利——闭环靠"回测→复盘"迭代发现并改进。
+- **截面 IC ≠ 长期多头组合跑赢宽基买持**(见"因子有效性三层分离")：价值 IC 真但弱、短周期；成长领涨的 risk-on
+  里多头低PB组合跑输等权买持(2024→now 组合 +29~44% vs 基准 +51%)。
+- **价值 alpha 是短周期**：周周期多空价差 +2.27%(正)，月度(长持有)转负(-6.52%)；被调仓成本/期限侵蚀。
+- **价值是弱的独立信号**：作单票择时 ≈ 买持(无超额)；加 `CLOSE>MA20` 趋势叠加反而更差(抖出轨)。
+- **跨周期测试受限(数据现实)**：**2022 年末 K 线才有广度**(2018-2021 各年仅 ~1 只股有 K 线)。故无 2018/2022 深熊
+  样本；"跨周期稳健性"仅覆盖 **2023→now**(`verify_value_cycle`, 价值 IC 跨年一致为正但弱, 选股组合跨年多数跑输)。
+  要补真正的深熊跨周期，需先补抓 2018/2019-21 全市场历史 K 线(未来工作)。
 - **metrics 统一小数**口径(0.537=+53.7%)；`run_backtest` 与 gateway 本就同口径，改动仅为消除"存百分数→消费者再×100"的歧义。
 - **LLM key** 存 `backend/configs/settings.json`(非 git 跟踪)。
 - 财报/估值注意披露时点；本实现用**东财每日估值**天然点时间(某日 PE/PB 即该日成交)，规避披露滞后。
