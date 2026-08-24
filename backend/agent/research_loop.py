@@ -387,8 +387,10 @@ class ResearchLoop:
             entry = sig
             decision = None
             if gate is not None:
+                from .decision_gate import value_tilt_state
                 dec_ctx = {"macro": macro, "signal": sig, "strategy": result.best.contract,
-                           "recent_klines": _recent_closes(code, 5), "price": price}
+                           "recent_klines": _recent_closes(code, 5), "price": price,
+                           "value_tilt": value_tilt_state()}
                 decision = gate.decide(dec_ctx)
                 entry = (decision.action == "enter")
             if entry:

@@ -91,6 +91,49 @@ class BaseDecisionGate:
         raise NotImplementedError
 
 
+def value_tilt_state(load_index=None) -> dict:
+    """当前价值 factor tilt 所处的市场状态(用于决策门上下文)。
+
+    跨周期实测(2023-2026): 价值(低PB)在**弱市/震荡**跑赢等权买持, 在**成长领涨 risk-on**跑输。
+    故用宽基(上证指数)趋势/回撤近似市场状态 → value_tilt 方向。
+    weak 市场 → value_favorable; 强 risk-on 市场 → value_headwind; 其余 → neutral。
+    """
+    kd = None
+    if load_index is not None:
+        kd = load_index()
+    else:
+        try:
+            from ..strategy.data import load_klines
+            kd, _ = load_klines("sh000001", limit=250)
+        except Exception:
+            kd = None
+    base = {"state": "unknown", "value_tilt": "neutral", "reason": "无宽基数据"}
+    if not kd:
+        return base
+    try:
+        closes = [float(k["close"]) for k in kd]
+    except Exception:
+        return base
+    last = closes[-1]
+    n = len(closes)
+    ma = sum(closes[-120:]) / min(120, n) if n else last
+    high60 = max(closes[-60:]) if n >= 60 else max(closes)
+    dd = last / high60 - 1.0 if high60 else 0.0
+    weak = (last < ma) or (dd < -0.08)
+    strong = (last > ma) and (dd > -0.05)
+    if weak:
+        return {"state": "weak_market", "value_tilt": "value_favorable",
+                "reason": f"宽基跌破120日线或回撤{dd:.1%} → 弱市/震荡, 价值(低PB)通常跑赢, 可侧重价值",
+                "index_close": last, "ma120": round(ma, 2), "drawdown": round(dd, 4)}
+    if strong:
+        return {"state": "risk_on", "value_tilt": "value_headwind",
+                "reason": f"宽基站上120日线且回撤有限({dd:.1%}) → 成长领涨 risk-on, 价值(低PB)短期跑输, 应保守",
+                "index_close": last, "ma120": round(ma, 2), "drawdown": round(dd, 4)}
+    return {"state": "choppy", "value_tilt": "value_neutral",
+            "reason": f"宽基中性(MA120附近, 回撤{dd:.1%}) → 价值中性",
+            "index_close": last, "ma120": round(ma, 2), "drawdown": round(dd, 4)}
+
+
 class StubDecisionGate(BaseDecisionGate):
     """确定性：信号为 True → enter；否则 hold。用于无 key 验证。"""
 
@@ -128,8 +171,18 @@ class LLMDecisionGate(BaseDecisionGate):
         signal = context.get("signal")
         strategy = context.get("strategy", {})
         recent = context.get("recent_klines", [])
+        vt = context.get("value_tilt") or {}
+        vt_block = ""
+        if vt:
+            vt_block = (
+                f"【价值因子 tilt 状态】state={vt.get('state')} value_tilt={vt.get('value_tilt')}\n"
+                f"原因: {vt.get('reason', '')}\n"
+                "若 value_tilt=value_headwind → 价值(低PB)短期跑输成长, 应保守/暂缓; "
+                "若 value_favorable → 价值处于弱市顺风, 可侧重价值。\n\n"
+            )
         return (
             f"宏观: {macro.get('overall','')}\n"
+            + vt_block +
             f"策略: {json.dumps(strategy, ensure_ascii=False)[:800]}\n"
             f"当前 entry 信号: {signal}\n"
             f"近端收盘(最近5): {recent[-5:]}\n"
