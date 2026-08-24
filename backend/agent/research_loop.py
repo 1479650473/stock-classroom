@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from . import gateway as gw_mod, services as svc, jobs as jobs_mod
+from .decision_gate import BaseDecisionGate  # noqa: F401
 from ..strategy.spec import StrategySpec
 from ..strategy import factors as fac_mod
 from ..factor_engine.dsl import evaluate as eval_dsl
@@ -217,6 +218,12 @@ def eval_entry_signal(code: str, contract: dict) -> tuple[bool, float]:
     return signal, float(kd[-1]["close"])
 
 
+def _recent_closes(code: str, n: int = 5) -> list:
+    """取最近 n 根收盘价(供决策门近端走势上下文)。"""
+    kd, _ = svc.load_klines(code, limit=n)
+    return [float(k["close"]) for k in kd] if kd else []
+
+
 @dataclass
 class RoundResult:
     round_id: int
@@ -242,7 +249,8 @@ class ResearchLoop:
 
     def run(self, *, rounds: int = 3, universe_code: Optional[str] = None,
             universe_selector: Optional[dict] = None, initial_balance: float = 100000.0,
-            paper: bool = False, paper_account_id: Optional[int] = None) -> LoopResult:
+            paper: bool = False, paper_account_id: Optional[int] = None,
+            gate: Optional["BaseDecisionGate"] = None) -> LoopResult:
         # 1) 宏观
         macro = self.gw.macro_regime()
         # 2) 标的域
@@ -274,36 +282,49 @@ class ResearchLoop:
         if valid:
             result.best = max(valid, key=lambda r: r.score)
 
-        # 5) 上 paper 盘: 用最优策略的最新 entry 信号
+        # 5) 上 paper 盘: 用最优策略的最新 entry 信号 → 先过 AI 决策门(若有)
         if paper and result.best:
             code = result.best.contract["universe"]["code"]
             sig, price = eval_entry_signal(code, result.best.contract)
             payload = {"code": code, "side": "buy", "order_type": "market", "current_price": price}
             if paper_account_id is not None:
                 payload["account_id"] = paper_account_id
-            if sig:
+            entry = sig
+            decision = None
+            if gate is not None:
+                dec_ctx = {"macro": macro, "signal": sig, "strategy": result.best.contract,
+                           "recent_klines": _recent_closes(code, 5), "price": price}
+                decision = gate.decide(dec_ctx)
+                entry = (decision.action == "enter")
+            if entry:
                 qty = int((initial_balance * 0.95) / price // 100) * 100 if price > 0 else 100
                 payload["qty"] = max(qty, 100)
                 result.paper = self.gw.paper_order(payload)
                 result.paper["signal"] = "long"
             else:
-                result.paper = {"signal": "none", "note": "当前无 entry 信号，仅部署不成交"}
+                result.paper = {"signal": "none",
+                                "note": "当前无 entry 信号或决策门暂缓" if not sig else "决策门裁决 hold/exit，暂缓下单"}
+            if decision is not None:
+                result.paper["decision"] = decision.to_dict()
         return result
 
     def _pick_universe(self, code, selector, macro) -> dict:
         if code:
             d = svc.catalog_describe(code)
             return {"id": code, "code": code, "name": d.get("name", code) if d else code,
-                    "desc": f"选定 {code}"}
+                    "desc": f"选定 {code}", "universe_selector": False}
         if selector:
             res = self.gw.catalog_select(**selector)
             items = res.get("items", [])
             if items:
                 top = items[0]
                 return {"code": top["code"], "name": top["name"],
-                        "desc": f"{selector} 板块首只({len(items)}只候选中)"}
-        # fallback: 默认招商银行
-        return {"code": "600036", "name": "招商银行", "desc": "默认标的"}
+                        "desc": f"{selector} 板块首只({len(items)}只候选中)", "universe_selector": True}
+        # 默认: 宏观条件化选板块(把宏观 regime 喂给标的域)
+        from .macro_sector import pick_universe as _macro_universe
+        u = _macro_universe(macro)
+        print(f"  [宏观选板块] {u.get('sector')} — {u.get('reason')} → {u.get('code')} {u.get('name')}")
+        return u
 
     def _safe_create(self, contract: dict) -> Optional[int]:
         try:

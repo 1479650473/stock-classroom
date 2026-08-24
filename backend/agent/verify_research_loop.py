@@ -16,6 +16,7 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "backend"))
 
 from backend.agent.research_loop import ResearchLoop, StubBackend, InProcessGw, score  # noqa: E402
+from backend.agent.decision_gate import StubDecisionGate  # noqa: E402
 from backend.agent import gateway as gw_mod, services as svc, store as store_mod  # noqa: E402
 from backend.strategy.spec import StrategySpec  # noqa: E402
 from backend.trade_engine.engine import TradeEngine  # noqa: E402
@@ -38,10 +39,10 @@ def main():
     loop = ResearchLoop(backend=StubBackend(), gw=gw)
 
     print("=" * 64)
-    print("M1 研究代理主循环(Stub 后端)")
+    print("M1 研究代理主循环(Stub 后端 + AI 决策门)")
     print("=" * 64)
     res = loop.run(rounds=3, universe_code="600036", initial_balance=100000.0,
-                   paper=True, paper_account_id=acct_id)
+                   paper=True, paper_account_id=acct_id, gate=StubDecisionGate())
 
     chk("读取宏观 regime(整体标签)", bool(res.macro.get("overall")), res.macro.get("overall", "")[:40])
     chk("选定标的域", res.universe.get("code") == "600036", res.universe.get("code"))
@@ -56,6 +57,10 @@ def main():
 
     chk("上 paper 盘(部署或下单)", res.paper is not None,
         res.paper.get("signal") if isinstance(res.paper, dict) else str(res.paper))
+    dec = res.paper.get("decision") if isinstance(res.paper, dict) else None
+    chk("决策门产出了结构化决策(action/score/confidence)",
+        bool(dec and dec.get("action") in ("enter", "hold", "exit")
+             and "score" in dec and "confidence" in dec), str(dec)[:70])
 
     print("\n── 各轮结果 ──")
     for r in res.rounds:
