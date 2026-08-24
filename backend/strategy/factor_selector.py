@@ -114,10 +114,11 @@ VALUE_CANDIDATES = ["EP", "BP", "ROE"]
 
 
 def study_value_factors(codes, start: str, end: str, engine: Optional[FactorResearchEngine] = None,
-                        min_universe: int = 5) -> list:
-    """研究价值/质量因子(EP/BP/ROE)的截面 IC/ICIR(点时间, 含披露滞后无前视)。
+                        min_universe: int = 5, neutralize_industry: bool = True) -> list:
+    """研究价值/质量因子(EP/BP/ROE)的截面 IC/ICIR(点时间, 无前视)。
 
     扩展单日 K 线之外的研究维度: 用基本面对每只股在每交易日给出 盈利收益率EP/账面市值比BP/ROE。
+    neutralize_industry=True 时按板块中性化(去板块效应, 跨板块研究更可信)。
     返回 [ {dsl_key, ic, icir, coverage, net_long_short, research}, ... ]。
     """
     frames = load_universe_frames(codes, start=start, end=end, with_fundamentals=True)
@@ -128,15 +129,30 @@ def study_value_factors(codes, start: str, end: str, engine: Optional[FactorRese
     for fid in VALUE_CANDIDATES:
         try:
             r = engine.run(frames=frames, factor_id=fid, start_date=start, end_date=end,
-                           groups=5, holding_period=5, compute_correlation=False)
+                           groups=5, holding_period=5, neutralize_industry=neutralize_industry,
+                           compute_correlation=False)
             out.append({
                 "dsl_key": fid,
                 "ic": float(r.get("rankIc", 0.0) or 0.0),
                 "icir": float(r.get("icir", 0.0) or 0.0),
                 "coverage": float(r.get("coverage", 0.0) or 0.0),
                 "net_long_short": float(r.get("netLongShortReturn", 0.0) or 0.0),
+                "neutralized": bool(r.get("neutralized", False)),
                 "research": r,
             })
         except Exception:
             continue
     return out
+
+
+def build_wide_pool(per_sector: int = 12) -> list:
+    """跨板块平衡研究池: 每板块前 per_sector 只活跃股(小板块全取) → ~25*per_sector 只。"""
+    from . import catalog as _cat
+    codes = []
+    for s in _cat.sectors():
+        try:
+            items = _cat.select(sector=s, status="active")
+        except Exception:
+            items = []
+        codes += [i["code"] for i in items][:per_sector]
+    return sorted(set(codes))

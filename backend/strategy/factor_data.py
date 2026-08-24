@@ -25,7 +25,10 @@ def load_universe_frames(codes, start: str | None = None, end: str | None = None
         df = pd.DataFrame([{**k, "date": str(k["date"])} for k in kd])
         if df.empty:
             continue
-        df["date"] = pd.to_datetime(df["date"], format="%Y%m%d")
+        # 日期可能是 "20260518" 或 "2026-05-18"(源不一致) → 归一化再解析, 坏行丢弃
+        df["date"] = df["date"].astype(str).str.replace("-", "", regex=False)
+        df["date"] = pd.to_datetime(df["date"], format="%Y%m%d", errors="coerce")
+        df = df.dropna(subset=["date"])
         df = df.set_index("date").sort_index()
         if start:
             df = df.loc[df.index >= pd.Timestamp(start)]
@@ -34,6 +37,8 @@ def load_universe_frames(codes, start: str | None = None, end: str | None = None
         needed = ["open", "high", "low", "close", "volume"]
         df = df[[c for c in needed if c in df.columns]]
         if len(df) >= 60:
+            # 附加行业(板块)列 → 支持 neutralize_industry 去板块效应
+            df["industry"] = _sector_of(code)
             frames[code] = df
     if with_fundamentals and frames:
         from ..fundamental import attach_fundamentals, ensure_fundamental
@@ -42,3 +47,14 @@ def load_universe_frames(codes, start: str | None = None, end: str | None = None
             ensure_fundamental(code)
         frames = attach_fundamentals(frames)
     return frames
+
+
+def _sector_of(code: str):
+    """股所属板块(用于行业中性化); 无则 None。"""
+    try:
+        from . import catalog as _cat
+        d = _cat.describe(code) or {}
+        secs = d.get("sectors") or []
+        return secs[0] if secs else None
+    except Exception:
+        return None
