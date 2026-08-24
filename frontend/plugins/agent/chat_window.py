@@ -12,14 +12,10 @@ from .config import load_agent_config
 from .llm_client import LLMClient
 from .chat_worker import ChatWorker
 from .tools import TOOLS
-from frontend.platform.theme import dp, dps
-
-C_BG = "#0D1117"
-C_PANEL = "#161B22"
-C_BORDER = "#21262D"
-C_TEXT = "#E6EDF3"
-C_SUBTEXT = "#8B949E"
-C_ACCENT = "#D4A574"
+from frontend.platform.theme import (
+    dp, dps, fs,
+    C_BG, C_PANEL, C_BORDER, C_TEXT, C_SUBTEXT, C_ACCENT, C_ACCENT_HOVER,
+)
 
 
 class _InputEdit(QTextEdit):
@@ -47,14 +43,14 @@ class ChatBubble(QWidget):
 
         if is_user:
             label.setStyleSheet(
-                f"background:{C_ACCENT};color:#0D1117;border-radius:10px;padding:8px 12px;font-size:21px;"
+                f"background:{C_ACCENT};color:#1A1410;border-radius:10px;padding:8px 12px;font-size:{fs(12)};"
             )
             lo.addStretch()
             lo.addWidget(label)
         else:
             label.setStyleSheet(
                 f"background:{C_PANEL};color:{C_TEXT};border:1px solid {C_BORDER};"
-                f"border-radius:10px;padding:8px 12px;font-size:21px;"
+                f"border-radius:10px;padding:8px 12px;font-size:{fs(12)};"
             )
             lo.addWidget(label)
             lo.addStretch()
@@ -83,7 +79,7 @@ class ChatWindow(QDialog):
         hl = QHBoxLayout(header)
         hl.setContentsMargins(16, 0, 16, 0)
         title = QLabel(u"\u2b50 AI \u52a9\u624b")
-        title.setStyleSheet(f"color:{C_TEXT};font-size:22px;font-weight:700;background:transparent")
+        title.setStyleSheet(f"color:{C_TEXT};font-size:{fs(13)};font-weight:700;background:transparent")
         hl.addWidget(title)
         hl.addStretch()
         lo.addWidget(header)
@@ -114,7 +110,7 @@ class ChatWindow(QDialog):
         self._input.setAcceptRichText(False)
         self._input.setStyleSheet(
             f"QTextEdit{{background:{C_BG};color:{C_TEXT};border:1px solid {C_BORDER};"
-            f"border-radius:6px;padding:8px 10px;font-size:21px}}"
+            f"border-radius:6px;padding:8px 10px;font-size:{fs(12)}}}"
         )
         self._input.send_requested.connect(self._send)
 
@@ -122,8 +118,8 @@ class ChatWindow(QDialog):
         self._send_btn.setFixedSize(dp(56), dp(36))
         self._send_btn.setCursor(Qt.PointingHandCursor)
         self._send_btn.setStyleSheet(
-            f"QPushButton{{background:{C_ACCENT};color:#0D1117;border:none;border-radius:6px;font-size:20px;font-weight:700}}"
-            f"QPushButton:hover{{background:#E0B888}}"
+            f"QPushButton{{background:{C_ACCENT};color:#1A1410;border:none;border-radius:6px;font-size:{fs(12)};font-weight:700}}"
+            f"QPushButton:hover{{background:{C_ACCENT_HOVER}}}"
             f"QPushButton:disabled{{background:{C_BORDER};color:{C_SUBTEXT}}}"
         )
         self._send_btn.clicked.connect(self._send)

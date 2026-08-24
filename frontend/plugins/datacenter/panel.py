@@ -1,4 +1,4 @@
-﻿import sqlite3, traceback, os, re
+import sqlite3, traceback, os, re
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QTreeWidget, QTreeWidgetItem,
     QAbstractItemView, QFrame, QLineEdit, QPushButton, QStackedWidget,
@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QFont
 from frontend.platform.local_worker import LocalWorker
-from frontend.platform.theme import dp, dps
+from frontend.platform.theme import dp, dps, fs, C_ACCENT, C_TEXT, C_SUBTEXT
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "data")
 
@@ -23,9 +23,6 @@ CN = {
 
 BG_EVEN = QColor("#0D1117")
 BG_ODD = QColor("#161B22")
-C_ACCENT = "#D4A574"
-C_TEXT = "#E6EDF3"
-C_SUBTEXT = "#8B949E"
 C_BORDER = "#21262D"
 
 
@@ -171,6 +168,8 @@ class DCPanel(QWidget):
     def load(self):
         if not self.db_path:
             if self.on_status: self.on_status("数据库未配置")
+            return
+        if getattr(self, "_worker", None) is not None and self._worker.isRunning():
             return
         if self.on_status: self.on_status("加载数据表...")
         self._worker = LocalWorker(self._work_load, "dc")

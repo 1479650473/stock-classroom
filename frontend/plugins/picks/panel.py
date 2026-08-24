@@ -1,8 +1,11 @@
-﻿import sys, os, traceback
+import sys, os, traceback
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QCheckBox, QPushButton)
 from PyQt5.QtCore import Qt
-from frontend.platform.theme import dp, dps
+from frontend.platform.theme import (
+    dp, dps, fs, C_ACCENT, C_UP as C_RISE, C_DOWN as C_FALL,
+    qss_table, style_h2,
+)
 from PyQt5.QtGui import QColor, QFont
 from frontend.platform.local_worker import LocalWorker
 
@@ -11,10 +14,7 @@ if _ENGINE_DIR not in sys.path:
     sys.path.insert(0, _ENGINE_DIR)
 from factor_engine import FactorScorer, DEFAULT_FILTERS
 
-C_ACCENT = "#D4A574"
-C_RISE = "#EF5350"
-C_FALL = "#4CAF50"
-C_SUCCESS = "#4CAF50"
+C_SUCCESS = C_FALL
 
 
 class PicksPanel(QWidget):
@@ -55,15 +55,17 @@ class PicksPanel(QWidget):
         self._btn_apply.setCursor(Qt.PointingHandCursor)
         self._btn_apply.setFixedHeight(dp(28))
         self._btn_apply.setStyleSheet(
-            "QPushButton{background:rgba(212,165,116,0.10);color:#D4A574;"
-            "border:1px solid #D4A574;border-radius:6px;padding:4px 16px;font-size:19px;font-weight:500}"
-            "QPushButton:hover{background:rgba(212,165,116,0.18)}")
+            f"QPushButton{{background:rgba(212,165,116,0.10);color:{C_ACCENT};"
+            f"border:1px solid {C_ACCENT};border-radius:{dps(6)};padding:{dps(4)} {dps(16)};"
+            f"font-size:{fs(12)};font-weight:500}}"
+            f"QPushButton:hover{{background:rgba(212,165,116,0.18)}}")
         self._btn_apply.clicked.connect(self.load)
         filter_bar.addWidget(self._btn_apply)
 
         layout.addLayout(filter_bar)
 
         self.table = QTableWidget()
+        self.table.setStyleSheet(qss_table())
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.horizontalHeader().setStretchLastSection(True)
@@ -80,6 +82,8 @@ class PicksPanel(QWidget):
 
     def load(self):
         if not self.db_path:
+            return
+        if getattr(self, "_worker", None) is not None and self._worker.isRunning():
             return
         self._last_results = []
         if self.on_status:

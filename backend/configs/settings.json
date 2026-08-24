@@ -1,9 +1,0 @@
-{
-  "font_size": 17,
-  "window_size": "large",
-  "agent": {
-    "api_base": "https://api.deepseek.com/v1",
-    "api_key": "",
-    "model": "deepseek-v4-pro"
-  }
-}

@@ -9,11 +9,16 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QTimer
 
-from .theme import STYLE, dp, dps
+from .theme import (
+    STYLE, dp, dps, fs,
+    C_BG, C_PANEL, C_BORDER, C_BORDER_SOFT, C_TEXT, C_SUBTEXT, C_FAINT,
+    C_ACCENT, C_RAISED, C_DOWN,
+)
 from .log_window import LogStream, LogWindow
 from .plugin_base import PlatformBus, PlatformServices, PluginRegion
 from .plugin_manager import PluginManager
 
+APP_VERSION = "v4.3"
 
 if getattr(sys, 'frozen', False):
     _APP_DIR = sys._MEIPASS
@@ -56,6 +61,15 @@ class PlatformShell(QMainWindow):
             if _APP_DIR not in sys.path:
                 sys.path.insert(0, _APP_DIR)
 
+        # ── App config (cached once) ──
+        self._config = {}
+        if os.path.exists(CONFIG_PATH):
+            try:
+                with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                    self._config = json.load(f)
+            except Exception:
+                self._config = {}
+
         # ── Log terminal ──
         self._log_window = LogWindow()
         self._log_stream = LogStream()
@@ -77,26 +91,25 @@ class PlatformShell(QMainWindow):
         self._plugin_mgr = PluginManager(CONFIG_PATH, PLUGINS_DIR)
         self._plugin_mgr.inject_services(self._services)
 
-        print("stock-classroom v4.0 启动")
+        print("stock-classroom %s 启动" % APP_VERSION)
         print(f"[Platform] {len(self._plugin_mgr.all_plugins())} 插件已加载: "
               + ", ".join(self._plugin_mgr.all_plugins().keys()))
 
         self._build_ui()
         self.status.showMessage("就绪 — 点击左侧导航加载数据")
 
-        # Activate defaults
-        config = {}
-        if os.path.exists(CONFIG_PATH):
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                config = json.load(f)
-        QTimer.singleShot(100, lambda: self._activate_defaults(config))
+        QTimer.singleShot(100, self._activate_defaults)
 
-    def _activate_defaults(self, config: dict):
-        default_left = config.get("default_left", "market")
-        default_right = config.get("default_right", "kline")
+    def _activate_defaults(self):
+        default_left = self._config.get("default_left", "market")
+        default_right = self._config.get("default_right", "kline")
         for pid in [default_left, default_right]:
             if pid in self._plugin_mgr.all_plugins():
                 self._activate_plugin(pid)
+
+    # ──────────────────────────────────────────────────────────
+    #  UI
+    # ──────────────────────────────────────────────────────────
 
     def _build_ui(self):
         central = QWidget()
@@ -105,68 +118,119 @@ class PlatformShell(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # ═══ Top Bar ═══
-        topbar = QFrame()
-        topbar.setFixedHeight(dp(48))
-        topbar.setStyleSheet("background:#161B22; border-bottom:1px solid #21262D;")
-        tl = QHBoxLayout(topbar)
-        tl.setContentsMargins(16, 0, 16, 0)
+        layout.addWidget(self._build_topbar())
 
-        logo = QWidget()
-        logo_lo = QHBoxLayout(logo)
-        logo_lo.setContentsMargins(0, 0, 0, 0)
-        logo_lo.setSpacing(4)
-        lbl_brand = QLabel("stock-classroom")
-        lbl_brand.setStyleSheet(f"color:#D4A574; font-size:{dps(17)}; font-weight:700; border:none;")
-        logo_lo.addWidget(lbl_brand)
-        tl.addWidget(logo)
-        tl.addStretch()
-
-        # TOPBAR plugin slot
-        for pid, plugin in self._plugin_mgr.all_plugins().items():
-            if plugin.region == PluginRegion.TOPBAR:
-                try:
-                    w = self._plugin_mgr.get_widget(pid)
-                    if w:
-                        tl.addWidget(w)
-                except Exception:
-                    pass
-
-        refresh = QPushButton("刷新")
-        refresh.setObjectName("refreshBtn")
-        refresh.setFixedHeight(dp(30))
-        refresh.clicked.connect(lambda: self._plugin_mgr.refresh_current())
-        tl.addWidget(refresh)
-
-        log_btn = QPushButton("日志")
-        log_btn.setFixedSize(dp(48), dp(30))
-        log_btn.setCursor(Qt.PointingHandCursor)
-        log_btn.setStyleSheet(
-            f"QPushButton{{background:#161B22;color:#8B949E;border:1px solid #30363D;"
-            f"border-radius:{dps(6)};font-size:{dps(11)}}}"
-            "QPushButton:hover{background:#1C2128;border-color:#484F58}")
-        log_btn.clicked.connect(lambda: self._log_window.show()
-                                if self._log_window.isHidden()
-                                else self._log_window.hide())
-        tl.addWidget(log_btn)
-        layout.addWidget(topbar)
-
-        # ═══ Main Splitter ═══
+        # ── Main Splitter ──
         outer = QSplitter(Qt.Horizontal)
-        outer.setHandleWidth(1)
+        outer.setHandleWidth(2)
 
-        # ── Left: Nav + Panel Stack ──
         left_widget = QWidget()
         left_lo = QHBoxLayout(left_widget)
         left_lo.setContentsMargins(0, 0, 0, 0)
         left_lo.setSpacing(0)
+        left_lo.addWidget(self._build_nav_rail())
 
+        self._left_stack = QStackedWidget()
+        self._left_stack.setStyleSheet(f"background:{C_BG};")
+        left_lo.addWidget(self._left_stack, 1)
+        outer.addWidget(left_widget)
+
+        right_widget = QWidget()
+        rl = QVBoxLayout(right_widget)
+        rl.setContentsMargins(6, 6, 6, 6)
+        rl.setSpacing(0)
+        self._right_stack = QStackedWidget()
+        self._right_stack.setStyleSheet(f"background:{C_BG};")
+        rl.addWidget(self._right_stack)
+        outer.addWidget(right_widget)
+
+        outer.setSizes([360, 840])
+        outer.setCollapsible(0, False)
+        outer.setCollapsible(1, False)
+        layout.addWidget(outer)
+
+        # ── Watermark ──
+        self._watermark = QLabel("develop by siyuan-chen & xiaoguang", self)
+        self._watermark.setStyleSheet(
+            f"color:rgba(139,148,158,60);font-size:{fs(9)};background:transparent;border:none;")
+        self._watermark.adjustSize()
+
+        # ── Status Bar ──
+        self.status = QStatusBar()
+        self._status_dot = QLabel("\u25cf")
+        self._status_dot.setStyleSheet(f"color:{C_DOWN};font-size:{fs(9)};border:none;padding-right:2px;")
+        self.status.addPermanentWidget(self._status_dot)
+        self.setStatusBar(self.status)
+
+    def _build_topbar(self) -> QFrame:
+        topbar = QFrame()
+        topbar.setFixedHeight(dp(46))
+        topbar.setStyleSheet(f"background:{C_PANEL};border-bottom:1px solid {C_BORDER_SOFT};")
+        tl = QHBoxLayout(topbar)
+        tl.setContentsMargins(dp(14), 0, dp(10), 0)
+        tl.setSpacing(dp(8))
+
+        # Brand block
+        lbl_brand = QLabel("stock-classroom")
+        lbl_brand.setStyleSheet(
+            f"color:{C_ACCENT};font-size:{fs(14)};font-weight:700;border:none;background:transparent;")
+        tl.addWidget(lbl_brand)
+
+        chip = QLabel(APP_VERSION)
+        chip.setStyleSheet(
+            f"color:{C_FAINT};font-size:{fs(9)};border:1px solid {C_BORDER};"
+            f"border-radius:{dps(7)};padding:0 {dps(6)};background:transparent;")
+        chip.setFixedHeight(dp(15))
+        chip.setAlignment(Qt.AlignCenter)
+        tl.addWidget(chip)
+        tl.addSpacing(dp(10))
+
+        # TOPBAR plugin slots: search next to brand, icon actions on the right
+        icon_order = {"agent": 0, "settings": 1}
+        right_widgets = []
+        for pid, plugin in self._plugin_mgr.all_plugins().items():
+            if plugin.region != PluginRegion.TOPBAR:
+                continue
+            try:
+                w = self._plugin_mgr.get_widget(pid)
+                if not w:
+                    continue
+                if pid == "search":
+                    tl.addWidget(w)
+                else:
+                    right_widgets.append((icon_order.get(pid, 9), w))
+            except Exception:
+                pass
+
+        tl.addStretch()
+        for _, w in sorted(right_widgets, key=lambda t: t[0]):
+            tl.addWidget(w)
+
+        refresh = QPushButton("刷新")
+        refresh.setObjectName("refreshBtn")
+        refresh.setFixedHeight(dp(28))
+        refresh.setCursor(Qt.PointingHandCursor)
+        refresh.setToolTip("刷新当前面板数据")
+        refresh.clicked.connect(lambda: self._plugin_mgr.refresh_current())
+        tl.addWidget(refresh)
+
+        log_btn = QPushButton("日志")
+        log_btn.setFixedHeight(dp(28))
+        log_btn.setCursor(Qt.PointingHandCursor)
+        log_btn.setToolTip("查看运行日志")
+        log_btn.clicked.connect(lambda: self._log_window.show()
+                                if self._log_window.isHidden()
+                                else self._log_window.hide())
+        tl.addWidget(log_btn)
+        return topbar
+
+    def _build_nav_rail(self) -> QWidget:
         nav_panel = QWidget()
-        nav_panel.setFixedWidth(dp(72))
-        nav_panel.setStyleSheet("background:#0D1117; border-right:1px solid #21262D;")
+        nav_panel.setFixedWidth(dp(64))
+        nav_panel.setStyleSheet(f"background:{C_BG};border-right:1px solid {C_BORDER_SOFT};")
         nav_lo = QVBoxLayout(nav_panel)
-        nav_lo.setContentsMargins(6, 12, 6, 12)
-        nav_lo.setSpacing(4)
+        nav_lo.setContentsMargins(dp(5), dp(10), dp(5), dp(10))
+        nav_lo.setSpacing(dp(4))
 
         self._nav_btns = {}
         for pid, name, icon, region in self._plugin_mgr.get_nav_items():
@@ -175,72 +239,24 @@ class PlatformShell(QMainWindow):
             self._nav_btns[pid] = btn
 
         nav_lo.addStretch()
-        left_lo.addWidget(nav_panel)
-
-        self._left_stack = QStackedWidget()
-        self._left_stack.setStyleSheet("background:#0D1117;")
-        left_lo.addWidget(self._left_stack, 1)
-        outer.addWidget(left_widget)
-
-        # ── Right: Panel Stack ──
-        right_widget = QWidget()
-        rl = QVBoxLayout(right_widget)
-        rl.setContentsMargins(8, 8, 8, 8)
-        rl.setSpacing(0)
-
-        self._right_stack = QStackedWidget()
-        self._right_stack.setStyleSheet("background:#0D1117;")
-        rl.addWidget(self._right_stack)
-        outer.addWidget(right_widget)
-
-        outer.setSizes([380, 820])
-        layout.addWidget(outer)
-
-        # ═══ Watermark (platform layer) ═══
-        self._watermark = QLabel("develop by siyuan-chen & xiaoguang", self)
-        self._watermark.setStyleSheet(
-            f"color:rgba(139,148,158,60);font-size:{dps(10)};background:transparent;border:none;")
-        self._watermark.adjustSize()
-
-        # ═══ Status Bar ═══
-        self.status = QStatusBar()
-        self.status.setStyleSheet(
-            f"QStatusBar{{background:#161B22;color:#8B949E;border-top:1px solid #21262D;"
-            f"font-size:{dps(12)};padding:2px 12px;}}")
-        self._status_dot = QLabel("\u25cf")
-        self._status_dot.setStyleSheet(f"color:#3fb950;font-size:{dps(10)};border:none;padding-right:4px;")
-        self.status.addPermanentWidget(self._status_dot)
-        self.setStatusBar(self.status)
+        return nav_panel
 
     def _make_nav_btn(self, pid: str, name: str, icon: str):
         """Create a nav button with emoji icon on top + text below."""
         btn = QPushButton()
         btn.setObjectName("navBtn")
         btn.setCheckable(True)
-        btn.setFixedSize(dp(60), dp(56))
+        btn.setFixedSize(dp(54), dp(50))
         btn.setCursor(Qt.PointingHandCursor)
+        btn.setToolTip(name)
         btn.setText(f"{icon}\n{name}")
-        btn.setStyleSheet("""
-            QPushButton#navBtn {
-                background: transparent;
-                color: #8B949E;
-                border: none;
-                border-radius: 6px;
-                padding: 0px;
-                font-weight: 500;
-            }
-            QPushButton#navBtn:hover {
-                background: #1C2128;
-                color: #C9D1D9;
-            }
-            QPushButton#navBtn:checked {
-                background: rgba(212, 165, 116, 0.10);
-                color: #D4A574;
-                font-weight: 600;
-            }
-        """)
+        btn.setStyleSheet(f"QPushButton#navBtn{{font-size:{fs(10)};}}")
         btn.clicked.connect(lambda checked, pid=pid: self._activate_plugin(pid))
         return btn
+
+    # ──────────────────────────────────────────────────────────
+    #  Plugin activation
+    # ──────────────────────────────────────────────────────────
 
     def _activate_plugin(self, plugin_id: str):
         """Activate a plugin and show its widget in the correct region."""
@@ -287,11 +303,7 @@ class PlatformShell(QMainWindow):
             self._place_in_stack(companion, self._right_stack)
             return
 
-        default_right = {}
-        if os.path.exists(CONFIG_PATH):
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                default_right = json.load(f)
-        right_id = default_right.get("default_right", "kline")
+        right_id = self._config.get("default_right", "kline")
         self._plugin_mgr.activate(right_id)
         boundary = self._plugin_mgr.get_widget(right_id)
         if boundary:

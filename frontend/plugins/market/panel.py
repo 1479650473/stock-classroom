@@ -1,9 +1,14 @@
-﻿"""Market Panel -- 大盘指数 + 板块表现"""
+"""Market Panel -- 大盘指数 + 板块表现"""
 import sqlite3, traceback
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QFrame, QAbstractItemView,
     QPushButton)
-from frontend.platform.theme import dp, dps
+from frontend.platform.theme import (
+    dp, dps, fs,
+    C_BG, C_PANEL, C_BORDER, C_BORDER_SOFT, C_TEXT, C_SUBTEXT, C_FAINT,
+    C_ACCENT, C_UP as C_RISE, C_DOWN as C_FALL, C_RAISED as C_HOVER,
+    qss_table, style_h1, style_label, style_caption,
+)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QFont
 from frontend.platform.local_worker import LocalWorker
@@ -14,17 +19,6 @@ INDEX_MAP = {
     "399006": "创业板指", "000688": "科创50",
     "000300": "沪深300",
 }
-
-C_BG = "#0D1117"
-C_PANEL = "#161B22"
-C_BORDER = "#21262D"
-C_TEXT = "#E6EDF3"
-C_SUBTEXT = "#8B949E"
-C_ACCENT = "#D4A574"
-C_RISE = "#EF5350"
-C_FALL = "#4CAF50"
-C_HOVER = "#1C2128"
-
 
 class MarketPanel(QWidget):
     def __init__(self, parent=None):
@@ -53,10 +47,10 @@ class MarketPanel(QWidget):
         for key, text in [("date", "日期"), ("up", "上涨"), ("dn", "下跌"),
                           ("cnt", "总数"), ("vol", "成交额")]:
             w = QLabel("--")
-            w.setStyleSheet(f"color:{C_SUBTEXT};font-size:20px;font-weight:500;background:transparent")
+            w.setStyleSheet(f"color:{C_SUBTEXT};font-size:{fs(12)};font-weight:500;background:transparent")
             w._key = key
             lbl = QLabel(text)
-            lbl.setStyleSheet(f"color:#484F58;font-size:19px;background:transparent")
+            lbl.setStyleSheet(f"color:#484F58;font-size:{fs(11)};background:transparent")
             bl.addWidget(lbl)
             bl.addWidget(w)
             bl.addSpacing(16)
@@ -80,9 +74,10 @@ class MarketPanel(QWidget):
             btn.setFixedHeight(dp(26))
             btn.setCursor(Qt.PointingHandCursor)
             btn.setStyleSheet(
-                "QPushButton{background:#161B22;color:#8B949E;border:1px solid #21262D;"
-                "border-radius:6px;padding:3px 14px;font-size:20px;}"
-                "QPushButton:checked{background:rgba(212,165,116,0.10);color:#D4A574;border-color:#D4A574}")
+                f"QPushButton{{background:{C_PANEL};color:{C_SUBTEXT};border:1px solid {C_BORDER_SOFT};"
+                f"border-radius:{dps(6)};padding:{dps(3)} {dps(14)};font-size:{fs(12)};}}"
+                f"QPushButton:hover{{color:{C_TEXT};border-color:{C_BORDER};}}"
+                f"QPushButton:checked{{background:rgba(212,165,116,0.10);color:{C_ACCENT};border-color:{C_ACCENT}}}")
             self._sector_tabs.addWidget(btn)
         self._sector_tabs.addStretch()
         lo.addLayout(self._sector_tabs)
@@ -97,6 +92,8 @@ class MarketPanel(QWidget):
         lo.addWidget(self.table, 1)
 
     def _load_sectors(self):
+        if getattr(self, "_sector_worker", None) is not None and self._sector_worker.isRunning():
+            return
         self._sector_worker = LocalWorker(self._work_sectors, "sectors", args=[self._sector_type])
         self._sector_worker.result.connect(self._on_sectors)
         self._sector_worker.start()
@@ -124,6 +121,8 @@ class MarketPanel(QWidget):
 
     def load(self):
         if not self.db_path:
+            return
+        if getattr(self, "_worker", None) is not None and self._worker.isRunning():
             return
         if self.on_status:
             self.on_status("加载市场数据...")
@@ -230,17 +229,17 @@ class MarketPanel(QWidget):
             cl.setSpacing(2)
 
             nm = QLabel(d.get("name", ""))
-            nm.setStyleSheet(f"color:{C_SUBTEXT};font-size:19px;background:transparent")
+            nm.setStyleSheet(f"color:{C_SUBTEXT};font-size:{fs(11)};background:transparent")
             cl.addWidget(nm)
 
             p = QLabel("{:.2f}".format(d.get("price", 0)))
-            p.setStyleSheet(f"color:{C_TEXT};font-size:23px;font-weight:700;background:transparent")
+            p.setStyleSheet(f"color:{C_TEXT};font-size:{fs(14)};font-weight:700;background:transparent")
             cl.addWidget(p)
 
             chg = d.get("change_pct", 0)
             color = C_RISE if chg >= 0 else C_FALL
             c = QLabel("{}{:.2f}%".format("+" if chg >= 0 else "", chg))
-            c.setStyleSheet(f"color:{color};font-size:20px;font-weight:600;background:transparent")
+            c.setStyleSheet(f"color:{color};font-size:{fs(12)};font-weight:600;background:transparent")
             cl.addWidget(c)
 
             self.card_row.addWidget(card)
@@ -248,11 +247,11 @@ class MarketPanel(QWidget):
         fmt_vol = lambda v: "{:.0f}亿".format(v / 1e8) if v else "--"
         self.bar_widgets["date"].setText(stats.get("date", "--"))
         self.bar_widgets["up"].setText(str(stats.get("up", 0)))
-        self.bar_widgets["up"].setStyleSheet(f"color:{C_RISE};font-size:19px;font-weight:600;background:transparent")
+        self.bar_widgets["up"].setStyleSheet(f"color:{C_RISE};font-size:{fs(11)};font-weight:600;background:transparent")
         self.bar_widgets["dn"].setText(str(stats.get("dn", 0)))
-        self.bar_widgets["dn"].setStyleSheet(f"color:{C_FALL};font-size:19px;font-weight:600;background:transparent")
+        self.bar_widgets["dn"].setStyleSheet(f"color:{C_FALL};font-size:{fs(11)};font-weight:600;background:transparent")
         self.bar_widgets["cnt"].setText(str(stats.get("count", 0)))
-        self.bar_widgets["cnt"].setStyleSheet(f"color:{C_TEXT};font-size:19px;font-weight:500;background:transparent")
+        self.bar_widgets["cnt"].setStyleSheet(f"color:{C_TEXT};font-size:{fs(11)};font-weight:500;background:transparent")
         self.bar_widgets["vol"].setText(fmt_vol(stats.get("volume", 0)))
 
         if self.on_status:

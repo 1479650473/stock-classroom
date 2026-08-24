@@ -8,7 +8,14 @@ if _BD not in sys.path:
     sys.path.insert(0, _BD)
 
 from trade_engine.engine import TradeEngine
-from frontend.platform.theme import dp, dps
+from frontend.platform.theme import (
+    dp, dps, fs,
+    C_BG, C_PANEL, C_RAISED, C_BORDER, C_BORDER_SOFT, C_TEXT, C_SUBTEXT, C_FAINT,
+    C_ACCENT, C_ACCENT_HOVER, C_ACCENT_DIM, C_ON_ACCENT, C_UP, C_DOWN,
+    qss_btn, qss_btn_accent, qss_combo, qss_input, qss_list, qss_spinbox,
+    qss_table, style_h1, style_h2, style_label, style_caption,
+)
+from frontend.platform.local_worker import LocalWorker
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
@@ -19,37 +26,20 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtGui import QColor
 
-from .styles import (
-    C_BG, C_PANEL, C_BORDER, C_TEXT, C_SUBTEXT, C_ACCENT,
-    C_GREEN, C_RED, C_UP, C_DOWN,
-)
 
-# ── Shared shorthand style fragments ──
-_CARD = ("QFrame#card{background:%s;border:1px solid %s;border-radius:6px;padding:10px}"
-         % (C_PANEL, C_BORDER))
-_BTN = (
-    "QPushButton{background:%s;color:%s;border:1px solid %s;border-radius:4px;"
-    "font-size:20px;padding:4px 10px}" % (C_PANEL, C_TEXT, C_BORDER)
-    + "QPushButton:hover{border-color:" + C_ACCENT + ";color:" + C_ACCENT + "}"
-    + "QPushButton:disabled{color:" + C_SUBTEXT + "}"
-)
-_BTN_ACCENT = (
-    "QPushButton{background:%s;color:#0D1117;border:none;border-radius:4px;"
-    "font-size:20px;font-weight:700;padding:6px 14px}" % C_ACCENT
-    + "QPushButton:hover{background:#E0B888}"
-    + "QPushButton:disabled{background:" + C_BORDER + ";color:" + C_SUBTEXT + "}"
-)
-_TABLE = (
-    "QTableWidget{background:%s;color:%s;border:1px solid %s;gridline-color:%s;font-size:19px}"
-    % (C_PANEL, C_TEXT, C_BORDER, C_BORDER)
-    + "QHeaderView::section{background:" + C_PANEL + ";color:" + C_SUBTEXT
-    + ";border:none;padding:3px;font-size:19px}"
-    + "QTableWidget::item:selected{background:" + C_ACCENT + ";color:#0D1117}"
-)
+def _seg_style(active_color: str) -> str:
+    """Segmented-toggle style: tinted text at rest, solid fill when checked."""
+    return (
+        f"QPushButton{{background:{C_PANEL};color:{active_color};border:1px solid {C_BORDER};"
+        f"font-size:{fs(12)};font-weight:700;padding:{dps(4)} 0;}}"
+        f"QPushButton:hover{{border-color:{active_color};}}"
+        f"QPushButton:checked{{background:{active_color};color:#FFFFFF;border-color:{active_color};}}"
+    )
 
-# ──────────────────────────────────────────────────────────
+
+# ──────────────────────────────────────────────────────────────
 #  AccountBar
-# ──────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────
 
 class _AccountBar(QWidget):
     account_changed = pyqtSignal(int)
@@ -59,41 +49,36 @@ class _AccountBar(QWidget):
         self._engine = engine
         lo = QHBoxLayout(self)
         lo.setContentsMargins(0, 0, 0, 0)
-        lo.setSpacing(8)
+        lo.setSpacing(dp(6))
 
-        lbl = QLabel("\u8d26\u6237:")
-        lbl.setStyleSheet("color:%s;font-size:20px;background:transparent" % C_SUBTEXT)
+        lbl = QLabel("账户")
+        lbl.setStyleSheet(style_label())
         lo.addWidget(lbl)
 
         self._combo = QComboBox()
-        self._combo.setMinimumWidth(dp(120))
-        self._combo.setStyleSheet(
-            "QComboBox{background:%s;color:%s;border:1px solid %s;border-radius:4px;"
-            "padding:3px 8px;font-size:20px}" % (C_PANEL, C_TEXT, C_BORDER)
-            + "QComboBox:hover{border-color:%s}" % C_ACCENT
-            + "QComboBox QAbstractItemView{background:%s;color:%s;"
-            "selection-background-color:%s;selection-color:#0D1117;border:1px solid %s}"
-            % (C_PANEL, C_TEXT, C_ACCENT, C_BORDER)
-        )
+        self._combo.setMinimumWidth(dp(130))
+        self._combo.setFixedHeight(dp(28))
+        self._combo.setStyleSheet(qss_combo())
         self._combo.currentIndexChanged.connect(self._emit)
         lo.addWidget(self._combo)
 
-        btn_new = QPushButton("+\u65b0\u5efa")
+        btn_new = QPushButton("+ 新建")
         btn_new.setFixedHeight(dp(28))
         btn_new.setCursor(Qt.PointingHandCursor)
-        btn_new.setStyleSheet(_BTN)
+        btn_new.setStyleSheet(qss_btn())
+        btn_new.setToolTip("新建模拟账户（初始资金 10 万）")
         btn_new.clicked.connect(self._create)
         lo.addWidget(btn_new)
 
-        btn_reset = QPushButton("\u91cd\u7f6e")
+        btn_reset = QPushButton("重置")
         btn_reset.setFixedHeight(dp(28))
         btn_reset.setCursor(Qt.PointingHandCursor)
-        btn_reset.setStyleSheet(_BTN)
+        btn_reset.setStyleSheet(qss_btn())
+        btn_reset.setToolTip("清空当前账户的持仓与订单，恢复初始资金")
         btn_reset.clicked.connect(self._reset)
         lo.addWidget(btn_reset)
 
         lo.addStretch()
-
         self._load()
 
     def _load(self):
@@ -109,7 +94,7 @@ class _AccountBar(QWidget):
             self.account_changed.emit(aid)
 
     def _create(self):
-        aid = self._engine.create_account("\u4e3b\u8d26\u6237", 100000)
+        aid = self._engine.create_account("主账户", 100000)
         self._load()
         for i in range(self._combo.count()):
             if self._combo.itemData(i) == aid:
@@ -126,9 +111,9 @@ class _AccountBar(QWidget):
         return self._combo.currentData()
 
 
-# ──────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────
 #  SummaryCards
-# ──────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────
 
 class _SummaryCards(QWidget):
     def __init__(self):
@@ -136,67 +121,74 @@ class _SummaryCards(QWidget):
         self._labels = {}
         grid = QGridLayout(self)
         grid.setContentsMargins(0, 0, 0, 0)
-        grid.setSpacing(6)
+        grid.setSpacing(dp(6))
 
         items = [
-            ("\u603b\u8d44\u4ea7", "total_assets", 0, 0),
-            ("\u53ef\u7528\u8d44\u91d1", "balance", 0, 1),
-            ("\u51bb\u7ed3\u8d44\u91d1", "frozen", 0, 2),
-            ("\u6301\u4ed3\u5e02\u503c", "market_value", 1, 0),
-            ("\u6d6e\u52a8\u76c8\u4e8f", "float_pnl", 1, 1),
-            ("\u7d2f\u8ba1\u76c8\u4e8f", "total_profit", 1, 2),
+            ("总资产", "total_assets", 0, 0),
+            ("可用资金", "balance", 0, 1),
+            ("持仓市值", "market_value", 0, 2),
+            ("冻结资金", "frozen", 1, 0),
+            ("浮动盈亏", "float_pnl", 1, 1),
+            ("累计盈亏", "total_profit", 1, 2),
         ]
         for label, key, row, col in items:
             card = QFrame()
             card.setObjectName("card")
-            card.setStyleSheet(_CARD)
+            card.setStyleSheet(
+                f"QFrame#card{{background:{C_PANEL};border:1px solid {C_BORDER_SOFT};"
+                f"border-radius:{dps(8)};}}"
+            )
             cl = QVBoxLayout(card)
-            cl.setContentsMargins(8, 6, 8, 6)
-            cl.setSpacing(2)
+            cl.setContentsMargins(dp(10), dp(6), dp(10), dp(6))
+            cl.setSpacing(dp(2))
 
             lb = QLabel(label)
-            lb.setStyleSheet("color:%s;font-size:19px;background:transparent" % C_SUBTEXT)
+            lb.setStyleSheet(style_caption())
             cl.addWidget(lb)
 
             val = QLabel("--")
-            val.setStyleSheet("color:%s;font-size:22px;font-weight:700;background:transparent" % C_TEXT)
+            val.setStyleSheet(
+                f"color:{C_TEXT};font-size:{fs(14)};font-weight:700;background:transparent;"
+                f"font-family:'Consolas','Segoe UI','Microsoft YaHei';")
             cl.addWidget(val)
             self._labels[key] = val
             grid.addWidget(card, row, col)
 
+    def _set_num(self, key, text, color=None):
+        lb = self._labels[key]
+        lb.setText(text)
+        lb.setStyleSheet(
+            f"color:{color or C_TEXT};font-size:{fs(14)};font-weight:700;background:transparent;"
+            f"font-family:'Consolas','Segoe UI','Microsoft YaHei';")
+
     def update_summary(self, summary):
         if summary is None:
             return
-        fmt = lambda k, f: self._labels[k].setText(f.format(summary.get(k, 0)))
-
-        fmt("total_assets", "{:,.2f}")
-        fmt("balance", "{:,.2f}")
-        fmt("frozen", "{:,.2f}")
-        fmt("market_value", "{:,.2f}")
+        self._set_num("total_assets", "{:,.2f}".format(summary.get("total_assets", 0)))
+        self._set_num("balance", "{:,.2f}".format(summary.get("balance", 0)))
+        self._set_num("frozen", "{:,.2f}".format(summary.get("frozen", 0)))
+        self._set_num("market_value", "{:,.2f}".format(summary.get("market_value", 0)))
 
         fp = summary.get("float_pnl", 0)
-        fp_label = self._labels["float_pnl"]
-        fp_label.setText("{:+,.2f}".format(fp))
-        fp_label.setStyleSheet("color:%s;font-size:22px;font-weight:700;background:transparent"
-                               % (C_UP if fp >= 0 else C_DOWN))
+        self._set_num("float_pnl", "{:+,.2f}".format(fp),
+                      C_UP if fp > 0 else (C_DOWN if fp < 0 else C_TEXT))
 
         tp = summary.get("total_profit", 0)
-        tp_label = self._labels["total_profit"]
-        tp_label.setText("{:+,.2f} ({:+.2f}%)".format(tp, summary.get("total_profit_pct", 0)))
-        tp_label.setStyleSheet("color:%s;font-size:13px;font-weight:700;background:transparent"
-                               % (C_RED if tp > 0 else (C_GREEN if tp < 0 else C_SUBTEXT)))
+        pct = summary.get("total_profit_pct", 0)
+        self._set_num("total_profit", "{:+,.2f} ({:+.2f}%)".format(tp, pct),
+                      C_UP if tp > 0 else (C_DOWN if tp < 0 else C_TEXT))
 
 
-# ──────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────
 #  StockSearch
-# ──────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────
 
 class _StockSearch(QWidget):
     stock_selected = pyqtSignal(str, str)  # code, name
 
-    def __init__(self, kline_db):
+    def __init__(self):
         super().__init__()
-        self._kline_db = kline_db
+        self._kline_db = None
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._do_search)
@@ -206,37 +198,31 @@ class _StockSearch(QWidget):
         lo.setSpacing(0)
 
         self._input = QLineEdit()
-        self._input.setPlaceholderText("\u8f93\u5165\u4ee3\u7801\u6216\u540d\u79f0...")
-        self._input.setStyleSheet(
-            "QLineEdit{background:%s;color:%s;border:1px solid %s;"
-            "border-radius:4px;padding:4px 8px;font-size:20px}"
-            "QLineEdit:focus{border-color:%s}" % (C_PANEL, C_TEXT, C_BORDER, C_ACCENT)
-        )
+        self._input.setPlaceholderText("输入代码或名称，如 600519 / 茅台")
+        self._input.setFixedHeight(dp(30))
+        self._input.setStyleSheet(qss_input())
         self._input.textChanged.connect(self._on_text)
         lo.addWidget(self._input)
 
         self._list = QListWidget()
         self._list.setMaximumHeight(dp(150))
-        self._list.setStyleSheet(
-            "QListWidget{background:%s;color:%s;border:1px solid %s;font-size:19px}"
-            "QListWidget::item{padding:4px 8px}"
-            "QListWidget::item:selected{background:%s;color:#0D1117}"
-            % (C_PANEL, C_TEXT, C_BORDER, C_ACCENT)
-        )
+        self._list.setStyleSheet(qss_list())
         self._list.itemClicked.connect(self._on_select)
         self._list.hide()
         lo.addWidget(self._list)
 
+    def set_db(self, path):
+        self._kline_db = path
+
     def _on_text(self, text):
-        text = text.strip()
-        if len(text) < 1:
+        if len(text.strip()) < 1:
             self._list.hide()
             return
         self._timer.start(250)
 
     def _do_search(self):
         text = self._input.text().strip()
-        if len(text) < 1:
+        if len(text) < 1 or not self._kline_db:
             self._list.hide()
             return
         try:
@@ -269,9 +255,9 @@ class _StockSearch(QWidget):
         self._input.setText(code)
 
 
-# ──────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────
 #  OrderPanel
-# ──────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────
 
 class _OrderPanel(QWidget):
     order_placed = pyqtSignal()
@@ -286,123 +272,121 @@ class _OrderPanel(QWidget):
 
         lo = QVBoxLayout(self)
         lo.setContentsMargins(0, 0, 0, 0)
-        lo.setSpacing(6)
+        lo.setSpacing(dp(6))
 
-        # Side toggle
+        # ── Side toggle ──
         sr = QHBoxLayout()
         sr.setSpacing(0)
-        self._buy_btn = QPushButton("\U0001f4c8 \u4e70\u5165")
+        self._buy_btn = QPushButton("买入")
         self._buy_btn.setCheckable(True)
         self._buy_btn.setChecked(True)
         self._buy_btn.setFixedHeight(dp(32))
         self._buy_btn.setCursor(Qt.PointingHandCursor)
         self._buy_btn.setStyleSheet(
-            "QPushButton{background:%s;color:%s;border:1px solid %s;border-radius:4px 0 0 4px;"
-            "font-size:13px;font-weight:700}"
-            "QPushButton:checked{background:%s;color:#0D1117;border-color:%s}"
-            % (C_PANEL, C_UP, C_BORDER, C_UP, C_UP)
+            _seg_style(C_UP).replace("border:1px solid %s;" % C_BORDER,
+                                     "border:1px solid %s;border-radius:%s 0 0 %s;"
+                                     % (C_BORDER, dps(6), dps(6)))
+            + f"QPushButton{{border-radius:{dps(6)} 0 0 {dps(6)};}}"
         )
         self._buy_btn.clicked.connect(lambda: self._set_side('buy'))
         sr.addWidget(self._buy_btn, 1)
 
-        self._sell_btn = QPushButton("\U0001f4c9 \u5356\u51fa")
+        self._sell_btn = QPushButton("卖出")
         self._sell_btn.setCheckable(True)
         self._sell_btn.setFixedHeight(dp(32))
         self._sell_btn.setCursor(Qt.PointingHandCursor)
         self._sell_btn.setStyleSheet(
-            "QPushButton{background:%s;color:%s;border:1px solid %s;border-radius:0 4px 4px 0;"
-            "font-size:13px;font-weight:700}"
-            "QPushButton:checked{background:%s;color:#0D1117;border-color:%s}"
-            % (C_PANEL, C_DOWN, C_BORDER, C_DOWN, C_DOWN)
+            _seg_style(C_DOWN)
+            + f"QPushButton{{border-radius:0 {dps(6)} {dps(6)} 0;border-left:none;}}"
         )
         self._sell_btn.clicked.connect(lambda: self._set_side('sell'))
         sr.addWidget(self._sell_btn, 1)
         lo.addLayout(sr)
 
-        # Price display
-        self._price_label = QLabel("\u73b0\u4ef7: --")
-        self._price_label.setStyleSheet("color:%s;font-size:13px;font-weight:600;background:transparent" % C_TEXT)
+        # ── Current stock / price ──
+        self._price_label = QLabel("未选择股票")
+        self._price_label.setStyleSheet(
+            f"color:{C_SUBTEXT};font-size:{fs(12)};font-weight:600;background:transparent;")
         lo.addWidget(self._price_label)
 
-        # Order type toggle
+        # ── Order type toggle ──
         tr = QHBoxLayout()
         tr.setSpacing(0)
-        self._market_btn = QPushButton("\u5e02\u4ef7\u5355")
+        seg_market = (
+            f"QPushButton{{background:{C_PANEL};color:{C_SUBTEXT};border:1px solid {C_BORDER};"
+            f"border-radius:{dps(6)} 0 0 {dps(6)};font-size:{fs(11)};padding:{dps(3)} 0;}}"
+            f"QPushButton:checked{{background:{C_ACCENT_DIM};color:{C_ACCENT};border-color:{C_ACCENT};}}"
+        )
+        seg_limit = (
+            f"QPushButton{{background:{C_PANEL};color:{C_SUBTEXT};border:1px solid {C_BORDER};"
+            f"border-radius:0 {dps(6)} {dps(6)} 0;border-left:none;font-size:{fs(11)};padding:{dps(3)} 0;}}"
+            f"QPushButton:checked{{background:{C_ACCENT_DIM};color:{C_ACCENT};border-color:{C_ACCENT};}}"
+        )
+        self._market_btn = QPushButton("市价单")
         self._market_btn.setCheckable(True)
         self._market_btn.setChecked(True)
-        self._market_btn.setFixedHeight(dp(28))
+        self._market_btn.setFixedHeight(dp(26))
         self._market_btn.setCursor(Qt.PointingHandCursor)
-        self._market_btn.setStyleSheet(
-            "QPushButton{background:%s;color:%s;border:1px solid %s;border-radius:4px 0 0 4px;font-size:19px}"
-            "QPushButton:checked{background:%s;color:%s;border-color:%s}"
-            % (C_PANEL, C_SUBTEXT, C_BORDER, C_ACCENT, C_ACCENT, C_ACCENT)
-        )
+        self._market_btn.setStyleSheet(seg_market)
+        self._market_btn.setToolTip("以当前市场价格立即成交")
         self._market_btn.clicked.connect(lambda: self._set_order_type('market'))
         tr.addWidget(self._market_btn, 1)
 
-        self._limit_btn = QPushButton("\u9650\u4ef7\u5355")
+        self._limit_btn = QPushButton("限价单")
         self._limit_btn.setCheckable(True)
-        self._limit_btn.setFixedHeight(dp(28))
+        self._limit_btn.setFixedHeight(dp(26))
         self._limit_btn.setCursor(Qt.PointingHandCursor)
-        self._limit_btn.setStyleSheet(
-            "QPushButton{background:%s;color:%s;border:1px solid %s;border-radius:0 4px 4px 0;font-size:19px}"
-            "QPushButton:checked{background:%s;color:%s;border-color:%s}"
-            % (C_PANEL, C_SUBTEXT, C_BORDER, C_ACCENT, C_ACCENT, C_ACCENT)
-        )
+        self._limit_btn.setStyleSheet(seg_limit)
+        self._limit_btn.setToolTip("挂出限价委托，价格到达后自动成交")
         self._limit_btn.clicked.connect(lambda: self._set_order_type('limit'))
         tr.addWidget(self._limit_btn, 1)
         lo.addLayout(tr)
 
-        # Qty
+        # ── Qty ──
         qr = QHBoxLayout()
-        qr.setSpacing(6)
-        ql = QLabel("\u6570\u91cf:")
-        ql.setStyleSheet("color:%s;font-size:19px;background:transparent" % C_SUBTEXT)
+        qr.setSpacing(dp(6))
+        ql = QLabel("数量")
+        ql.setStyleSheet(style_label())
         qr.addWidget(ql)
         self._qty = QSpinBox()
         self._qty.setRange(100, 1000000)
         self._qty.setSingleStep(100)
         self._qty.setValue(100)
-        self._qty.setStyleSheet(
-            "QSpinBox{background:%s;color:%s;border:1px solid %s;border-radius:4px;"
-            "padding:4px 6px;font-size:20px}"
-            "QSpinBox:focus{border-color:%s}" % (C_PANEL, C_TEXT, C_BORDER, C_ACCENT)
-        )
+        self._qty.setFixedHeight(dp(28))
+        self._qty.setStyleSheet(qss_spinbox())
         self._qty.valueChanged.connect(self._refresh_estimate)
         qr.addWidget(self._qty, 1)
         lo.addLayout(qr)
 
-        # Limit price
+        # ── Limit price (whole row hidden in market mode) ──
+        self._price_row_widget = QWidget()
+        pr = QHBoxLayout(self._price_row_widget)
+        pr.setContentsMargins(0, 0, 0, 0)
+        pr.setSpacing(dp(6))
+        pl = QLabel("价格")
+        pl.setStyleSheet(style_label())
+        pr.addWidget(pl)
         self._price_box = QDoubleSpinBox()
         self._price_box.setRange(0.01, 99999)
         self._price_box.setDecimals(2)
         self._price_box.setValue(0.01)
-        self._price_box.setStyleSheet(
-            "QDoubleSpinBox{background:%s;color:%s;border:1px solid %s;border-radius:4px;"
-            "padding:4px 6px;font-size:20px}"
-            "QDoubleSpinBox:focus{border-color:%s}" % (C_PANEL, C_TEXT, C_BORDER, C_ACCENT)
-        )
+        self._price_box.setFixedHeight(dp(28))
+        self._price_box.setStyleSheet(qss_spinbox())
         self._price_box.valueChanged.connect(self._refresh_estimate)
-        self._price_box.hide()
+        pr.addWidget(self._price_box, 1)
+        self._price_row_widget.hide()
+        lo.addWidget(self._price_row_widget)
 
-        self._price_row = QHBoxLayout()
-        self._price_row.setSpacing(6)
-        pl = QLabel("\u4ef7\u683c:")
-        pl.setStyleSheet("color:%s;font-size:19px;background:transparent" % C_SUBTEXT)
-        self._price_row.addWidget(pl)
-        self._price_row.addWidget(self._price_box, 1)
-        lo.addLayout(self._price_row)
-
-        # Estimate
+        # ── Estimate ──
         self._est = QLabel("")
-        self._est.setStyleSheet("color:%s;font-size:19px;background:transparent;padding:2px 0" % C_SUBTEXT)
+        self._est.setStyleSheet(style_caption())
         lo.addWidget(self._est)
 
-        # Place button
-        self._place_btn = QPushButton("\u786e\u8ba4\u4e0b\u5355")
-        self._place_btn.setFixedHeight(dp(36))
+        # ── Place button ──
+        self._place_btn = QPushButton("确认下单")
+        self._place_btn.setFixedHeight(dp(34))
         self._place_btn.setCursor(Qt.PointingHandCursor)
-        self._place_btn.setStyleSheet(_BTN_ACCENT)
+        self._place_btn.setStyleSheet(qss_btn_accent())
         self._place_btn.clicked.connect(self._emit_place)
         lo.addWidget(self._place_btn)
 
@@ -416,19 +400,19 @@ class _OrderPanel(QWidget):
         self._order_type = ot
         self._market_btn.setChecked(ot == 'market')
         self._limit_btn.setChecked(ot == 'limit')
-        self._price_box.setVisible(ot == 'limit')
+        self._price_row_widget.setVisible(ot == 'limit')
         self._refresh_estimate()
 
     def set_stock(self, code, name):
         self._code = code
         self._name = name
-        self._price_label.setText("%s  %s  \u73b0\u4ef7: --" % (code, name))
+        self._price_label.setText("%s  %s  现价: --" % (code, name))
 
     def set_current_price(self, price):
         self._current_price = price
-        change = ""
-        self._price_label.setText("%s  %s  \u73b0\u4ef7: %.2f%s"
-                                  % (self._code, self._name, price, change))
+        self._price_label.setText("%s  %s  现价: %.2f" % (self._code, self._name, price))
+        self._price_label.setStyleSheet(
+            f"color:{C_TEXT};font-size:{fs(12)};font-weight:600;background:transparent;")
         if self._order_type == 'limit' and self._price_box.value() < 0.01:
             self._price_box.setValue(price)
         self._refresh_estimate()
@@ -446,13 +430,15 @@ class _OrderPanel(QWidget):
 
         if self._side == 'buy':
             cost = exec_price * qty + commission
-            self._est.setText("\u9884\u4f30\u6210\u672c: {:,.2f}  (\u4f63\u91d1: {:.2f})".format(cost, commission))
-            self._est.setStyleSheet("color:%s;font-size:19px;background:transparent;padding:2px 0" % C_UP)
+            self._est.setText("预估成本: {:,.2f}  (佣金 {:.2f})".format(cost, commission))
+            self._est.setStyleSheet(
+                f"color:{C_UP};font-size:{fs(10)};background:transparent;")
         else:
             proceeds = exec_price * qty - commission - stamp
-            self._est.setText("\u9884\u8ba1\u6536\u5165: {:,.2f}  (\u4f63\u91d1: {:.2f} + \u5370\u82b1: {:.2f})"
+            self._est.setText("预计收入: {:,.2f}  (佣金 {:.2f} + 印花 {:.2f})"
                               .format(proceeds, commission, stamp))
-            self._est.setStyleSheet("color:%s;font-size:19px;background:transparent;padding:2px 0" % C_DOWN)
+            self._est.setStyleSheet(
+                f"color:{C_DOWN};font-size:{fs(10)};background:transparent;")
 
     def _emit_place(self):
         self.order_placed.emit()
@@ -471,35 +457,31 @@ class _OrderPanel(QWidget):
         }
 
 
-# ──────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────
 #  PositionTable
-# ──────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────
 
 class _PositionTable(QTableWidget):
     row_clicked = pyqtSignal(str, str)  # code, name
-    quick_sell = pyqtSignal(str, str)   # code, name
 
     def __init__(self):
         super().__init__(0, 6)
         self.setHorizontalHeaderLabels([
-            "\u4ee3\u7801", "\u540d\u79f0", "\u6570\u91cf", "\u6210\u672c",
-            "\u73b0\u4ef7", "\u76c8\u4e8f/\u5e02\u503c",
+            "代码", "名称", "数量", "成本", "现价", "盈亏 / 市值",
         ])
-        self._setup()
-        self.cellClicked.connect(self._on_click)
-
-    def _setup(self):
-        self.setStyleSheet(_TABLE)
+        self.setStyleSheet(qss_table())
         self.horizontalHeader().setStretchLastSection(True)
         self.setSelectionMode(QAbstractItemView.SingleSelection)
         self.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.verticalHeader().setVisible(False)
-        self.setColumnWidth(0, dp(60))
-        self.setColumnWidth(1, dp(70))
-        self.setColumnWidth(2, dp(50))
-        self.setColumnWidth(3, dp(60))
-        self.setColumnWidth(4, dp(60))
+        self.setShowGrid(False)
+        self.setColumnWidth(0, dp(62))
+        self.setColumnWidth(1, dp(72))
+        self.setColumnWidth(2, dp(52))
+        self.setColumnWidth(3, dp(62))
+        self.setColumnWidth(4, dp(62))
+        self.cellClicked.connect(self._on_click)
 
     def _on_click(self, row, col):
         code = self.item(row, 0).text() if self.item(row, 0) else ""
@@ -512,23 +494,24 @@ class _PositionTable(QTableWidget):
         for i, p in enumerate(positions):
             fp = p.get('float_pnl', 0)
             items = [
-                (p['code'], C_TEXT),
-                (p['name'], C_TEXT),
-                (str(p['qty']), C_TEXT),
-                ("%.2f" % p['cost_price'], C_SUBTEXT),
-                ("%.2f" % p['current_price'], C_TEXT),
+                (p['code'], C_TEXT, Qt.AlignLeft),
+                (p['name'], C_TEXT, Qt.AlignLeft),
+                (str(p['qty']), C_TEXT, Qt.AlignRight),
+                ("%.2f" % p['cost_price'], C_SUBTEXT, Qt.AlignRight),
+                ("%.2f" % p['current_price'], C_TEXT, Qt.AlignRight),
                 ("{:+,.2f} / {:.0f}".format(fp, p.get('market_value', 0)),
-                 C_UP if fp >= 0 else C_DOWN),
+                 C_UP if fp > 0 else (C_DOWN if fp < 0 else C_TEXT), Qt.AlignRight),
             ]
-            for j, (val, clr) in enumerate(items):
+            for j, (val, clr, align) in enumerate(items):
                 it = QTableWidgetItem(str(val))
                 it.setForeground(QColor(clr))
+                it.setTextAlignment(align | Qt.AlignVCenter)
                 self.setItem(i, j, it)
 
 
-# ──────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────
 #  PendingOrders
-# ──────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────
 
 class _PendingOrders(QWidget):
     cancel_requested = pyqtSignal(int)
@@ -537,16 +520,14 @@ class _PendingOrders(QWidget):
         super().__init__()
         lo = QVBoxLayout(self)
         lo.setContentsMargins(0, 0, 0, 0)
-        lo.setSpacing(4)
+        lo.setSpacing(dp(4))
 
-        self._header = QPushButton("\u25b8 \u5f85\u6210\u4ea4\u59d4\u6258 (0)")
+        self._header = QPushButton("▸ 待成交委托 (0)")
         self._header.setCursor(Qt.PointingHandCursor)
-        self._header.setCheckable(True)
-        self._header.setChecked(True)
         self._header.setStyleSheet(
-            "QPushButton{background:transparent;color:%s;border:none;font-size:20px;"
-            "font-weight:600;text-align:left;padding:4px 0}"
-            "QPushButton:checked{color:%s}" % (C_SUBTEXT, C_TEXT)
+            f"QPushButton{{background:transparent;color:{C_SUBTEXT};border:none;"
+            f"font-size:{fs(12)};font-weight:600;text-align:left;padding:{dps(4)} 0;}}"
+            f"QPushButton:hover{{color:{C_TEXT};}}"
         )
         self._header.clicked.connect(self._toggle)
         lo.addWidget(self._header)
@@ -554,14 +535,15 @@ class _PendingOrders(QWidget):
         self._content = QWidget()
         self._content_lo = QVBoxLayout(self._content)
         self._content_lo.setContentsMargins(0, 0, 0, 0)
-        self._content_lo.setSpacing(2)
+        self._content_lo.setSpacing(dp(2))
         lo.addWidget(self._content)
 
     def _toggle(self):
         self._content.setVisible(not self._content.isVisible())
 
     def load(self, orders, on_cancel):
-        self._header.setText("\u25b8 \u5f85\u6210\u4ea4\u59d4\u6258 (%d)" % len(orders))
+        arrow = "▾" if self._content.isVisible() else "▸"
+        self._header.setText("%s 待成交委托 (%d)" % (arrow, len(orders)))
 
         while self._content_lo.count():
             w = self._content_lo.takeAt(0).widget()
@@ -571,23 +553,23 @@ class _PendingOrders(QWidget):
         for o in orders:
             row = QWidget()
             rl = QHBoxLayout(row)
-            rl.setContentsMargins(4, 2, 4, 2)
-            rl.setSpacing(6)
+            rl.setContentsMargins(dp(4), dp(2), dp(4), dp(2))
+            rl.setSpacing(dp(6))
 
             side_color = C_UP if o['side'] == 'buy' else C_DOWN
-            side_text = "\u4e70\u5165" if o['side'] == 'buy' else "\u5356\u51fa"
-            info = QLabel("%s %s \u9650\u4ef7 %.2f %d\u80a1"
+            side_text = "买入" if o['side'] == 'buy' else "卖出"
+            info = QLabel("%s  %s  限价 %.2f  %d 股"
                           % (o['code'], side_text, o['price'], o['qty']))
-            info.setStyleSheet("color:%s;font-size:19px;background:transparent" % C_TEXT)
+            info.setStyleSheet(f"color:{C_TEXT};font-size:{fs(11)};background:transparent;")
             rl.addWidget(info, 1)
 
-            cancel_btn = QPushButton("\u64a4\u5355")
-            cancel_btn.setFixedSize(dp(40), dp(22))
+            cancel_btn = QPushButton("撤单")
+            cancel_btn.setFixedSize(dp(44), dp(22))
             cancel_btn.setCursor(Qt.PointingHandCursor)
             cancel_btn.setStyleSheet(
-                "QPushButton{background:%s;color:%s;border:1px solid %s;border-radius:3px;font-size:19px}"
-                "QPushButton:hover{color:%s;border-color:%s}"
-                % (C_PANEL, C_SUBTEXT, C_BORDER, C_RED, C_RED)
+                f"QPushButton{{background:{C_PANEL};color:{C_SUBTEXT};border:1px solid {C_BORDER};"
+                f"border-radius:{dps(4)};font-size:{fs(10)};}}"
+                f"QPushButton:hover{{color:{C_UP};border-color:{C_UP};}}"
             )
             cancel_btn.clicked.connect(lambda checked, oid=o['id']: on_cancel(oid))
             rl.addWidget(cancel_btn)
@@ -595,33 +577,29 @@ class _PendingOrders(QWidget):
             self._content_lo.addWidget(row)
 
 
-# ──────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────
 #  TradeHistory
-# ──────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────
 
 class _TradeHistory(QTableWidget):
     def __init__(self):
         super().__init__(0, 5)
-        self.setHorizontalHeaderLabels([
-            "\u65f6\u95f4", "\u4ee3\u7801", "\u65b9\u5411", "\u4ef7\u683c", "\u6570\u91cf",
-        ])
-        self._setup()
-
-    def _setup(self):
-        self.setStyleSheet(_TABLE)
+        self.setHorizontalHeaderLabels(["时间", "代码", "方向", "价格", "数量"])
+        self.setStyleSheet(qss_table())
         self.horizontalHeader().setStretchLastSection(True)
         self.setSelectionMode(QAbstractItemView.NoSelection)
         self.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.verticalHeader().setVisible(False)
-        self.setColumnWidth(0, dp(130))
-        self.setColumnWidth(1, dp(55))
-        self.setColumnWidth(2, dp(40))
+        self.setShowGrid(False)
+        self.setColumnWidth(0, dp(128))
+        self.setColumnWidth(1, dp(56))
+        self.setColumnWidth(2, dp(42))
         self.setColumnWidth(3, dp(60))
 
     def load(self, trades):
         self.setRowCount(len(trades))
         for i, t in enumerate(trades):
-            side_text = "\u4e70" if t['side'] == 'buy' else "\u5356"
+            side_text = "买入" if t['side'] == 'buy' else "卖出"
             side_color = C_UP if t['side'] == 'buy' else C_DOWN
             traded_at = t.get('traded_at', '')[:16]
             items = [
@@ -637,9 +615,9 @@ class _TradeHistory(QTableWidget):
                 self.setItem(i, j, it)
 
 
-# ──────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────
 #  TradePanel
-# ──────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────
 
 class TradePanel(QWidget):
     def __init__(self):
@@ -647,41 +625,50 @@ class TradePanel(QWidget):
         self._kline_db = None
         self._engine = TradeEngine()
         self._cur_account = None
+        self._poll_worker = None
+        self._price_worker = None
         self.on_open_kline = None
         self.on_status = None
 
         self._timer = QTimer(self)
-        self._timer.setInterval(5000)
+        self._timer.setInterval(8000)
         self._timer.timeout.connect(self._poll_prices)
 
         self._build_ui()
 
-        accs = self._engine.list_accounts()
-        if not accs:
-            self._engine.create_account("\u4e3b\u8d26\u6237", 100000)
+        if not self._engine.list_accounts():
+            self._engine.create_account("主账户", 100000)
+        # Pick up the initial account selection (combo signals are blocked
+        # while loading, so the first account never fires account_changed).
+        self._account_bar._load()
+        first_id = self._account_bar.current_id()
+        if first_id:
+            self._cur_account = first_id
+            QTimer.singleShot(0, self.refresh)
 
     def set_kline_db(self, path):
         self._kline_db = path
+        self._search.set_db(path)
 
     def _status(self, msg):
         if self.on_status:
             self.on_status(msg)
 
     def _build_ui(self):
-        self.setStyleSheet("background:%s" % C_BG)
+        self.setStyleSheet(f"background:{C_BG}")
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("QScrollArea{background:%s;border:none}" % C_BG)
+        scroll.setStyleSheet(f"QScrollArea{{background:{C_BG};border:none}}")
 
         container = QWidget()
-        container.setStyleSheet("background:%s" % C_BG)
+        container.setStyleSheet(f"background:{C_BG}")
         lo = QVBoxLayout(container)
-        lo.setContentsMargins(10, 8, 10, 8)
-        lo.setSpacing(8)
+        lo.setContentsMargins(dp(10), dp(8), dp(10), dp(8))
+        lo.setSpacing(dp(8))
 
-        title = QLabel("\U0001f4c8 \u6a21\u62df\u4ea4\u6613")
-        title.setStyleSheet("color:%s;font-size:22px;font-weight:700;background:transparent" % C_TEXT)
+        title = QLabel("模拟交易")
+        title.setStyleSheet(style_h1())
         lo.addWidget(title)
 
         self._account_bar = _AccountBar(self._engine)
@@ -691,7 +678,7 @@ class TradePanel(QWidget):
         self._cards = _SummaryCards()
         lo.addWidget(self._cards)
 
-        self._search = _StockSearch(self._kline_db)
+        self._search = _StockSearch()
         self._search.stock_selected.connect(self._on_stock_selected)
         lo.addWidget(self._search)
 
@@ -702,38 +689,43 @@ class TradePanel(QWidget):
         self._pending = _PendingOrders()
         lo.addWidget(self._pending)
 
-        pos_title = QLabel("\u6301\u4ed3")
-        pos_title.setStyleSheet("color:%s;font-size:20px;font-weight:600;background:transparent" % C_SUBTEXT)
+        pos_title = QLabel("持仓")
+        pos_title.setStyleSheet(style_h2())
         lo.addWidget(pos_title)
 
         self._pos_table = _PositionTable()
         self._pos_table.row_clicked.connect(self._on_position_clicked)
         lo.addWidget(self._pos_table)
 
-        trade_title = QLabel("\u6210\u4ea4\u8bb0\u5f55")
-        trade_title.setStyleSheet("color:%s;font-size:20px;font-weight:600;background:transparent" % C_SUBTEXT)
+        trade_title = QLabel("成交记录")
+        trade_title.setStyleSheet(style_h2())
         lo.addWidget(trade_title)
 
         self._trade_hist = _TradeHistory()
-        self._trade_hist.setMaximumHeight(dp(150))
+        self._trade_hist.setMaximumHeight(dp(160))
         lo.addWidget(self._trade_hist)
 
         lo.addStretch()
 
         scroll.setWidget(container)
-
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(scroll)
+
+    # ── Account ──
 
     def _on_account_changed(self, aid):
         self._cur_account = aid
         self._poll_prices()
         self._timer.start()
 
+    # ── Stock selection ──
+
     def _on_stock_selected(self, code, name):
         self._order.set_stock(code, name)
         self._fetch_and_set_price(code)
+        if self.on_open_kline:
+            self.on_open_kline(code, name)
 
     def _on_position_clicked(self, code, name):
         self._search.set_code(code)
@@ -742,21 +734,33 @@ class TradePanel(QWidget):
         self._fetch_and_set_price(code)
 
     def _fetch_and_set_price(self, code):
-        try:
+        """Fetch one quote off the UI thread."""
+        if self._price_worker is not None and self._price_worker.isRunning():
+            return
+
+        def _fetch(c):
             from data_manager import fetch_realtime_prices
-            results = fetch_realtime_prices([code])
-            if results:
-                self._order.set_current_price(results[0]['price'])
-        except Exception as e:
-            self._status("\u83b7\u53d6\u73b0\u4ef7\u5931\u8d25: %s" % e)
+            return {"code": 0, "data": fetch_realtime_prices([c]) or []}
+
+        self._price_worker = LocalWorker(_fetch, "quote", args=[code])
+        self._price_worker.result.connect(self._on_quote)
+        self._price_worker.start()
+
+    def _on_quote(self, tag, data):
+        if data.get("code") != 0 or not data.get("data"):
+            self._status("获取现价失败")
+            return
+        self._order.set_current_price(data["data"][0]['price'])
+
+    # ── Order placement ──
 
     def _on_place_order(self):
         if self._cur_account is None:
-            self._status("\u8bf7\u5148\u9009\u62e9\u8d26\u6237")
+            self._status("请先选择账户")
             return
         p = self._order.get_params()
         if not p['code']:
-            self._status("\u8bf7\u5148\u9009\u62e9\u80a1\u7968")
+            self._status("请先选择股票")
             return
 
         order, result = self._engine.place_order(
@@ -766,54 +770,66 @@ class TradePanel(QWidget):
         )
 
         if order is None:
-            self._status("\u4e0b\u5355\u5931\u8d25: %s" % result)
+            self._status("下单失败: %s" % result)
             return
 
-        side_text = "\u4e70\u5165" if p['side'] == 'buy' else "\u5356\u51fa"
-        type_text = "\u5e02\u4ef7" if p['order_type'] == 'market' else "\u9650\u4ef7"
+        side_text = "买入" if p['side'] == 'buy' else "卖出"
         if result is not None:
-            self._status("\u5df2\u6210\u4ea4: %s %s %d\u80a1 @ %.2f"
+            self._status("已成交: %s %s %d股 @ %.2f"
                          % (side_text, p['code'], p['qty'], result['price']))
         else:
-            self._status("\u5df2\u6302\u5355: %s %s %d\u80a1 @ %.2f"
-                         % (type_text, p['code'], p['qty'], order['price']))
-
+            self._status("已挂单: %s %s %d股 @ %.2f"
+                         % (side_text, p['code'], p['qty'], order['price']))
         self.refresh()
+
+    # ── Price polling (background) ──
 
     def _poll_prices(self):
         if self._cur_account is None:
             return
-        try:
+        if self._poll_worker is not None and self._poll_worker.isRunning():
+            return
+
+        positions = self._engine.get_positions(self._cur_account)
+        pending = self._engine.get_orders(self._cur_account, status='pending')
+        codes = set(p['code'] for p in positions)
+        codes.update(o['code'] for o in pending)
+
+        if not codes:
+            self.refresh()
+            return
+
+        def _fetch(code_list):
             from data_manager import fetch_realtime_prices
+            return {"code": 0, "data": fetch_realtime_prices(code_list) or []}
 
-            positions = self._engine.get_positions(self._cur_account)
-            pending = self._engine.get_orders(self._cur_account, status='pending')
-            codes = set(p['code'] for p in positions)
-            codes.update(o['code'] for o in pending)
+        self._poll_worker = LocalWorker(_fetch, "poll", args=[list(codes)])
+        self._poll_worker.result.connect(self._on_poll)
+        self._poll_worker.start()
 
-            if not codes:
-                self.refresh()
-                return
-
-            results = fetch_realtime_prices(list(codes)) or []
-
-            for r in results:
+    def _on_poll(self, tag, data):
+        if data.get("code") != 0:
+            self._status("价格轮询失败: %s" % data.get("error", ""))
+            return
+        try:
+            for r in data.get("data", []):
                 code = r['code']
                 price = r['price']
                 self._engine.update_position_price(self._cur_account, code, price)
                 self._engine.check_orders(self._cur_account, code, price)
-
             self.refresh()
         except Exception as e:
-            self._status("\u4ef7\u683c\u8f6e\u8be2\u5931\u8d25: %s" % e)
+            self._status("价格更新失败: %s" % e)
 
     def _on_cancel_order(self, order_id):
         ok, err = self._engine.cancel_order(order_id)
         if ok:
-            self._status("\u5df2\u64a4\u5355")
+            self._status("已撤单")
         else:
-            self._status("\u64a4\u5355\u5931\u8d25: %s" % (err or ""))
+            self._status("撤单失败: %s" % (err or ""))
         self.refresh()
+
+    # ── Refresh ──
 
     def refresh(self):
         if self._cur_account is None:

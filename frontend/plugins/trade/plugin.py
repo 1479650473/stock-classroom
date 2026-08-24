@@ -6,7 +6,7 @@ from frontend.platform.plugin_base import IPlugin, PluginRegion
 
 class TradePlugin(IPlugin):
     plugin_id = "trade"
-    name = "\U0001f4b0 \u4ea4\u6613"
+    name = "\u4ea4\u6613"
     icon = "\U0001f4b0"
     region = PluginRegion.LEFT
 

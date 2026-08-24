@@ -6,7 +6,8 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QLineEdit
 
 from frontend.platform.plugin_base import IPlugin, PluginRegion
-from frontend.platform.theme import dp, dps
+from frontend.platform.theme import (
+    dp, dps, fs, C_RAISED, C_TEXT, C_BORDER, C_ACCENT)
 
 
 class SearchPlugin(IPlugin):
@@ -20,9 +21,9 @@ class SearchPlugin(IPlugin):
         w.setPlaceholderText("输入代码或名称搜索")
         w.setFixedSize(dp(300), dp(30))
         w.setStyleSheet(
-            f"QLineEdit{{background:#1C2128;color:#E6EDF3;border:1px solid #30363D;"
-            f"border-radius:{dps(15)};padding:4px 16px;font-size:{dps(13)}}}"
-            f"QLineEdit:focus{{border-color:#D4A574;}}")
+            f"QLineEdit{{background:{C_RAISED};color:{C_TEXT};border:1px solid {C_BORDER};"
+            f"border-radius:{dps(15)};padding:4px 16px;font-size:{fs(13)}}}"
+            f"QLineEdit:focus{{border-color:{C_ACCENT};}}")
         w.returnPressed.connect(self._on_search)
         return w
 

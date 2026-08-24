@@ -2,7 +2,7 @@
 from PyQt5.QtWidgets import QWidget
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QFont
-from frontend.platform.theme import dp
+from frontend.platform.theme import dp, fsi
 
 _BG=QColor('#0D1117'); _PANEL=QColor('#161B22'); _BORDER=QColor('#21262D')
 _TEXT=QColor('#E6EDF3'); _TEXTS=QColor('#8B949E'); _ACCENT=QColor('#D4A574')
@@ -38,7 +38,10 @@ class KlineWidget(QWidget):
             py0,py1,py2=mt,mt+ph0,mt+ph0+ph1
             p.fillRect(s.rect(),_BG)
             bars,n=s._bars,len(s._bars)
-            if n==0: p.setPen(_TEXTS); p.drawText(s.rect(),Qt.AlignCenter,'choose stock'); p.end(); p=None; return
+            if n==0:
+                f=p.font(); f.setPointSize(fsi(11)); p.setFont(f)
+                p.setPen(_TEXTS); p.drawText(s.rect(),Qt.AlignCenter,'搜索或点击股票查看 K 线')
+                p.end(); p=None; return
             vs,ve=s._vs,min(s._ve,n); vis=ve-vs
             if vis<=0: p.end(); p=None; return
             bw=cw/vis
@@ -143,7 +146,7 @@ class KlineWidget(QWidget):
                 if lp: p.drawLine(lp,pt); lp=pt
 
     def _draw_yaxis(s,p,ml,y,h,lo,hi,mode):
-        f=p.font(); f.setPointSize(9); p.setFont(f)
+        f=p.font(); f.setPointSize(fsi(8)); p.setFont(f)
         for i in range(5):
             val=lo+(hi-lo)*i/4; py=s._vy(val,lo,hi,y,h)
             p.setPen(QPen(_GRID,1)); p.drawLine(ml-3,py,ml,py)
@@ -158,7 +161,7 @@ class KlineWidget(QWidget):
 
     def _draw_dates(s,p,ml,mr,y,h,bw,vs,ve):
         vis=ve-vs; step=max(1,vis//10)
-        f=p.font(); f.setPointSize(9); p.setFont(f)
+        f=p.font(); f.setPointSize(fsi(8)); p.setFont(f)
         for i,idx in enumerate(range(vs,ve)):
             if i%step!=0 and i!=vis-1: continue
             x=ml+i*bw+bw/2; d=s._bars[idx]['date']
@@ -170,24 +173,26 @@ class KlineWidget(QWidget):
     def _draw_title(s,p,W,H):
         p.fillRect(0,0,W,H,_PANEL)
         if not s._bars:
-            p.setPen(_TEXTS); p.drawText(QRectF(0,0,W,H),Qt.AlignCenter,'Choose a stock to view chart')
+            p.setPen(_TEXTS)
+            p.drawText(QRectF(0,0,W,H),Qt.AlignCenter,'选择股票后展示 K 线走势')
             return
-        b0=s._bars[0]; c=float(b0['close']); ch=c-float(b0['open'])
+        # Headline shows the LATEST bar (bars are ascending by date).
+        b0=s._bars[-1]; c=float(b0['close']); ch=c-float(b0['open'])
         pct=ch/max(float(b0['open']),0.01)*100; up=ch>=0
-        f=p.font(); f.setBold(True); f.setPointSize(17); p.setFont(f)
+        f=p.font(); f.setBold(True); f.setPointSize(fsi(13)); p.setFont(f)
         p.setPen(_ACCENT)
         p.drawText(QRectF(dp(10),0,dp(200),H),Qt.AlignVCenter,f'{s._symbol}')
-        f.setBold(False); f.setPointSize(16); p.setFont(f)
+        f.setBold(False); f.setPointSize(fsi(12)); p.setFont(f)
         p.setPen(_TEXT)
         p.drawText(QRectF(dp(80),0,dp(160),H),Qt.AlignVCenter,f'{s._name}')
         p.setPen(_BORDER)
         p.drawText(QRectF(dp(230),0,dp(30),H),Qt.AlignVCenter,'|')
         p.setPen(_TEXTS)
-        p.drawText(QRectF(dp(250),0,dp(100),H),Qt.AlignVCenter,f'{len(s._bars)} 日')
+        p.drawText(QRectF(dp(250),0,dp(160),H),Qt.AlignVCenter,f"{len(s._bars)} 日  {b0.get('date','')}")
         p.setPen(_UP if up else _DOWN)
         ar='\u25b2' if up else '\u25bc'
         f.setBold(True); p.setFont(f)
-        p.drawText(QRectF(dp(340),0,dp(300),H),Qt.AlignVCenter,f'{c:.2f}  {ch:+.2f} ({pct:+.2f}%)')
+        p.drawText(QRectF(dp(370),0,dp(300),H),Qt.AlignVCenter,f'{ar} {c:.2f}  {ch:+.2f} ({pct:+.2f}%)')
 
     def _draw_cross(s,p,W,H,ml,cw,bw,vs,ve,py,ph):
         b=s._bars[s._ch]
@@ -206,7 +211,7 @@ class KlineWidget(QWidget):
         p.setPen(QPen(_ACCENT,1,Qt.DashLine))
         p.drawLine(QPointF(ml,cy),QPointF(ml+nv*bw,cy))
         # Price label at right Y axis
-        p.setPen(col); p.setFont(QFont("",8))
+        p.setPen(col); p.setFont(QFont("",fsi(8)))
         p.drawText(QRectF(ml+cw-dp(80),cy-dp(8),dp(78),dp(16)),Qt.AlignRight|Qt.AlignVCenter,f"{cv:.2f}")
         # --- Volume panel: horizontal at bar volume ---
         vv=float(b.get("volume",0))
@@ -234,7 +239,7 @@ class KlineWidget(QWidget):
             p.setPen(_MA10)
             p.drawText(QRectF(ml+cw-dp(80),iy-dp(8),dp(78),dp(16)),Qt.AlignRight|Qt.AlignVCenter,f"{iv:.1f}")
         # --- Info card ---
-        f=p.font(); f.setPointSize(15); p.setFont(f)
+        f=p.font(); f.setPointSize(fsi(10)); p.setFont(f)
         vol_fmt=f"{vv/1e8:.1f}亿"if vv>=1e8 else f"{vv/1e4:.0f}万"if vv>=1e4 else f"{vv:.0f}"
         ind_fmt=f"{float(b.get("macd") or 0):.4f}"if s._ind=="macd"else f"{float(b.get("rsi14") or 50):.1f}"
         info=(f"  {b["date"]}  {f"▲{pct:+.2f}%"if up else f"▼{pct:+.2f}%"}\n"

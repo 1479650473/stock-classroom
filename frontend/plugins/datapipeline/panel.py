@@ -2,7 +2,10 @@
 """DataPipeline Panel — data update dashboard with one-click fetch + per-step retry."""
 
 import sqlite3, os
-from frontend.platform.theme import dp, dps
+from frontend.platform.theme import (
+    dp, dps, fs,
+    C_BG, C_PANEL, C_BORDER, C_TEXT, C_SUBTEXT, C_ACCENT,
+)
 from datetime import datetime, time as dtime
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -14,14 +17,8 @@ from PyQt5.QtGui import QColor
 
 from .worker import UpdateWorker, STEP_DEFS
 
-C_BG = "#0D1117"
-C_PANEL = "#161B22"
-C_BORDER = "#21262D"
-C_TEXT = "#E6EDF3"
-C_SUBTEXT = "#8B949E"
-C_ACCENT = "#D4A574"
-C_GREEN = "#3fb950"
-C_RED = "#EF5350"
+C_GREEN = "#3FB950"
+C_RED = "#E5484D"
 
 STEP_NAMES = [name for name, _, _ in STEP_DEFS]
 

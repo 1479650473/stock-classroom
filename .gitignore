@@ -18,9 +18,8 @@ env/
 *.swp
 *.swo
 
-# Project data (large SQLite files, 500MB+)
-data/kline.db
-data/stock_cache.db
+# Project data (runtime SQLite databases — never commit)
+data/
 
 # Temp & debug files
 /_fix_*.py
@@ -29,6 +28,7 @@ data/stock_cache.db
 /_build_*.py
 /_cleanup.py
 /_*.py
+/_*.png
 
 # Logs
 scripts/logs/

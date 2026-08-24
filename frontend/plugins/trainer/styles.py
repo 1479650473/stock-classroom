@@ -1,13 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Training plugin styles."""
+"""Trainer plugin styles — re-exported from the central theme."""
 
-C_BG = "#0D1117"
-C_PANEL = "#161B22"
+from frontend.platform.theme import (
+    C_BG, C_PANEL, C_TEXT, C_SUBTEXT, C_ACCENT,
+    C_UP, C_DOWN,
+)
+
 C_BORDER = "#21262D"
-C_TEXT = "#E6EDF3"
-C_SUBTEXT = "#8B949E"
-C_ACCENT = "#D4A574"
-C_GREEN = "#3fb950"
-C_RED = "#EF5350"
-C_UP = "#E54D2E"
-C_DOWN = "#3FB950"
+C_GREEN = C_DOWN
+C_RED = C_UP

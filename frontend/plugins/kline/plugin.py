@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (
 
 from frontend.platform.plugin_base import IPlugin, PluginRegion
 from frontend.platform.local_worker import LocalWorker
-from frontend.platform.theme import dp, dps
+from frontend.platform.theme import dp, fs, qss_input, style_label
 
 
 # Ensure backend/ is importable for data_manager + indicators
@@ -40,14 +40,12 @@ class KlinePlugin(IPlugin):
 
         self._k_search = QLineEdit()
         self._k_search.setPlaceholderText("搜索股票代码或名称")
-        self._k_search.setStyleSheet(
-            f"QLineEdit{{background:#161B22;color:#E6EDF3;border:1px solid #30363D;"
-            f"border-radius:{dps(6)};padding:5px 12px;font-size:{dps(12)}}}"
-            f"QLineEdit:focus{{border-color:#D4A574;}}")
+        self._k_search.setFixedHeight(dp(30))
+        self._k_search.setStyleSheet(qss_input())
         self._k_search.returnPressed.connect(self._search_stock)
         k_bar.addWidget(self._k_search, 1)
 
-        k_bar.addWidget(QLabel("指标", styleSheet=f"color:#8B949E;font-size:{dps(12)};font-weight:500;"))
+        k_bar.addWidget(QLabel("指标", styleSheet=style_label()))
 
         self._btn_macd = QPushButton("MACD")
         self._btn_macd.setObjectName("indBtn")
@@ -106,6 +104,7 @@ class KlinePlugin(IPlugin):
 
     def _on_open_kline(self, code, name):
         try:
+            self._cur_code, self._cur_name = code, name
             self._k_search.setText(f'{name} ({code})')
             self._services.status(f"加载 {name}({code}) K线...")
 
@@ -118,6 +117,9 @@ class KlinePlugin(IPlugin):
                 enriched = enrich_kline(kd)
                 return {"code": 0, "data": enriched}
 
+            old = getattr(self, "_kline_worker", None)
+            if old is not None and old.isRunning():
+                old.result.disconnect()
             self._kline_worker = LocalWorker(_load_kline, "kline", args=[code])
             self._kline_worker.result.connect(self._on_kline_data)
             self._kline_worker.start()
@@ -130,7 +132,9 @@ class KlinePlugin(IPlugin):
                 self._services.status("K线数据加载失败")
                 return
             bars = data.get("data", [])
-            self._chart.set_data(data, bars[0].get("code", ""), bars[0].get("name", ""))
+            self._chart.set_data(data,
+                                 getattr(self, "_cur_code", ""),
+                                 getattr(self, "_cur_name", ""))
             self._services.status("K线已加载")
         except Exception as e:
             traceback.print_exc()

@@ -10,16 +10,13 @@ from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont
 
 from .config import load_settings, save_settings
-from frontend.platform.theme import build_style, fs, dp, dps
+from frontend.platform.theme import (
+    build_style, fs, dp, dps,
+    C_BG, C_PANEL, C_BORDER_SOFT as C_BORDER, C_TEXT, C_SUBTEXT, C_ACCENT,
+)
 
-C_BG = "#0D1117"
-C_PANEL = "#161B22"
-C_BORDER = "#21262D"
-C_TEXT = "#E6EDF3"
-C_SUBTEXT = "#8B949E"
-C_ACCENT = "#D4A574"
-C_GREEN = "#3fb950"
-C_RED = "#EF5350"
+C_GREEN = "#3FB950"
+C_RED = "#E5484D"
 C_NAV_BG = "#0B1016"
 C_NAV_HOVER = "#1A1F2A"
 C_NAV_SELECTED = "#1C2330"

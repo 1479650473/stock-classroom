@@ -15,7 +15,6 @@ for k in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy",
           "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy"]:
     os.environ.pop(k, None)
 
-from factor_engine import FactorScorer
 from indicators import enrich_kline
 from akshare_source import diagnose_akshare
 
@@ -30,12 +29,6 @@ KLINE_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    return conn
-
-def get_kline_db():
-    conn = sqlite3.connect(KLINE_DB_PATH, timeout=30)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
 def init_db():
@@ -53,7 +46,7 @@ def init_db():
 
 init_db()
 
-from data_manager import get_kline_data, get_stock_list, get_update_logs, show_status
+from data_manager import get_kline_data, get_stock_list, get_update_logs, show_status, get_kline_db
 
 
 # ════════════════════════════════════════════════════════
@@ -149,44 +142,9 @@ def api_etf_list():
 
 @app.route("/api/picks")
 def api_picks():
-    """AI 选股 Top 20：多因子评分引擎 (factor_engine)"""
-    from data_manager import get_kline_data
-    conn = get_kline_db()
-    rows = conn.execute(
-        "SELECT code, name FROM stock_list WHERE status='active' ORDER BY code"
-    ).fetchall()
-    conn.close()
-    candidates = []
-    for r in rows:
-        code, name = str(r[0]), str(r[1])
-        if code[:2] not in ("60","00","30","68"): continue
-        if "ST" in name: continue
-        candidates.append((code, name))
-    scorer = FactorScorer()
-    results = []
-    kline_cache = {}
-    for code, name in candidates:
-        if code not in kline_cache:
-            kline_cache[code] = get_kline_data(code, 60)
-        kd = kline_cache[code]
-        if not kd or len(kd) < 2: continue
-        last, prev = kd[-1], kd[-2]
-        close, pv = last["close"], prev["close"]
-        vol = int(last.get("volume", 0))
-        chg = round((close - pv) / pv * 100, 2) if pv else 0.0
-        if vol <= 0: continue
-        try:
-            s = scorer.score_stock(code, name, kd)
-            d = s.to_api_dict()
-            results.append({
-                "code": code, "name": name,
-                "price": close, "change_pct": chg, "volume": vol,
-                "score": round(d["total_score"], 1),
-                "groups": d["groups"],
-            })
-        except Exception:
-            continue
-    results.sort(key=lambda x: x["score"], reverse=True)
+    """AI 选股 Top 20：多因子评分引擎 (factor_engine)，复用单连接批量查询"""
+    from data_manager import compute_factor_picks
+    results = compute_factor_picks()
     return jsonify({"code": 0, "data": results[:20], "total_scanned": len(results)})
 
 @app.route("/api/kline")

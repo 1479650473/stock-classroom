@@ -1,4 +1,4 @@
-﻿"""data_manager.py — 统一数据管理模块（AKShare 数据源 + 多线程）
+"""data_manager.py — 统一数据管理模块（AKShare 数据源 + 多线程）
 用法:
   python data_manager.py clean        # 完整清洗
   python data_manager.py update       # 每日增量更新
@@ -21,7 +21,7 @@ DATA_DIR = os.path.join(os.path.dirname(BASE_DIR), "data")
 KLINE_DB = os.path.join(DATA_DIR, "kline.db")
 CACHE_DB = os.path.join(DATA_DIR, "stock_cache.db")
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
+# basicConfig 只在 CLI 入口执行（见 __main__），避免 import 时污染根 logger
 log = logging.getLogger("data_mgr")
 
 SINA_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -41,6 +41,79 @@ def get_kline_db():
 #  ak_fetch_kline, ak_fetch_index_kline, ak_get_all_stocks
 #  均从 akshare_source 模块导入
 # ════════════════════════════════════════════════════════
+
+
+# ════════════════════════════════════════════════════════
+#  年度分表维护（kline_daily 是 UNION ALL 视图，写入/删除必须落到 kline_YYYY）
+# ════════════════════════════════════════════════════════
+KLINE_COLS = "code,date,open,high,low,close,volume,amount,turnover"
+
+
+def _year_tables(conn):
+    """已有的 kline_YYYY 年度分表名（升序）"""
+    return [r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' "
+        "AND name GLOB 'kline_[0-9][0-9][0-9][0-9]' ORDER BY name")]
+
+
+def _rebuild_kline_view(conn):
+    """按现有年度分表重建 kline_daily 视图"""
+    tables = _year_tables(conn)
+    if not tables:
+        return
+    sql = "CREATE VIEW kline_daily AS " + " UNION ALL ".join(
+        f"SELECT {KLINE_COLS} FROM {t}" for t in tables)
+    conn.execute("DROP VIEW IF EXISTS kline_daily")
+    conn.execute(sql)
+
+
+def ensure_year_table(conn, year):
+    """创建年度分表（如不存在）并重建视图。返回是否新建"""
+    year = str(year)
+    tname = f"kline_{year}"
+    if tname in _year_tables(conn):
+        return False
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS {tname} (
+        code TEXT, date TEXT, open REAL, high REAL, low REAL, close REAL,
+        volume INTEGER, amount REAL, turnover REAL DEFAULT 0,
+        PRIMARY KEY (code, date))""")
+    conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{year} ON {tname}(code, date)")
+    _rebuild_kline_view(conn)
+    log.info("创建年度分表 %s 并重建 kline_daily 视图", tname)
+    return True
+
+
+def _delete_from_shards(conn, where, params=()):
+    """对所有年度分表执行 DELETE（kline_daily 是视图，不能直接删）"""
+    total = 0
+    for t in _year_tables(conn):
+        total += conn.execute(f"DELETE FROM {t} WHERE {where}", params).rowcount
+    return total
+
+
+def _bulk_insert_kline(conn, rows, replace=True):
+    """按年份分组批量写入 K 线，自动建年度分表。返回 (写入行数, 跳过行数)"""
+    by_year = {}
+    skipped = 0
+    for r in rows:
+        year = str(r[1])[:4]
+        if len(year) != 4 or not year.isdigit():
+            skipped += 1
+            continue
+        row = tuple(r) if len(r) >= 9 else tuple(r) + (0,)
+        by_year.setdefault(year, []).append(row)
+    verb = "INSERT OR REPLACE" if replace else "INSERT OR IGNORE"
+    inserted = 0
+    for year, batch in by_year.items():
+        try:
+            ensure_year_table(conn, year)
+            conn.executemany(
+                f"{verb} INTO kline_{year} ({KLINE_COLS}) VALUES (?,?,?,?,?,?,?,?,?)", batch)
+            inserted += len(batch)
+        except sqlite3.Error as e:
+            skipped += len(batch)
+            log.warning("写入 kline_%s 失败 (%d 行): %s", year, len(batch), e)
+    return inserted, skipped
 
 
 # ════════════════════════════════════════════════════════
@@ -68,6 +141,10 @@ def init_tables():
         message TEXT, duration_sec REAL,
         created_at TEXT DEFAULT (datetime('now','localtime'))
     )""")
+    # 预建当年与次年的年度分表，避免跨年时写入失败
+    year = datetime.now().year
+    ensure_year_table(conn, year)
+    ensure_year_table(conn, year + 1)
     conn.commit()
     conn.close()
 
@@ -77,22 +154,26 @@ def init_tables():
 # ════════════════════════════════════════════════════════
 def clean_pre_2000():
     conn = get_kline_db()
-    n = conn.execute("DELETE FROM kline_daily WHERE date < '20000101'").rowcount
+    n = _delete_from_shards(conn, "date < '20000101'")
     conn.commit(); conn.close()
     if n: log.info("清理 2000 年前数据: %d 行", n)
     return n
 
 def clean_bad_codes():
     conn = get_kline_db()
-    n1 = conn.execute("DELETE FROM kline_daily WHERE code NOT GLOB '[0-9][0-9][0-9][0-9][0-9][0-9]'").rowcount
-    n2 = conn.execute("DELETE FROM kline_daily WHERE code GLOB '8*'").rowcount
+    n1 = _delete_from_shards(conn, "code NOT GLOB '[0-9][0-9][0-9][0-9][0-9][0-9]'")
+    n2 = _delete_from_shards(conn, "code GLOB '8*'")
     conn.commit(); conn.close()
     if n1 or n2: log.info("清理异常代码: %d + %d", n1, n2)
     return n1 + n2
 
 def clean_duplicates():
     conn = get_kline_db()
-    n = conn.execute("DELETE FROM kline_daily WHERE rowid NOT IN (SELECT MIN(rowid) FROM kline_daily GROUP BY code, date)").rowcount
+    n = 0
+    for t in _year_tables(conn):
+        n += conn.execute(
+            f"DELETE FROM {t} WHERE rowid NOT IN (SELECT MIN(rowid) FROM {t} GROUP BY code, date)"
+        ).rowcount
     conn.commit(); conn.close()
     if n: log.info("去重: %d 行", n)
     return n
@@ -113,10 +194,12 @@ def remove_delisted_stocks():
         log.info("没有退市股票"); conn.close(); return 0, 0
 
     total = 0
+    tables = _year_tables(conn)
     for i in range(0, len(delisted), 100):
         batch = delisted[i:i+100]
-        cur = conn.execute(f"DELETE FROM kline_daily WHERE code IN ({','.join('?' for _ in batch)})", batch)
-        total += cur.rowcount
+        ph = ",".join("?" for _ in batch)
+        for t in tables:
+            total += conn.execute(f"DELETE FROM {t} WHERE code IN ({ph})", batch).rowcount
         for c in batch:
             conn.execute("UPDATE stock_list SET status='delisted', updated_at=? WHERE code=?",
                          (datetime.now().isoformat(), c))
@@ -207,19 +290,10 @@ def daily_update(target_date: str = None, catch_up_days: int = 10):
                 log.info("  [%d/%d] +%d 行, %.1f stk/s, ETA %.0f s",
                          done, len(todo), len(batch_rows), speed, eta)
 
-    # 批量写入
+    # 批量写入（按年份分组 + executemany + 自动建分表）
     log.info("正在写入 %d 行数据...", len(batch_rows))
     conn = get_kline_db()
-    inserted = 0
-    for r in batch_rows:
-        try:
-            tname = f"kline_{r[1][:4]}"
-            conn.execute(f"INSERT OR REPLACE INTO {tname} (code,date,open,high,low,close,volume,amount,turnover) VALUES (?,?,?,?,?,?,?,?,?)", r if len(r) >= 9 else r + (0,))
-            inserted += 1
-            if inserted % 2000 == 0:
-                conn.commit()
-        except Exception:
-            pass
+    inserted, write_skipped = _bulk_insert_kline(conn, batch_rows, replace=True)
     conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     conn.commit()
     conn.close()
@@ -228,9 +302,9 @@ def daily_update(target_date: str = None, catch_up_days: int = 10):
     update_stock_list()
     status = "ok" if errors < len(todo) * 0.5 else "partial_fail"
     _log_update(target_date, len(stocks), len(todo), inserted, status,
-                f"+{inserted} 行, {errors} 次失败")
-    log.info("更新完成: +%d 行, %d 只写入, %d 失败, 耗时 %.0f 秒",
-             inserted, len(set(r[0] for r in batch_rows)), errors, elapsed)
+                f"+{inserted} 行, 拉取失败 {errors}, 写入跳过 {write_skipped}")
+    log.info("更新完成: +%d 行, %d 只写入, 拉取失败 %d, 写入跳过 %d, 耗时 %.0f 秒",
+             inserted, len(set(r[0] for r in batch_rows)), errors, write_skipped, elapsed)
     return True
 
 
@@ -278,16 +352,7 @@ def catch_up_missing(min_rows: int = 500, max_stocks: int = 50):
         if not rows:
             continue
         conn = get_kline_db()
-        added = 0
-        for r in rows:
-            try:
-                tname = f"kline_{r[1][:4]}"
-                conn.execute(f"INSERT OR IGNORE INTO {tname} (code,date,open,high,low,close,volume,amount,turnover) VALUES (?,?,?,?,?,?,?,?,?)", r if len(r) >= 9 else r + (0,))
-                added += 1
-                if added % 500 == 0:
-                    conn.commit()
-            except Exception:
-                pass
+        added, skipped = _bulk_insert_kline(conn, rows, replace=False)
         conn.commit()
         conn.close()
         total_added += added
@@ -301,26 +366,67 @@ def catch_up_missing(min_rows: int = 500, max_stocks: int = 50):
 #  公共查询接口（给 app.py 调用）
 # ════════════════════════════════════════════════════════
 
-def get_kline_data(code: str, days: int = 180) -> List[Dict]:
-    """从数据库读取 K 线数据
-    如果是 sh/sz 前缀则查指数 K 线
+def get_kline_data(code: str, days: int = 180, conn=None) -> List[Dict]:
+    """从数据库读取 K 线数据（sh/sz/bj 前缀为指数代码，同样在 kline_daily 中）
+    conn: 可选，传入已有连接以避免批量调用时反复开关连接
     """
-    conn = get_kline_db()
-    if any(code.startswith(p) for p in ("sh", "sz", "bj")):
-        # 指数代码
-        rows = conn.execute(
-            "SELECT * FROM kline_daily WHERE code=? ORDER BY date DESC LIMIT ?",
-            (code, days)
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM kline_daily WHERE code=? ORDER BY date DESC LIMIT ?",
-            (code, days)
-        ).fetchall()
-    conn.close()
+    own = conn is None
+    if own:
+        conn = get_kline_db()
+    rows = conn.execute(
+        "SELECT * FROM kline_daily WHERE code=? ORDER BY date DESC LIMIT ?",
+        (code, days)
+    ).fetchall()
+    if own:
+        conn.close()
     result = [dict(r) for r in rows]
     result.reverse()
     return result
+
+
+def compute_factor_picks(kline_days: int = 60) -> List[Dict]:
+    """多因子评分选股（全部候选按总分降序返回，调用方自行切片取 Top N）
+    供 Flask /api/picks 与内部缓存任务（如 CYQ）共用，全程复用单个连接。
+    """
+    from factor_engine import FactorScorer
+    conn = get_kline_db()
+    rows = conn.execute(
+        "SELECT code, name FROM stock_list WHERE status='active' ORDER BY code"
+    ).fetchall()
+    candidates = []
+    for r in rows:
+        code, name = str(r["code"]), str(r["name"])
+        if code[:2] not in ("60", "00", "30", "68"):
+            continue
+        if "ST" in name:
+            continue
+        candidates.append((code, name))
+    scorer = FactorScorer()
+    results = []
+    for code, name in candidates:
+        kd = get_kline_data(code, kline_days, conn=conn)
+        if not kd or len(kd) < 2:
+            continue
+        last, prev = kd[-1], kd[-2]
+        close, pv = last["close"], prev["close"]
+        vol = int(last.get("volume", 0))
+        if vol <= 0:
+            continue
+        chg = round((close - pv) / pv * 100, 2) if pv else 0.0
+        try:
+            s = scorer.score_stock(code, name, kd)
+            d = s.to_api_dict()
+            results.append({
+                "code": code, "name": name,
+                "price": close, "change_pct": chg, "volume": vol,
+                "score": round(d["total_score"], 1),
+                "groups": d["groups"],
+            })
+        except Exception:
+            continue
+    conn.close()
+    results.sort(key=lambda x: x["score"], reverse=True)
+    return results
 
 
 def get_stock_list(status: str = "all") -> List[Dict]:
@@ -600,40 +706,41 @@ def cache_spot_from_akshare():
             "流通市值": "circ_mv",
         }
         df = df.rename(columns=col_map)
-        conn = _get_cache_db()
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        count = 0
+        rows = []
         for _, row in df.iterrows():
             try:
-                conn.execute(
-                    """INSERT OR REPLACE INTO stock_spot
-                    (code, name, price, open, high, low, volume, amount,
-                     change_pct, change_amount, turnover, pe, pb, total_mv, circ_mv, updated_at)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (
-                        str(row.get("code", "")),
-                        str(row.get("name", "")),
-                        float(row.get("price", 0) or 0),
-                        float(row.get("open", 0) or 0),
-                        float(row.get("high", 0) or 0),
-                        float(row.get("low", 0) or 0),
-                        int(float(row.get("volume", 0) or 0)),
-                        float(row.get("amount", 0) or 0),
-                        float(row.get("change_pct", 0) or 0),
-                        float(row.get("change_amount", 0) or 0),
-                        float(row.get("turnover", 0) or 0),
-                        float(row.get("pe", 0) or 0),
-                        float(row.get("pb", 0) or 0),
-                        float(row.get("total_mv", 0) or 0),
-                        float(row.get("circ_mv", 0) or 0),
-                        now,
-                    ),
-                )
-                count += 1
+                rows.append((
+                    str(row.get("code", "")),
+                    str(row.get("name", "")),
+                    float(row.get("price", 0) or 0),
+                    float(row.get("open", 0) or 0),
+                    float(row.get("high", 0) or 0),
+                    float(row.get("low", 0) or 0),
+                    int(float(row.get("volume", 0) or 0)),
+                    float(row.get("amount", 0) or 0),
+                    float(row.get("change_pct", 0) or 0),
+                    float(row.get("change_amount", 0) or 0),
+                    float(row.get("turnover", 0) or 0),
+                    float(row.get("pe", 0) or 0),
+                    float(row.get("pb", 0) or 0),
+                    float(row.get("total_mv", 0) or 0),
+                    float(row.get("circ_mv", 0) or 0),
+                    now,
+                ))
             except (ValueError, TypeError):
                 continue
+        conn = _get_cache_db()
+        conn.executemany(
+            """INSERT OR REPLACE INTO stock_spot
+            (code, name, price, open, high, low, volume, amount,
+             change_pct, change_amount, turnover, pe, pb, total_mv, circ_mv, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            rows,
+        )
         conn.commit()
         conn.close()
+        count = len(rows)
         log.info("cached %d spots at %s", count, now)
         return count
     except Exception as e:
@@ -645,6 +752,8 @@ def cache_sectors_from_akshare():
     import akshare as ak
     conn = get_kline_db()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # 清理旧版本列错位写入的脏数据（type 列被写成了 0）
+    conn.execute("DELETE FROM sector_data WHERE type NOT IN ('industry', 'concept')")
     total = 0
     for s_type, func in [("industry", ak.stock_board_industry_name_em),
                          ("concept", ak.stock_board_concept_name_em)]:
@@ -659,21 +768,22 @@ def cache_sectors_from_akshare():
                 "上涨家数": "up_count", "下跌家数": "down_count",
             }
             df = df.rename(columns=col_map)
+            rows = []
             for _, row in df.iterrows():
                 try:
-                    conn.execute(
-                        "INSERT OR REPLACE INTO sector_data VALUES (?,?,?,?,?,?,?,?)",
-                        (
-                            row.get("code", ""), row.get("name", ""),
-                            row.get("price", 0), row.get("change_pct", 0),
-                            row.get("total_mv", 0), row.get("pe", 0),
-                            row.get("up_count", 0), row.get("down_count", 0),
-                        )
-                    )
-                    total += 1
+                    rows.append((
+                        str(row.get("code", "")), str(row.get("name", "")),
+                        s_type,
+                        float(row.get("change_pct", 0) or 0),
+                        float(row.get("change_amount", 0) or 0),
+                        int(float(row.get("up_count", 0) or 0)),
+                        int(float(row.get("down_count", 0) or 0)),
+                        now,
+                    ))
                 except (ValueError, TypeError):
                     continue
-
+            conn.executemany("INSERT OR REPLACE INTO sector_data VALUES (?,?,?,?,?,?,?,?)", rows)
+            total += len(rows)
         except Exception as e:
             log.warning("cache %s failed: %s", s_type, str(e)[:60])
     conn.commit()
@@ -689,25 +799,23 @@ def cache_north_flow_from_akshare():
         if df is None or df.empty:
             return 0
         conn = get_kline_db()
-        count = 0
         # AKShare returns Chinese column names: 日期/当日成交净买额/历史累计净买额
         col_map = {"日期": "date", "当日成交净买额": "net_flow", "历史累计净买额": "cum_flow"}
         df = df.rename(columns=col_map)
+        rows = []
         for _, row in df.iterrows():
             try:
-                conn.execute(
-                    "INSERT OR REPLACE INTO north_flow VALUES (?,?,?)",
-                    (
-                        str(row.get("date", "")),
-                        float(row.get("net_flow", 0) or 0),
-                        float(row.get("cum_flow", 0) or 0),
-                    ),
-                )
-                count += 1
+                rows.append((
+                    str(row.get("date", "")),
+                    float(row.get("net_flow", 0) or 0),
+                    float(row.get("cum_flow", 0) or 0),
+                ))
             except (ValueError, TypeError):
                 continue
+        conn.executemany("INSERT OR REPLACE INTO north_flow VALUES (?,?,?)", rows)
         conn.commit()
         conn.close()
+        count = len(rows)
         log.info("cached %d north flow rows", count)
         return count
     except Exception as e:
@@ -730,16 +838,15 @@ def cache_limit_up_from_akshare(date: str = None):
             PRIMARY KEY (date, code)
         )""")
         count = 0
+        rows = []
         for d in data:
             try:
-                conn.execute(
-                    "INSERT OR REPLACE INTO limit_up VALUES (?,?,?,?,?,?,?,?,?)",
-                    (d["date"], d["code"], d["name"], d["price"], d["change_pct"],
-                     d["amount"], d["turnover"], d["total_mv"], d["type"]),
-                )
-                count += 1
-            except Exception:
+                rows.append((d["date"], d["code"], d["name"], d["price"], d["change_pct"],
+                             d["amount"], d["turnover"], d["total_mv"], d["type"]))
+            except (KeyError, TypeError):
                 continue
+        conn.executemany("INSERT OR REPLACE INTO limit_up VALUES (?,?,?,?,?,?,?,?,?)", rows)
+        count = len(rows)
         conn.commit()
         conn.close()
         log.info("cached %d limit_up for %s", count, date)
@@ -761,17 +868,15 @@ def cache_lhb_from_akshare():
             change_pct REAL, times INTEGER, net_buy REAL, period TEXT, updated_at TEXT
         )""")
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        count = 0
+        rows = []
         for d in data:
             try:
-                conn.execute(
-                    "INSERT OR REPLACE INTO lhb_stock VALUES (?,?,?,?,?,?,?,?,?)",
-                    (d["code"], d["name"], d["last_date"], d["price"], d["change_pct"],
-                     d["times"], d["net_buy"], d["period"], now),
-                )
-                count += 1
-            except Exception:
+                rows.append((d["code"], d["name"], d["last_date"], d["price"], d["change_pct"],
+                             d["times"], d["net_buy"], d["period"], now))
+            except (KeyError, TypeError):
                 continue
+        conn.executemany("INSERT OR REPLACE INTO lhb_stock VALUES (?,?,?,?,?,?,?,?,?)", rows)
+        count = len(rows)
         conn.commit()
         conn.close()
         log.info("cached %d lhb stock stats", count)
@@ -793,17 +898,15 @@ def cache_high_low_from_akshare():
             high60 INTEGER, low60 INTEGER, high120 INTEGER, low120 INTEGER, updated_at TEXT
         )""")
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        count = 0
+        rows = []
         for d in data:
             try:
-                conn.execute(
-                    "INSERT OR REPLACE INTO high_low VALUES (?,?,?,?,?,?,?,?,?)",
-                    (d["date"], d["close"], d["high20"], d["low20"], d["high60"],
-                     d["low60"], d["high120"], d["low120"], now),
-                )
-                count += 1
-            except Exception:
+                rows.append((d["date"], d["close"], d["high20"], d["low20"], d["high60"],
+                             d["low60"], d["high120"], d["low120"], now))
+            except (KeyError, TypeError):
                 continue
+        conn.executemany("INSERT OR REPLACE INTO high_low VALUES (?,?,?,?,?,?,?,?,?)", rows)
+        count = len(rows)
         conn.commit()
         conn.close()
         log.info("cached %d high_low rows", count)
@@ -891,10 +994,11 @@ def cache_cyq_chip_data(code: str = None, days: int = 1250) -> int:
         codes_to_fetch = [code]
     else:
         try:
-            import requests
-            resp = requests.get("http://127.0.0.1:5000/api/picks?top=20", timeout=10)
-            data = resp.json()
-            codes_to_fetch = [s["code"] for s in data.get("data", []) if s.get("code")]
+            # 直接调用因子评分引擎，不再依赖本机 Flask 服务
+            picks = compute_factor_picks()[:20]
+            codes_to_fetch = [s["code"] for s in picks if s.get("code")]
+            if not codes_to_fetch:
+                raise RuntimeError("picks empty")
         except Exception:
             log.warning("cyq: cannot get picks list, using recent active stocks")
             conn = get_kline_db()
@@ -911,16 +1015,15 @@ def cache_cyq_chip_data(code: str = None, days: int = 1250) -> int:
             if not data:
                 continue
             conn = get_kline_db()
-            for d in data:
-                conn.execute(
-                    "INSERT OR REPLACE INTO chip_distribution (code, date, [获利比例], [平均成本], [90成本_低], [90成本_高], [90集中度], [70成本_低], [70成本_高], [70集中度], updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                    (
-                        d["code"], d["date"], d["获利比例"], d["平均成本"],
-                        d["90成本-低"], d["90成本-高"], d["90集中度"],
-                        d["70成本-低"], d["70成本-高"], d["70集中度"],
-                        now,
-                    ),
-                )
+            conn.executemany(
+                "INSERT OR REPLACE INTO chip_distribution (code, date, [获利比例], [平均成本], [90成本_低], [90成本_高], [90集中度], [70成本_低], [70成本_高], [70集中度], updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                [(
+                    d["code"], d["date"], d["获利比例"], d["平均成本"],
+                    d["90成本-低"], d["90成本-高"], d["90集中度"],
+                    d["70成本-低"], d["70成本-高"], d["70集中度"],
+                    now,
+                ) for d in data],
+            )
             conn.commit()
             conn.close()
             total += len(data)
@@ -933,7 +1036,7 @@ def cache_cyq_chip_data(code: str = None, days: int = 1250) -> int:
 
 
 def get_cached_spot(codes: list = None) -> list:
-    """? stock_spot ??????????????"""
+    """读取 stock_cache.db 中的 stock_spot 缓存行情"""
     conn = _get_cache_db()
     if codes:
         placeholders = ",".join("?" for _ in codes)
@@ -947,7 +1050,7 @@ def get_cached_spot(codes: list = None) -> list:
 
 
 def get_kline_for_backtest(code: str, start: str, end: str) -> list:
-    """?????????????????K?"""
+    """读取指定区间的 K 线数据（供回测使用）"""
     conn = get_kline_db()
     rows = conn.execute(
         "SELECT * FROM kline_daily WHERE code=? AND date BETWEEN ? AND ? ORDER BY date",
@@ -957,7 +1060,7 @@ def get_kline_for_backtest(code: str, start: str, end: str) -> list:
     return [dict(r) for r in rows]
 
 
-# CLI ????
+# CLI 子命令表
 _CACHE_CLI_CMDS = {
     "cache-spot": lambda: print(f"cached {cache_spot_from_akshare()} spots"),
     "cache-sectors": lambda: print(f"cached {cache_sectors_from_akshare()} sectors"),
@@ -979,6 +1082,7 @@ def clean_all():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
     if len(sys.argv) < 2:
         print("用法: python data_manager.py [clean|update|catch-up|status|stock-list]")
         sys.exit(0)
