@@ -348,7 +348,11 @@ def catch_up_missing(min_rows: int = 500, max_stocks: int = 50):
         if need <= 0:
             continue
         days = min(need + 20, 2500)
-        rows = ak_fetch_kline(code, days=days)
+        try:
+            rows = ak_fetch_kline(code, days=days)
+        except Exception as e:
+            log.warning("  %s %s 抓取失败(跳过): %s", code, s["name"], str(e)[:60])
+            continue
         if not rows:
             continue
         conn = get_kline_db()
