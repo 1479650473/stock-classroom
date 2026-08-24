@@ -109,19 +109,123 @@ def entry_for_factor(rec: Optional[dict]) -> Optional[dict]:
     return {"type": op, "args": [key, threshold]}
 
 
-# ── 价值/质量因子(基本面) —— 研究诊断, 非 DSL 策略候选(需 with_fundamentals 附着) ──
+# ── 价值/质量因子(基本面) —— 跨截面选股因子(需 with_fundamentals 附着), 支持 value 选股 ──
 VALUE_CANDIDATES = ["EP", "BP", "ROE"]
+
+# 价值因子默认研究口径: 基本面 IC 量级通常小于价量因子(全市场 BP IC=0.041, EP=0.023),
+#   故 min_ic 用更小的 0.004; min_icir 保持 0.3(R O E 的 |ICIR|=0.23 会被拒, 正是实证结论)。
+VALUE_DEFAULTS = {"min_ic": 0.004, "min_icir": 0.3, "min_coverage": 0.5}
+
+# ICIR 分档(阈值, 标签, strength 0~1) —— 用 **全市场 5149 只实证值标定**(2026-08):
+#   BP  ICIR=1.54 → high;  EP ICIR=0.83 → medium;  ROE ICIR=-0.23 → reject(|·|<0.3, 跨行业不可比)。
+#   与价量 DEFAULT_BANDS 数值相同, 但此处门槛依据的是全市场价值/质量实证而非启发式。
+VALUE_BANDS: Sequence[tuple] = (
+    (1.0, "high", 1.0),
+    (0.5, "medium", 0.6),
+    (0.3, "weak", 0.3),
+)
+
+
+def _classify_value_record(rec: dict, bands: Sequence[tuple], defaults: dict) -> dict:
+    """给单个价值研究记录附加 direction/confidence/strength；不达门槛 → reject。"""
+    r = dict(rec)
+    ic, icir, cov = float(r.get("ic", 0.0) or 0.0), float(r.get("icir", 0.0) or 0.0), \
+        float(r.get("coverage", 0.0) or 0.0)
+    if cov < defaults["min_coverage"] or abs(ic) < defaults["min_ic"]:
+        r["direction"], r["confidence"], r["strength"] = 0, "reject", 0.0
+        return r
+    label, strength = _band(abs(icir), bands)
+    r["direction"] = 1 if ic > 0 else -1
+    r["confidence"], r["strength"] = label, strength
+    r["score"] = abs(ic) * min(abs(icir), 3.0) + strength * 0.5
+    return r
+
+
+def classify_value_records(vres: list, bands: Sequence[tuple] = VALUE_BANDS,
+                           defaults: dict = VALUE_DEFAULTS) -> tuple[list, Optional[dict]]:
+    """批量给价值研究记录附标签, 返回 (带标签列表, 最优[非reject]或None)。"""
+    tagged, best = [], None
+    for rec in vres:
+        t = _classify_value_record(rec, bands, defaults)
+        tagged.append(t)
+        if t["confidence"] != "reject" and (best is None or t.get("score", 0.0) > best.get("score", 0.0)):
+            best = t
+    return tagged, best
+
+
+def recommend_value(codes, start: str, end: str, engine: Optional[FactorResearchEngine] = None,
+                    min_universe: int = 5, neutralize_industry: bool = True,
+                    fetch_missing: bool = False, holding_period: int = 5,
+                    candidates: Sequence[str] = VALUE_CANDIDATES,
+                    defaults: dict = VALUE_DEFAULTS, bands: Sequence[tuple] = VALUE_BANDS) -> Optional[dict]:
+    """全市场实证标定后: 选出最强的价值/质量因子(方向+置信度), 供价值选股策略生成引用。
+
+    以全市场 BP(ICIR 1.54) 为最强基准; EP(0.83) 中等; ROE(-0.23) 被拒(跨行业不可比)。
+    返回 {dsl_key, direction, ic, icir, confidence, strength, coverage, net_long_short, bands, ...}。
+    """
+    vres = study_value_factors(codes, start, end, engine=engine, min_universe=min_universe,
+                               neutralize_industry=neutralize_industry, fetch_missing=fetch_missing,
+                               candidates=candidates, holding_period=holding_period)
+    _, best = classify_value_records(vres, bands, defaults)
+    if best is not None:
+        best = {**best, "bands": [list(b) for b in bands], "icir_threshold": defaults["min_icir"]}
+    return best
+
+
+def validate_value_selection(contract: dict) -> dict:
+    """校验 LLM 生成的**价值选股**策略契约(跨截面选股, 非单标的 DSL 契约)。
+
+    参考全市场实证: BP(ICIR 1.54) 最强 → 默认因子; EP(0.83) 中等; ROE(-0.23) 不作主导。
+    Schema: {name, description, factor, direction, hold_top_k_pct, rebalance_bars, risk, initial_balance}。
+    factor/方向白名单硬校验(防 LLM 引用未知因子或越界)。
+    """
+    allowed_factor = {"EP", "BP", "ROE"}
+    c = dict(contract or {})
+    f = str(c.get("factor", "BP")).strip().upper()
+    if f not in allowed_factor:
+        raise ValueError(f"未知价值因子 {f!r} (白名单: {sorted(allowed_factor)})")
+    c["factor"] = f
+    d = str(c.get("direction", "high")).strip().lower()
+    if d not in ("high", "low"):
+        raise ValueError("direction 必须为 high|low")
+    c["direction"] = d
+    try:
+        k = float(c.get("hold_top_k_pct", 0.2))
+    except (TypeError, ValueError):
+        raise ValueError("hold_top_k_pct 必须为数值")
+    if not (0.01 <= k <= 0.5):
+        raise ValueError("hold_top_k_pct 必须在 0.01~0.5")
+    c["hold_top_k_pct"] = k
+    try:
+        rb = int(c.get("rebalance_bars", 20))
+    except (TypeError, ValueError):
+        raise ValueError("rebalance_bars 必须为整数")
+    if rb < 5:
+        raise ValueError("rebalance_bars 至少 5")
+    c["rebalance_bars"] = rb
+    c.setdefault("name", f"value-选股[{c['factor']}]")
+    c.setdefault("description", "")
+    risk = dict(c.get("risk") or {})
+    try:
+        risk["stop_loss_pct"] = float(risk.get("stop_loss_pct") or 0.0)
+    except (TypeError, ValueError):
+        risk["stop_loss_pct"] = 0.0
+    risk["max_hold_bars"] = int(risk.get("max_hold_bars") or 0)
+    risk["avoid_st"] = bool(risk.get("avoid_st", True))
+    c["risk"] = risk
+    return c
 
 
 def study_value_factors(codes, start: str, end: str, engine: Optional[FactorResearchEngine] = None,
                         min_universe: int = 5, neutralize_industry: bool = True,
-                        fetch_missing: bool = False) -> list:
+                        fetch_missing: bool = False, candidates: Sequence[str] = VALUE_CANDIDATES,
+                        holding_period: int = 5) -> list:
     """研究价值/质量因子(EP/BP/ROE)的截面 IC/ICIR(点时间, 无前视)。
 
     扩展单日 K 线之外的研究维度: 用基本面对每只股在每交易日给出 盈利收益率EP/账面市值比BP/ROE。
     neutralize_industry=True 时按板块中性化(去板块效应, 跨板块研究更可信)。
     fetch_missing=False(默认): **只读已缓存**基本面(本地化, 读路径不联网)。
-    返回 [ {dsl_key, ic, icir, coverage, net_long_short, research}, ... ]。
+    返回 [ {dsl_key, ic, icir, coverage, net_long_short, confidence, strength, direction, research}, ... ]。
     """
     frames = load_universe_frames(codes, start=start, end=end, with_fundamentals=True,
                                   fetch_missing=fetch_missing)
@@ -129,12 +233,12 @@ def study_value_factors(codes, start: str, end: str, engine: Optional[FactorRese
         return []
     engine = engine or FactorResearchEngine()
     out = []
-    for fid in VALUE_CANDIDATES:
+    for fid in candidates:
         try:
             r = engine.run(frames=frames, factor_id=fid, start_date=start, end_date=end,
-                           groups=5, holding_period=5, neutralize_industry=neutralize_industry,
-                           compute_correlation=False)
-            out.append({
+                           groups=5, holding_period=holding_period,
+                           neutralize_industry=neutralize_industry, compute_correlation=False)
+            out.append(_classify_value_record({
                 "dsl_key": fid,
                 "ic": float(r.get("rankIc", 0.0) or 0.0),
                 "icir": float(r.get("icir", 0.0) or 0.0),
@@ -142,7 +246,7 @@ def study_value_factors(codes, start: str, end: str, engine: Optional[FactorRese
                 "net_long_short": float(r.get("netLongShortReturn", 0.0) or 0.0),
                 "neutralized": bool(r.get("neutralized", False)),
                 "research": r,
-            })
+            }, VALUE_BANDS, VALUE_DEFAULTS))
         except Exception:
             continue
     return out

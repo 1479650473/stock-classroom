@@ -75,12 +75,24 @@ class LLMBackend(BaseBackend):
                 f"置信度={rec.get('confidence')} 覆盖={rec.get('coverage', 0):.0%}\n"
                 "建议优先用该因子(或同族邻窗口因子)构建 entry/exit；若你有充分理由，也可换其他因子。\n"
             )
+        # 价值/质量研究证据(基本面 EP/BP/ROE, 截面点时间) —— 供价值选股/低估择时参考
+        vrec = context.get("recommended_value_factor")
+        vblock = ""
+        if vrec:
+            vblock = (
+                "\n【研究论证的价值因子】(截面基本面, 点时间无前视)\n"
+                f"factor={vrec['dsl_key']} "
+                f"方向={'高(越便宜越好) ' if vrec.get('direction') == 1 else '低(越低越好) '}"
+                f"IC={vrec.get('ic', 0):.3f} ICIR={vrec.get('icir', 0):.2f} "
+                f"置信度={vrec.get('confidence')} 覆盖={vrec.get('coverage', 0):.0%}\n"
+                "做价值/低估择时优先用该因子(可结合价格因子)。\n"
+            )
         return (
             "【全球宏观 regime】\n" + str(macro.get("overall", "")) +
             "\n(风险偏好/利率/商品/波动见 categories)\n\n"
             f"【选定标的域】code={uni.get('code')} name={uni.get('name')} 说明={uni.get('desc','')}\n\n"
             f"【可用因子词表】{fkeys}\n说明: {fdesc}\n\n"
-            + rec_block +
+            + rec_block + vblock +
             "【策略契约 Schema】\n"
             '{"name": str, "description": str, "universe": {"code": str, "name": str},\n'
             ' "entry": {DSL树}, "exit": {DSL树|null},\n'
@@ -319,14 +331,19 @@ class ResearchLoop:
                 print("  [因子研究] 未选出显著因子 → 回退样例策略")
             # 2c) 价值/质量研究维度(基本面 EP/BP/ROE, 点时间无前视) —— 扩展单日K线之外
             try:
-                from ..strategy.factor_selector import study_value_factors
+                from ..strategy.factor_selector import study_value_factors, classify_value_records
                 pool = self._universe_pool(universe)
                 vres = study_value_factors(pool, "2024-01-01", datetime.now().strftime("%Y%m%d"))
                 if vres:
-                    context["value_research"] = vres
-                    top = max(vres, key=lambda v: abs(v["icir"]))
-                    print(f"  [价值/质量研究] {len(vres)}因子 | 最强 {top['dsl_key']} "
-                          f"IC={top['ic']:.3f} ICIR={top['icir']:.2f} 覆盖={top['coverage']:.0%}")
+                    tagged, vbest = classify_value_records(vres)
+                    context["value_research"] = tagged
+                    context["recommended_value_factor"] = vbest
+                    if vbest:
+                        print(f"  [价值/质量研究] {len(vres)}因子 | 最强 {vbest['dsl_key']} "
+                              f"IC={vbest['ic']:.3f} ICIR={vbest['icir']:.2f} "
+                              f"方向={'高' if vbest['direction']==1 else '低'} conf={vbest['confidence']}")
+                    else:
+                        print(f"  [价值/质量研究] {len(vres)}因子 | 无显著(全被拒)")
             except Exception as e:
                 print(f"  [价值/质量研究跳过] {type(e).__name__}: {str(e)[:50]}")
         result = LoopResult(macro=macro, universe=universe)
