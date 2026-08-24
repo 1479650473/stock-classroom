@@ -42,13 +42,17 @@ class LLMClient:
         self._client = OpenAI(api_key=self.api_key, base_url=self.api_base)
 
     def complete(self, system: str, user: str, max_tokens: int = 1600, temperature: float = 0.6) -> str:
-        """单轮补全，返回文本。"""
-        resp = self._client.chat.completions.create(
-            model=self.model,
-            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-            max_tokens=max_tokens, temperature=temperature,
-        )
-        return (resp.choices[0].message.content or "").strip()
+        """单轮补全，返回文本。空结果(瞬时)重试一次。"""
+        for attempt in range(2):
+            resp = self._client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+                max_tokens=max_tokens, temperature=temperature,
+            )
+            text = (resp.choices[0].message.content or "").strip()
+            if text:
+                return text
+        return ""
 
 
 def extract_json(text: str) -> dict:

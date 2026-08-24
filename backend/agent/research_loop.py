@@ -62,11 +62,24 @@ class LLMBackend(BaseBackend):
         factors = context.get("factors", [])
         fkeys = ", ".join(f["key"] for f in factors)
         fdesc = "; ".join(f"{f['key']}={f['desc']}" for f in factors[:20])
+        # 研究论证的优先因子(截面 IC/ICIR 验证过)
+        rec = context.get("recommended_factor")
+        rec_block = ""
+        if rec:
+            rec_block = (
+                "\n【研究论证的优先因子】(已在标的池用截面 IC/ICIR 验证)\n"
+                f"factor={rec['dsl_key']} "
+                f"方向={'高(越高越好) ' if rec.get('direction') == 1 else '低(越低越好) '}"
+                f"IC={rec.get('ic', 0):.3f} ICIR={rec.get('icir', 0):.2f} "
+                f"置信度={rec.get('confidence')} 覆盖={rec.get('coverage', 0):.0%}\n"
+                "建议优先用该因子(或同族邻窗口因子)构建 entry/exit；若你有充分理由，也可换其他因子。\n"
+            )
         return (
             "【全球宏观 regime】\n" + str(macro.get("overall", "")) +
             "\n(风险偏好/利率/商品/波动见 categories)\n\n"
             f"【选定标的域】code={uni.get('code')} name={uni.get('name')} 说明={uni.get('desc','')}\n\n"
             f"【可用因子词表】{fkeys}\n说明: {fdesc}\n\n"
+            + rec_block +
             "【策略契约 Schema】\n"
             '{"name": str, "description": str, "universe": {"code": str, "name": str},\n'
             ' "entry": {DSL树}, "exit": {DSL树|null},\n'
@@ -301,7 +314,11 @@ class ResearchLoop:
         result = LoopResult(macro=macro, universe=universe)
 
         # 3) 生成 → 回测 → 复盘修订 多轮
-        contract = self.backend.generate(context)
+        try:
+            contract = self.backend.generate(context)
+        except Exception as e:
+            print(f"  [生成失败, 回退样例策略] {type(e).__name__}: {str(e)[:60]}")
+            contract = self._proven_contract(universe, initial_balance)
         for rnd in range(1, rounds + 1):
             sid = self._safe_create(contract)
             if sid is None:
@@ -314,7 +331,10 @@ class ResearchLoop:
             result.rounds.append(rr)
             if rnd < rounds:
                 # 复盘 → 为下一轮准备修订契约(下一轮迭代再创建/回测)
-                contract = self.backend.review(contract, metrics, context)
+                try:
+                    contract = self.backend.review(contract, metrics, context)
+                except Exception as e:
+                    print(f"  [复盘失败, 保持原策略不变] {type(e).__name__}: {str(e)[:60]}")
         result.rounds = [r for r in result.rounds if r.metrics]
 
         # 4) 择优(取评分最高的一轮)
@@ -402,3 +422,25 @@ class ResearchLoop:
         except Exception as e:
             print(f"  [策略创建失败] {e}")
             return None
+
+    def _proven_contract(self, universe, initial_balance) -> dict:
+        """生成/复盘失败时的稳健回退契约(已验证 600036 正收益)。"""
+        code = universe.get("code", "600036")
+        return {
+            "name": "fallback-稳健趋势", "description": "LLM 失败回退: MA5金叉+回调 稳健趋势",
+            "universe": {"code": code, "name": universe.get("name", code)},
+            "entry": {"type": "and", "args": [
+                {"type": "eq", "args": ["MA5_CROSS_UP_MA10", 1]},
+                {"type": "gt", "args": ["CLOSE", "MA20"]},
+                {"type": "between", "args": ["RSI14", 40, 70]},
+            ]},
+            "exit": {"type": "or", "args": [
+                {"type": "gt", "args": ["RSI14", 75]},
+                {"type": "eq", "args": ["MACD_CROSS_DOWN", 1]},
+            ]},
+            "position_sizing": {"mode": "percent_of_equity", "value": 0.95},
+            "risk": {"stop_loss_pct": 0.05, "take_profit_pct": 0.12,
+                     "trailing_stop_pct": 0.0, "trailing_activation_pct": 0.0,
+                     "intrabar_mode": "conservative", "time_limit_bars": 0, "allow_short": False},
+            "params": {"initial_balance": initial_balance},
+        }

@@ -13,13 +13,21 @@ NUMERIC_OPS = {
 
 
 def _resolve_arg(arg, values: dict) -> float:
-    """解析参数：字符串查因子值，数字直接返回，布尔转 0/1"""
-    if isinstance(arg, (int, float)):
-        return float(arg)
+    """解析参数：数字直接返回；字符串先尝试数值字面量(LLM 常输出 "0"/"0.05" 字符串阈值)，
+    失败则查因子值；布尔转 0/1。"""
     if isinstance(arg, bool):
         return 1.0 if arg else 0.0
+    if isinstance(arg, (int, float)):
+        return float(arg)
     if isinstance(arg, str):
-        v = values.get(arg)
+        s = arg.strip()
+        # 数值字面量（如 "0", "0.05", "-1.2"）→ 直接转 float
+        try:
+            return float(s)
+        except ValueError:
+            pass
+        # 否则当作因子键查值
+        v = values.get(s)
         if v is None:
             return None
         return float(v)
