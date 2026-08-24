@@ -30,7 +30,7 @@ from akshare_source import ak_fetch_kline  # noqa: E402
 from strategy.data import get_kline_db_path  # noqa: E402
 from strategy.factor_selector import build_full_pool  # noqa: E402
 
-BACKFILL_YEARS = {str(y) for y in range(2016, 2022)}  # 2016-2021(留 buffer 供前向 MA/动量 warmup)
+BACKFILL_YEARS = {str(y) for y in range(2016, 2023)}  # 2016-2022(含 2022 熊市; 2022 原表仅 2172 只)
 MISSING_THRESHOLD = "20180101"
 DAYS = 2500
 WORKERS = int(os.environ.get("KLINE_BACKFILL_WORKERS", "12"))
@@ -51,11 +51,11 @@ def _get_write_conn():
 def _min_kline_date(code: str) -> str:
     try:
         c = sqlite3.connect(get_kline_db_path(), timeout=30)
-        r = c.execute("SELECT MIN(date) FROM kline_daily WHERE code=?", (code,)).fetchone()
+        r = c.execute("SELECT MIN(date), MAX(date) FROM kline_daily WHERE code=?", (code,)).fetchone()
         c.close()
-        return r[0] or "99999999"
+        return (r[0] or "99999999"), (r[1] or "")
     except Exception:
-        return "99999999"
+        return "99999999", ""
 
 
 def _write_stock(rows) -> int:
@@ -86,16 +86,18 @@ def _write_stock(rows) -> int:
 
 
 def backfill_one(code: str) -> tuple:
-    """单只: 若缺 2018-2021 则抓取+写入。返回 (code, 新增行数, 状态)。"""
-    if _min_kline_date(code) <= MISSING_THRESHOLD:
-        return code, 0, "skip"          # 已回补到 2018, 跳过(可恢复)
+    """单只: 若缺 2018 或 2022 则抓取+写入。返回 (code, 新增行数, 状态)。"""
+    lo, hi = _min_kline_date(code)
+    # 已同时有 2018 与 2022 → 跳过(幂等可恢复); 否则补抓 2016-2022
+    if lo <= MISSING_THRESHOLD and hi and hi >= "20220101":
+        return code, 0, "skip"
     try:
         rows = ak_fetch_kline(code, days=DAYS)
     except Exception as e:
         return code, 0, "fetch_err:" + str(e)[:40]
     if not rows:
         return code, 0, "empty"
-    rows = [r for r in rows if r[1] < "20220101"]  # 只写 2021 及以前(2022+ 已完整, 避免多余 IO)
+    rows = [r for r in rows if r[1] < "20230101"]  # 只写 2022 及以前(2023+ 已完整)
     added = _write_stock(rows)
     return code, added, "ok"
 
