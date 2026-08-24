@@ -27,6 +27,8 @@ KNOWN_FACTORS = frozenset({
     "BOLL_UPPER", "BOLL_MID", "BOLL_LOWER",
     # 派生
     "CHANGE_PCT", "VOL_RATIO_5", "PRICE_POS_20",
+    # 截面研究(与 factor_research 对应, 供"研究→生成"因子)
+    "MOMENTUM_20", "MOMENTUM_60", "VOLATILITY_20", "REVERSAL_5",
     # 布尔
     "MA5_GT_MA10", "MA10_GT_MA20", "CLOSE_GT_MA20",
     # 金叉死叉

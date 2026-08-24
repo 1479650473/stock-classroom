@@ -21,6 +21,7 @@ from . import gateway as gw_mod, services as svc, jobs as jobs_mod
 from .decision_gate import BaseDecisionGate  # noqa: F401
 from ..strategy.spec import StrategySpec
 from ..strategy import factors as fac_mod
+from ..strategy.factor_selector import FACTOR_HINTS
 from ..factor_engine.dsl import evaluate as eval_dsl
 
 
@@ -100,6 +101,18 @@ class LLMBackend(BaseBackend):
         return spec.to_dict()
 
 
+# ── 稳健趋势样本(已验证 600036 正收益 +7.14%)，作为研究因子失效时的回退/复盘切换 ──
+_PROVEN_ENTRY = {"type": "and", "args": [
+    {"type": "eq", "args": ["MA5_CROSS_UP_MA10", 1]},
+    {"type": "gt", "args": ["CLOSE", "MA20"]},
+    {"type": "between", "args": ["RSI14", 40, 70]},
+]}
+_PROVEN_EXIT = {"type": "or", "args": [
+    {"type": "gt", "args": ["RSI14", 75]},
+    {"type": "eq", "args": ["MACD_CROSS_DOWN", 1]},
+]}
+
+
 class StubBackend(BaseBackend):
     """确定性后端(无 LLM key 时验证全流程)：生成模板策略，复盘按指标微调风控。"""
 
@@ -107,44 +120,60 @@ class StubBackend(BaseBackend):
 
     def generate(self, context: dict) -> dict:
         uni = context["universe"]
-        # 首轮用已验证在 600036 上正收益(+7.14%)的样例策略，保证闭环"择优"有意义
+        rec = context.get("recommended_factor")
+        initial = context.get("initial_balance", 100000.0)
+        # 若研究给出被 IC 支撑的因子 → 用它构建进出场(方向感知)；否则回退到已验证样例
+        if rec:
+            key = rec["dsl_key"]
+            direction = rec["direction"]
+            hint = FACTOR_HINTS.get(key, {"signed": True, "threshold": 0.0})
+            thresh = hint.get("threshold", 0.0)
+            op = "gt" if direction == 1 else "lt"
+            revop = "lt" if op == "gt" else "gt"
+            entry = {"type": op, "args": [key, thresh]}
+            exit = {"type": revop, "args": [key, thresh]}
+            # 附加趋势过滤(收盘>MA20)提高可信度
+            entry = {"type": "and", "args": [entry, {"type": "gt", "args": ["CLOSE", "MA20"]}]}
+            name = f"stub-研究因子[{key}]"
+            desc = f"IC={rec['ic']:.3f} ICIR={rec['icir']:.2f} 方向={'高' if direction==1 else '低'} 入场; 反向离场"
+        else:
+            entry, exit = _PROVEN_ENTRY, _PROVEN_EXIT
+            name = "stub-均线金叉+回调(round1)"
+            desc = "MA5上穿MA10 且 收盘>MA20 且 RSI14 40~70 买入；RSI>75 或 MACD死叉 卖出；止盈12% 止损5%"
         return {
-            "name": "stub-均线金叉+回调(round1)",
-            "description": "MA5上穿MA10 且 收盘>MA20 且 RSI14 40~70 买入；RSI>75 或 MACD死叉 卖出；止盈12% 止损5%",
+            "name": name, "description": desc,
             "universe": {"code": uni["code"], "name": uni.get("name", uni["code"])},
-            "entry": {"type": "and", "args": [
-                {"type": "eq", "args": ["MA5_CROSS_UP_MA10", 1]},
-                {"type": "gt", "args": ["CLOSE", "MA20"]},
-                {"type": "between", "args": ["RSI14", 40, 70]},
-            ]},
-            "exit": {"type": "or", "args": [
-                {"type": "gt", "args": ["RSI14", 75]},
-                {"type": "eq", "args": ["MACD_CROSS_DOWN", 1]},
-            ]},
+            "entry": entry, "exit": exit,
             "position_sizing": {"mode": "percent_of_equity", "value": 0.95},
             "risk": {"stop_loss_pct": 0.05, "take_profit_pct": 0.12,
                      "trailing_stop_pct": 0.0, "trailing_activation_pct": 0.0,
                      "intrabar_mode": "conservative", "time_limit_bars": 0, "allow_short": False},
-            "params": {"initial_balance": context.get("initial_balance", 100000.0)},
+            "params": {"initial_balance": initial},
         }
 
     def review(self, prev: dict, metrics: dict, context: dict) -> dict:
-        """按指标做规则式复盘：亏损则加移动止损+收紧止损，微调止盈等，产生不同结果供择优。"""
+        """规则式复盘：单标的用研究因子承压(负收益)→切换稳健趋势样本；正收益→微调风控。"""
         import copy
         c = copy.deepcopy(prev)
         risk = c["risk"]
         tr = metrics.get("total_return", 0.0)
         mdd = metrics.get("max_drawdown", 0.0)
         sharpe = metrics.get("sharpe", 0.0)
-        # 简单启发式(可被真 LLM 取代): 亏损→加保护; 回撤大→收紧止损
         if tr < 0 or mdd < -20:
-            risk["stop_loss_pct"] = round(max(0.02, (risk.get("stop_loss_pct") or 0.05) - 0.01), 4)
-            risk["trailing_stop_pct"] = 0.06
-            risk["trailing_activation_pct"] = 0.08
-        if sharpe < 0.3:
-            risk["take_profit_pct"] = round((risk.get("take_profit_pct") or 0.12) + 0.03, 4)
-        if c.get("name"):
-            c["name"] = c["name"].rsplit("(", 1)[0] + f"(round_{int(time.time())})"
+            # 复盘：研究因子在单票上失效 → 切换稳健趋势样本 + 收紧止损
+            c["entry"] = copy.deepcopy(_PROVEN_ENTRY)
+            c["exit"] = copy.deepcopy(_PROVEN_EXIT)
+            c["name"] = "stub-复盘切换稳健趋势"
+            c["description"] = "研究因子单票失效，复盘切换为 MA5金叉+回调 稳健趋势"
+            risk["stop_loss_pct"] = 0.04
+            risk["take_profit_pct"] = 0.15
+            risk["trailing_stop_pct"] = 0.0
+            risk["trailing_activation_pct"] = 0.0
+        else:
+            if sharpe < 0.3:
+                risk["take_profit_pct"] = round((risk.get("take_profit_pct") or 0.12) + 0.03, 4)
+            if c.get("name"):
+                c["name"] = c["name"].rsplit("(", 1)[0] + f"(round_{int(time.time())})"
         return c
 
 
@@ -250,7 +279,8 @@ class ResearchLoop:
     def run(self, *, rounds: int = 3, universe_code: Optional[str] = None,
             universe_selector: Optional[dict] = None, initial_balance: float = 100000.0,
             paper: bool = False, paper_account_id: Optional[int] = None,
-            gate: Optional["BaseDecisionGate"] = None) -> LoopResult:
+            gate: Optional["BaseDecisionGate"] = None,
+            use_factor_research: bool = True) -> LoopResult:
         # 1) 宏观
         macro = self.gw.macro_regime()
         # 2) 标的域
@@ -258,6 +288,15 @@ class ResearchLoop:
         factors = self.gw.factors()
         context = {"macro": macro, "universe": universe, "factors": factors,
                    "initial_balance": initial_balance}
+        # 2b) 研究→论证→生成: 在标的域池上跑 IC/ICIR, 选出被支撑因子
+        if use_factor_research:
+            rec = self._recommend_factor(universe, macro)
+            context["recommended_factor"] = rec
+            if rec:
+                print(f"  [因子研究] 最优 {rec['dsl_key']} IC={rec['ic']:.3f} ICIR={rec['icir']:.2f} "
+                      f"方向={'高' if rec['direction']==1 else '低'} 覆盖={rec['coverage']:.0%}")
+            else:
+                print("  [因子研究] 未选出显著因子 → 回退样例策略")
         result = LoopResult(macro=macro, universe=universe)
 
         # 3) 生成 → 回测 → 复盘修订 多轮
@@ -307,6 +346,35 @@ class ResearchLoop:
             if decision is not None:
                 result.paper["decision"] = decision.to_dict()
         return result
+
+    def _recommend_factor(self, universe, macro) -> Optional[dict]:
+        """在标的域所属板块的股票池上跑截面 IC/ICIR, 选出被研究支撑的因子。"""
+        from ..strategy.factor_selector import recommend as _recommend
+        from datetime import datetime as _dt
+        code = universe.get("code", "")
+        # 板块: 优先 universe 自带; 否则由 code 反查
+        sector = universe.get("sector")
+        if not sector:
+            d = svc.catalog_describe(code) or {}
+            secs = d.get("sectors") or []
+            sector = secs[0] if secs else None
+        codes = []
+        if sector:
+            try:
+                items = svc.catalog_select(sector=sector, status="active")
+                codes = [i["code"] for i in items][:25]
+            except Exception:
+                codes = []
+        if code and code not in codes:
+            codes = [code] + codes[:24]
+        if not codes:
+            return None
+        end = _dt.now().strftime("%Y%m%d")
+        start = "2024-01-01"
+        try:
+            return _recommend(codes, start, end)
+        except Exception:
+            return None
 
     def _pick_universe(self, code, selector, macro) -> dict:
         if code:

@@ -111,6 +111,21 @@ def compute_factor_series(klines):
             if win_h > win_l:
                 d["PRICE_POS_20"] = f((closes[i] - win_l) / (win_h - win_l))
 
+        # 截面研究因子(与 factor_research 一致, 使研究-生成的因子可对应)
+        if i >= 20 and closes[i - 20] > 0:
+            d["MOMENTUM_20"] = f(closes[i] / closes[i - 20] - 1)
+        if i >= 60 and closes[i - 60] > 0:
+            d["MOMENTUM_60"] = f(closes[i] / closes[i - 60] - 1)
+        if i >= 5 and closes[i - 5] > 0:
+            d["REVERSAL_5"] = f(-(closes[i] / closes[i - 5] - 1))
+        if i >= 20:
+            win = closes[i - 19:i + 1]
+            rets = [win[j] / win[j - 1] - 1 for j in range(1, 20) if win[j - 1] > 0]
+            if len(rets) >= 2:
+                m = sum(rets) / len(rets)
+                var = sum((r - m) ** 2 for r in rets) / (len(rets) - 1)
+                d["VOLATILITY_20"] = f(var ** 0.5)
+
         # 布尔因子
         if ma5[i] is not None and ma10[i] is not None:
             d["MA5_GT_MA10"] = 1 if ma5[i] > ma10[i] else 0
