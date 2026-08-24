@@ -114,14 +114,17 @@ VALUE_CANDIDATES = ["EP", "BP", "ROE"]
 
 
 def study_value_factors(codes, start: str, end: str, engine: Optional[FactorResearchEngine] = None,
-                        min_universe: int = 5, neutralize_industry: bool = True) -> list:
+                        min_universe: int = 5, neutralize_industry: bool = True,
+                        fetch_missing: bool = False) -> list:
     """研究价值/质量因子(EP/BP/ROE)的截面 IC/ICIR(点时间, 无前视)。
 
     扩展单日 K 线之外的研究维度: 用基本面对每只股在每交易日给出 盈利收益率EP/账面市值比BP/ROE。
     neutralize_industry=True 时按板块中性化(去板块效应, 跨板块研究更可信)。
+    fetch_missing=False(默认): **只读已缓存**基本面(本地化, 读路径不联网)。
     返回 [ {dsl_key, ic, icir, coverage, net_long_short, research}, ... ]。
     """
-    frames = load_universe_frames(codes, start=start, end=end, with_fundamentals=True)
+    frames = load_universe_frames(codes, start=start, end=end, with_fundamentals=True,
+                                  fetch_missing=fetch_missing)
     if len(frames) < min_universe:
         return []
     engine = engine or FactorResearchEngine()

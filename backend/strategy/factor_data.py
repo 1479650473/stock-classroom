@@ -12,10 +12,13 @@ from .data import load_klines
 
 
 def load_universe_frames(codes, start: str | None = None, end: str | None = None,
-                         limit: int = 1200, with_fundamentals: bool = False) -> dict:
+                         limit: int = 1200, with_fundamentals: bool = False,
+                         fetch_missing: bool = False) -> dict:
     """codes: 列表; 返回 {code: DataFrame}。start/end: 'YYYYMMDD' 过滤。
 
-    with_fundamentals=True 时附加点时间 EP/BP/ROE 列(价值/质量, 含披露滞后, 无前视)。
+    with_fundamentals=True 时附加点时间 EP/BP/ROE 列(价值/质量, 含披露滞后或无前视)。
+    fetch_missing=False(默认): **只读已缓存**基本面 —— 研究/回测读路径绝不联网, 避免重复拉取;
+    True 时对未缓存代码补抓(仅预抓场景用, 会联网且慢)。
     """
     frames = {}
     for code in codes:
@@ -42,9 +45,10 @@ def load_universe_frames(codes, start: str | None = None, end: str | None = None
             frames[code] = df
     if with_fundamentals and frames:
         from ..fundamental import attach_fundamentals, ensure_fundamental
-        # 确保已缓存(缺的补抓; 失败则该项为 NaN 被忽略)
-        for code in list(frames):
-            ensure_fundamental(code)
+        # 只读缓存(默认)不触发抓取 → 本地化保证; 显式 fetch_missing 才补抓
+        if fetch_missing:
+            for code in list(frames):
+                ensure_fundamental(code)
         frames = attach_fundamentals(frames)
     return frames
 

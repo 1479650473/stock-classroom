@@ -122,6 +122,13 @@
 | `data/agent.db` | 网关状态(已 gitignore) |
 | `data/sim_trade.db` | paper 模拟账户 |
 
+**数据本地化(避免重复拉取)**：所有数据**抓取后落盘 SQLite**，后续读路径**只读本地、绝不联网**。
+- 基本面：`fetch_fundamental → store(fundamental.db)`；`has_vals` 跳过已缓存；研究/回测读路径
+  `load_universe_frames/study_value_factors/attach_kline_fundamentals` **默认只读缓存**(`fetch_missing=False`)，
+  **不触发抓取**；抓取只在显式预抓(`prefetch_value_pool.py`)或 `fetch_missing=True` 时发生。
+- 宏观：`macro/snapshot.py`(fetch→store) 落 macro.db；`macro_regime()` 只读 macro.db(`SELECT ... FROM series`)。
+- 日 K/目录：`load_klines`/`catalog.select` 只读 kline.db。由 `verify_local_cache.py`(spy 计数)证明读路径 0 次联网。
+
 ---
 
 ## 六、验证(全部本地,K线已缓存)
@@ -133,6 +140,7 @@ C:/Python314/python.exe backend/agent/verify_m2.py           # 宏观选板块+I
 C:/Python314/python.exe backend/strategy/verify_value_strategy.py  # 价值策略(EP/BP 回测) 4/4
 C:/Python314/python.exe backend/strategy/verify_value_wide.py    # 跨板块价值研究 8/8; VALUE_POOL_FULL=1 全市场
 C:/Python314/python.exe backend/strategy/run_vertical_slice.py   # 回测引擎自检
+C:/Python314/python.exe backend/strategy/verify_local_cache.py  # 数据本地化(读路径不联网) 4/4
 C:/Python314/python.exe backend/agent/verify_llm_run.py     # 真 LLM 端到端(需 settings.json 配 key)
 ```
 
