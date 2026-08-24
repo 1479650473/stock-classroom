@@ -32,6 +32,8 @@ KNOWN_FACTORS = frozenset({
     "REVERSAL_5", "REVERSAL_10", "REVERSAL_20",
     "VOLATILITY_5", "VOLATILITY_10", "VOLATILITY_20", "VOLATILITY_60",
     "RSI_14",
+    # 基本面价值/质量(东财每日估值, 点时间; factors.py 逐bar产出)
+    "EP", "BP", "ROE",
     # 布尔
     "MA5_GT_MA10", "MA10_GT_MA20", "CLOSE_GT_MA20",
     # 金叉死叉

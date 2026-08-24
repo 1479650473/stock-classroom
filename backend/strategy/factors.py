@@ -69,6 +69,12 @@ def compute_factor_series(klines):
         d["VOLUME"] = f(volumes[i])
         d["AMOUNT"] = f(amounts[i])
 
+        # 基本面价值/质量因子(由 attach_kline_fundamentals 注入 kline dict, 点时间)
+        for _fk in ("EP", "BP", "ROE"):
+            _v = klines[i].get(_fk) if i < len(klines) else None
+            if _v is not None:
+                d[_fk] = f(_v)
+
         if ma5[i] is not None:
             d["MA5"] = f(ma5[i])
         if ma10[i] is not None:

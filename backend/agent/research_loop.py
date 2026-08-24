@@ -255,6 +255,8 @@ def eval_entry_signal(code: str, contract: dict) -> tuple[bool, float]:
     kd, _ = svc.load_klines(code, limit=200)
     if not kd:
         return False, 0.0
+    from ..fundamental import attach_kline_fundamentals
+    kd = attach_kline_fundamentals(code, kd)
     series = fac_mod.compute_factor_series(kd)
     vals = series[-1] if series else {}
     condition = contract.get("entry")

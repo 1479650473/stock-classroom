@@ -115,6 +115,40 @@ def _f(x):
         return None
 
 
+def _norm_date(d) -> str:
+    """K线日期可能是 '20260518' 或 '2026-05-18' → 归一化为 'YYYY-MM-DD'。"""
+    s = str(d)[:10]
+    if len(s) == 8 and s.isdigit():
+        return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
+    return s
+
+
+def attach_kline_fundamentals(code: str, klines: list) -> list:
+    """给回测用的 K 线 dict 列表附加点时间 EP/BP/ROE(从缓存东财每日估值, 按日期对齐)。
+
+    EP=1/PE_TTM, BP=1/PB, ROE=PB/PE_TTM。某日无估值(停牌/新股/未缓存) → 该 bar 无这些键,
+    回测 DSL 条件对其判 False(诚实: 无基本面信号的 bar 不因价值因子触发)。
+    不触发抓取(只用缓存), 避免回测中途联网。
+    """
+    vals = load_vals(code)
+    if not vals:
+        return klines
+    vmap = {v["date"]: v for v in vals if v["pe_ttm"] and v["pe_ttm"] > 0 and v["pb"] and v["pb"] > 0}
+    if not vmap:
+        return klines
+    out = []
+    for k in klines:
+        k = dict(k)
+        v = vmap.get(_norm_date(k.get("date")))
+        if v and k.get("close"):
+            pe, pb = v["pe_ttm"], v["pb"]
+            k["EP"] = round(1.0 / pe, 6)
+            k["BP"] = round(1.0 / pb, 6)
+            k["ROE"] = round(pb / pe, 4)
+        out.append(k)
+    return out
+
+
 def attach_fundamentals(frames: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
     """给每个 {code: DataFrame(daily)} 帧按日期对齐附加 EP/BP/ROE 列(点时间无前视)。
 

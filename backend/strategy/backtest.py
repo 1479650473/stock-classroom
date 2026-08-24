@@ -84,6 +84,14 @@ def run_backtest(spec, klines):
         res.errors.append("empty klines")
         return res
 
+    code = spec.universe.get("code", "")
+    # 注入点时间价值/质量因子(EP/BP/ROE)到 kline dict, 供 compute_factor_series 逐bar产出
+    try:
+        from ..fundamental import attach_kline_fundamentals
+        klines = attach_kline_fundamentals(code, klines)
+    except Exception:
+        pass
+
     # 因子序列(逐 bar values)
     series = compute_factor_series(klines)
     n = len(klines)
@@ -93,7 +101,6 @@ def run_backtest(spec, klines):
     pos = None            # {qty, cost, entry_price, entry_index, prot, name}
     pending = None        # 'buy' | 'sell'
 
-    code = spec.universe.get("code", "")
     name = spec.universe.get("name", "")
     pct = limit_pct(code, name)
     stop_loss_pct = spec.risk.stop_loss_pct
