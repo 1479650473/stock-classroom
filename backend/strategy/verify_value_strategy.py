@@ -65,8 +65,8 @@ def main():
     chk("价值策略回测有交易", int(trades) > 0, f"{int(trades)} 笔")
     chk("价值策略回测指标有效(总收益/夏普)",
         isinstance(tr, float) and isinstance(res.metrics.get("sharpe"), float),
-        f"收益={tr:+.2f}% 夏普={res.metrics.get('sharpe', 0):.2f} 笔数={int(trades)} "
-        f"回撤={res.metrics.get('max_drawdown', 0):.2f}% 买入持有={res.metrics.get('buy_hold_return', 0):.2f}%")
+        f"收益={tr * 100:+.2f}% 夏普={res.metrics.get('sharpe', 0):.2f} 笔数={int(trades)} "
+        f"回撤={res.metrics.get('max_drawdown', 0) * 100:.2f}% 买入持有={res.metrics.get('buy_hold_return', 0) * 100:.2f}%")
 
     # ③ 无前视: EP 取值随 PE_TTM/价格变化(非穿越未来)
     from backend.strategy.factors import compute_factor_series

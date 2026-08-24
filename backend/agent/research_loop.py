@@ -237,7 +237,10 @@ class InProcessGw:
 
 # ────────────────────────── 闭环 Runner ──────────────────────────────
 def score(metrics: dict) -> float:
-    """评分择优：要求正收益+回撤可控，偏爱夏普。返回 -inf 表示不合格。"""
+    """评分择优：要求正收益+回撤可控，偏爱夏普。返回 -inf 表示不合格。
+
+    metrics 口径: total_return/max_drawdown 为小数(0.05=5%)。
+    """
     if not metrics:
         return float("-inf")
     tr = metrics.get("total_return", 0.0)
@@ -245,7 +248,7 @@ def score(metrics: dict) -> float:
     sharpe = metrics.get("sharpe", 0.0) or 0.0
     if tr <= 0:
         return float("-inf")
-    if mdd <= -30:
+    if mdd <= -0.30:
         return float("-inf")
     return round(tr * 0.4 + sharpe * 10 * 0.3 - abs(mdd) * 0.3, 4)
 

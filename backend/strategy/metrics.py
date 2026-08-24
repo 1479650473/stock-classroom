@@ -74,17 +74,18 @@ def compute_metrics(equity_curve, initial_balance, trades,
         "bars": n_bars,
         "initial_balance": round(initial_balance, 2),
         "final_equity": round(final, 2),
-        "total_return": round(total_return * 100, 2),         # %
-        "cagr": round(cagr * 100, 2),                          # %
+        # ── 统一口径: 收益/回撤/胜率均为【小数】(0.05=5%)；×100 得百分比 ──
+        "total_return": round(total_return, 4),              # 小数, 如 0.5373 = +53.73%
+        "cagr": round(cagr, 4),                              # 小数
         "sharpe": round(sharpe, 3),
-        "max_drawdown": round(mdd * 100, 2),                   # %(负值)
+        "max_drawdown": round(mdd, 4),                       # 小数(负值), 如 -0.2510 = -25.10%
         "num_trades": num,
-        "win_rate": round(win_rate * 100, 2),                  # %
+        "win_rate": round(win_rate, 4),                      # 小数, 如 0.2857 = 28.57%
         "profit_factor": round(profit_factor, 3),
         "gross_profit": round(gross_profit, 2),
         "gross_loss": round(gross_loss, 2),
-        "buy_hold_return": round(buy_hold_return * 100, 2) if buy_hold_return is not None else None,
-        "buy_hold_max_drawdown": round(buy_hold_mdd * 100, 2) if buy_hold_mdd is not None else None,
+        "buy_hold_return": round(buy_hold_return, 4) if buy_hold_return is not None else None,
+        "buy_hold_max_drawdown": round(buy_hold_mdd, 4) if buy_hold_mdd is not None else None,
     }
 
 

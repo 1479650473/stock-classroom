@@ -48,7 +48,7 @@ def main():
         c = rr.contract
         print(f"  R{rr.round_id} [{c.get('name')}] sid={rr.strategy_id} "
               f"收益={rr.metrics.get('total_return', 0) * 100:+.2f}% "
-              f"夏普={rr.metrics.get('sharpe', 0):.2f} 回撤={rr.metrics.get('max_drawdown', 0):.2f}% "
+              f"夏普={rr.metrics.get('sharpe', 0):.2f} 回撤={rr.metrics.get('max_drawdown', 0) * 100:.2f}% "
               f"score={rr.score}")
         print(f"       entry={json.dumps(c.get('entry'), ensure_ascii=False)[:150]}")
         if rr.round_id == 1:
@@ -58,7 +58,7 @@ def main():
         print(f"\n── 最优轮 ──")
         print(f"  R{res.best.round_id} [{res.best.contract.get('name')}] "
               f"收益={res.best.metrics.get('total_return', 0) * 100:+.2f}% "
-              f"胜率={res.best.metrics.get('win_rate', 0)}%")
+              f"胜率={res.best.metrics.get('win_rate', 0) * 100:.2f}%")
     else:
         print(f"\n── 最优轮: 无(所有轮收益为负或回撤过大, 评分 -inf) ──")
 

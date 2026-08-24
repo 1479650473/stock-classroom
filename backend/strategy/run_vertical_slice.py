@@ -43,15 +43,16 @@ SAMPLE_STRATEGY = {
 
 
 def fmt_metrics(m, bh_ret, bh_mdd):
+    """metrics 口径为小数(0.05=5%) → 显示 ×100。"""
     lines = []
     lines.append(f"  回测区间   : {m['bars']} 根日K")
     lines.append(f"  初始资金   : ¥{m['initial_balance']:,.0f}  →  期末 ¥{m['final_equity']:,.2f}")
-    lines.append(f"  总收益率   : {m['total_return']:+.2f}%")
-    lines.append(f"  年化(CAGR) : {m['cagr']:+.2f}%")
+    lines.append(f"  总收益率   : {m['total_return'] * 100:+.2f}%")
+    lines.append(f"  年化(CAGR) : {m['cagr'] * 100:+.2f}%")
     lines.append(f"  夏普比率   : {m['sharpe']:.3f}")
-    lines.append(f"  最大回撤   : {m['max_drawdown']:.2f}%")
-    lines.append(f"  交易次数   : {m['num_trades']}   胜率 {m['win_rate']:.2f}%   盈亏比 {m['profit_factor']:.3f}")
-    lines.append(f"  基准(买入持有): {m['buy_hold_return']:+.2f}%  回撤 {m['buy_hold_max_drawdown']:.2f}%")
+    lines.append(f"  最大回撤   : {m['max_drawdown'] * 100:.2f}%")
+    lines.append(f"  交易次数   : {m['num_trades']}   胜率 {m['win_rate'] * 100:.2f}%   盈亏比 {m['profit_factor']:.3f}")
+    lines.append(f"  基准(买入持有): {m['buy_hold_return'] * 100:+.2f}%  回撤 {m['buy_hold_max_drawdown'] * 100:.2f}%")
     return "\n".join(lines)
 
 
@@ -113,7 +114,7 @@ def main():
     bh = buy_hold_equity(100000.0, klines)
     checks.append(("基准权益曲线非空", len(bh) > 0))
     checks.append(("基准收益与指标一致",
-                   abs((bh[-1][1] / 100000.0 - 1.0) - m["buy_hold_return"] / 100.0) < 0.02))
+                   abs((bh[-1][1] / 100000.0 - 1.0) - m["buy_hold_return"]) < 0.02))
 
     for label, ok in checks:
         print(f"  [{'PASS' if ok else 'FAIL'}] {label}")

@@ -66,7 +66,7 @@ def main():
     for r in res.rounds:
         m = r.metrics
         print(f"  R{r.round_id} 策略[{r.contract.get('name')}] sid={r.strategy_id} "
-              f"收益 {m.get('total_return','')}% 夏普 {m.get('sharpe','')} 回撤 {m.get('max_drawdown','')}% "
+              f"收益 {m.get('total_return', 0) * 100:+.2f}% 夏普 {m.get('sharpe','')} 回撤 {m.get('max_drawdown', 0) * 100:.2f}% "
               f"笔数 {m.get('num_trades','')}  score={r.score}")
     print(f"── 最优: {('round%d %s score=%s' % (best.round_id, best.contract.get('name'), best.score)) if best else '无正收益轮'}  paper={res.paper}")
 
