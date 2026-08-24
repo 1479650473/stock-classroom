@@ -18,6 +18,12 @@ for k in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy",
 from indicators import enrich_kline
 from akshare_source import diagnose_akshare
 
+# 让 backend 作为包可导入(agent 网关复用 strategy/macro/trade_engine)
+import sys as _sys
+_PROJ_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJ_ROOT not in _sys.path:
+    _sys.path.insert(0, _PROJ_ROOT)
+
 app = Flask(__name__)
 CORS(app)
 
@@ -368,6 +374,15 @@ def api_db_monitor():
     ks = _os.path.getsize(dbp) / 1048576
     cs = _os.path.getsize(cbp) / 1048576 if _os.path.exists(cbp) else 0
     return jsonify({"code":0,"data":{"table_stats":ts,"db_sizes":{"kline_db_mb":round(ks,1),"cache_db_mb":round(cs,1)},"cache":{"spot_count":ts.get("stock_spot",0),"spot_updated":spot_u[0] if spot_u and spot_u[0] else None,"sector_count":ts.get("sector_data",0),"sector_updated":sec_u[0] if sec_u and sec_u[0] else None,"north_count":ts.get("north_flow",0),"north_updated":north_u[0] if north_u and north_u[0] else None}}})
+# ════════════════════════════════════════════════════════
+#  Agent Gateway (M1) — /api/agent/v1
+# ════════════════════════════════════════════════════════
+from backend.agent.routes import register as _register_agent
+_register_agent(app)
+from backend.agent import store as _agent_store
+_agent_store.ensure_schema()
+
+
 if __name__ == "__main__":
     print("[Backend] stock-classroom v3.2 启动...")
     print("[Backend] 数据源: AKShare (主) + 新浪 (fallback)")
