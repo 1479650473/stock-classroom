@@ -156,3 +156,19 @@ def build_wide_pool(per_sector: int = 12) -> list:
             items = []
         codes += [i["code"] for i in items][:per_sector]
     return sorted(set(codes))
+
+
+def build_full_pool(min_bars: int = 120) -> list:
+    """全市场研究池: 所有活跃且有 >=min_bars 根 K 线的股票(~5200 只)。
+
+    注意: 该池多数股票无板块标注 → 只能做原始(不中性化)价值研究;
+       行业中性化需用 build_wide_pool(有板块的)子集。
+    """
+    import sqlite3
+    from .data import get_kline_db_path
+    con = sqlite3.connect(get_kline_db_path())
+    rows = con.execute(
+        "SELECT c.code FROM stock_list c WHERE c.status='active' AND c.code IN "
+        "(SELECT code FROM kline_daily GROUP BY code HAVING COUNT(*)>=?)", (min_bars,)).fetchall()
+    con.close()
+    return [r[0] for r in rows]

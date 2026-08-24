@@ -25,6 +25,7 @@ DB_PATH = DATA_DIR / "fundamental.db"
 def _db() -> sqlite3.Connection:
     DATA_DIR.mkdir(exist_ok=True)
     con = sqlite3.connect(str(DB_PATH))
+    con.execute("PRAGMA journal_mode=WAL")
     con.execute("""CREATE TABLE IF NOT EXISTS fundamental (
         code TEXT, date TEXT, pe_ttm REAL, pb REAL, updated_at TEXT,
         PRIMARY KEY (code, date))""")

@@ -19,10 +19,14 @@ from backend.strategy import catalog as cat          # noqa: E402
 from backend.fundamental import fetch_fundamental, has_vals, init_db, DB_PATH  # noqa: E402
 
 PER_SECTOR = int(os.environ.get("VALUE_POOL_PER_SECTOR", "12"))
-SLEEP = float(os.environ.get("VALUE_POOL_SLEEP", "1.0"))
+SLEEP = float(os.environ.get("VALUE_POOL_SLEEP", "0.8"))
+FULL = os.environ.get("VALUE_POOL_FULL", "0") == "1"
 
 
 def build_pool(per_sector: int = PER_SECTOR) -> list:
+    if FULL:
+        from backend.strategy.factor_selector import build_full_pool
+        return build_full_pool(min_bars=120)
     codes = []
     for s in cat.sectors():
         try:
@@ -36,7 +40,8 @@ def build_pool(per_sector: int = PER_SECTOR) -> list:
 def main():
     init_db()
     pool = build_pool()
-    print(f"多板块研究池: {len(pool)} 只 | 每板块 ≤ {PER_SECTOR}", flush=True)
+    mode = "全市场(原始/无板块标注)" if FULL else f"每板块 ≤ {PER_SECTOR}"
+    print(f"研究池: {len(pool)} 只 | 模式: {mode}", flush=True)
     todo = [c for c in pool if not has_vals(c)]
     done = [c for c in pool if has_vals(c)]
     print(f"已缓存 {len(done)}, 待抓 {len(todo)}", flush=True)
