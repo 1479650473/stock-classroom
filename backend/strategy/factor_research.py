@@ -29,6 +29,7 @@ class FactorResearchEngine:
         commission: float = 0.0005,
         slippage: float = 0.0005,
         neutralize_industry: bool = False,
+        compute_correlation: bool = True,
     ) -> dict[str, Any]:
         groups = max(2, min(10, int(groups or 5)))
         holding_period = max(1, int(holding_period or 5))
@@ -136,7 +137,8 @@ class FactorResearchEngine:
             "grossLongShortReturn": float(long_short[-1]["gross"] - 1.0) if long_short else 0.0,
             "netLongShortReturn": float(long_short[-1]["net"] - 1.0) if long_short else 0.0,
             "neutralized": bool(neutralize_industry),
-            "factorCorrelation": self._factor_correlation(prepared, close),
+            "factorCorrelation": self._factor_correlation(prepared, close)
+            if compute_correlation else None,
             "stability": {"firstHalfIc": float(first_half.mean()) if not first_half.empty else 0.0,
                            "secondHalfIc": float(second_half.mean()) if not second_half.empty else 0.0,
                            "rankAutocorrelation": sum(rank_autocorrelations) / len(rank_autocorrelations)
@@ -153,16 +155,30 @@ class FactorResearchEngine:
         return pd.DataFrame(cols).sort_index()
 
     def _factor_panel(self, frames, factor_id, close) -> pd.DataFrame:
-        if factor_id.startswith("momentum"):
-            return close.pct_change(self._suffix_number(factor_id, 20))
-        if factor_id.startswith("volatility"):
-            return close.pct_change().rolling(self._suffix_number(factor_id, 20)).std()
-        if factor_id in {"reversal", "reversal_5"}:
-            return -close.pct_change(5)
-        if factor_id == "rsi14":
-            # 简化的 RSI 近似(用 close 收益的相对强弱)，占位实现
-            return close.pct_change().rolling(14).apply(lambda x: 100.0, raw=True)
+        fid = str(factor_id or "momentum_20").strip().lower()
+        if fid.startswith("momentum"):
+            return close.pct_change(self._suffix_number(fid, 20))
+        if fid.startswith("volatility"):
+            return close.pct_change().rolling(self._suffix_number(fid, 20)).std()
+        if fid.startswith("reversal"):
+            return -close.pct_change(self._suffix_number(fid, 5))
+        if fid.startswith("skew"):
+            return close.pct_change().rolling(self._suffix_number(fid, 20)).skew()
+        if fid.startswith("kurt"):
+            return close.pct_change().rolling(self._suffix_number(fid, 20)).kurt()
+        if fid == "rsi14":
+            return self._rsi(close, 14)
         return close.pct_change(20)  # 未知 → 退化为 momentum20
+
+    @staticmethod
+    def _rsi(close: pd.DataFrame, period: int = 14) -> pd.DataFrame:
+        """Wilder 相对强弱指数(横截面向量化)。avg_loss→0 时 RSI 趋于 100。"""
+        delta = close.diff()
+        gain = delta.clip(lower=0.0).ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
+        loss = (-delta.clip(upper=0.0)).ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
+        rs = gain / loss.replace(0.0, pd.NA)
+        rsi = 100.0 - 100.0 / (1.0 + rs)
+        return rsi.fillna(100.0)
 
     @staticmethod
     def _suffix_number(value: str, default: int) -> int:
@@ -196,8 +212,12 @@ class FactorResearchEngine:
     def _factor_correlation(self, frames, close):
         factors = {
             "momentum_20": close.pct_change(20),
-            "volatility_20": close.pct_change().rolling(20).std(),
+            "momentum_60": close.pct_change(60),
             "reversal_5": -close.pct_change(5),
+            "reversal_20": -close.pct_change(20),
+            "volatility_20": close.pct_change().rolling(20).std(),
+            "volatility_60": close.pct_change().rolling(60).std(),
+            "skew_20": close.pct_change().rolling(20).skew(),
         }
         stacked = {n: p.stack(future_stack=True) for n, p in factors.items()}
         matrix = pd.DataFrame(stacked).rank().corr().fillna(0.0)

@@ -20,6 +20,8 @@ from backend.strategy.factor_research import FactorResearchEngine  # noqa: E402
 from backend.strategy.factor_data import load_universe_frames  # noqa: E402
 from backend.agent import services as svc  # noqa: E402
 
+import pandas as pd  # noqa: E402
+
 
 def main():
     results = []
@@ -72,6 +74,54 @@ def main():
             chk(f"因子[{fid}] IC/ICIR/分组", ok, extra)
         except Exception as e:
             chk(f"因子[{fid}] IC/ICIR/分组", False, str(e)[:50])
+
+    # ── 2b) 因子库扩充 + ICIR 自动选参 ──────────────────────────────
+    print("\n── M2b2 因子库扩充 + ICIR 自动选参 ──")
+    from backend.strategy.factor_selector import recommend, _band, DEFAULT_BANDS, CANDIDATES  # noqa: E402
+    new_fids = ("momentum_40", "reversal_10", "volatility_60", "skew_20", "rsi_14")
+    for fid in new_fids:
+        try:
+            r = engine.run(frames=frames, factor_id=fid, start_date="2024-01-01",
+                           end_date="2026-06-01", groups=5, holding_period=5,
+                           compute_correlation=False)
+            ok = (isinstance(r.get("rankIc"), float) and len(r.get("groupCurves", [])) == 5
+                  and len(r.get("icSeries", [])) > 0)
+            extra = (f"IC={r.get('rankIc'):.3f} ICIR={r.get('icir'):.2f} "
+                     f"覆盖={r.get('coverage'):.0%}") if ok else ""
+            chk(f"新增因子[{fid}] IC/ICIR/分组", ok, extra)
+        except Exception as e:
+            chk(f"新增因子[{fid}] IC/ICIR/分组", False, str(e)[:50])
+    # RSI_14 值域 [0,100]
+    close_panel = pd.DataFrame({s: frames[s]["close"] for s in frames})
+    rsi = FactorResearchEngine._rsi(close_panel, 14)
+    chk("RSI_14 值域在[0,100]",
+        float(rsi.min().min()) >= 0 and float(rsi.max().max()) <= 100,
+        f"min={rsi.min().min():.1f} max={rsi.max().max():.1f}")
+    # ICIR 分档
+    chk("ICIR分档 high", _band(2.0, DEFAULT_BANDS) == ("high", 1.0), str(_band(2.0, DEFAULT_BANDS)))
+    chk("ICIR分档 medium", _band(0.7, DEFAULT_BANDS)[0] == "medium")
+    chk("ICIR分档 weak", _band(0.4, DEFAULT_BANDS)[0] == "weak")
+    chk("ICIR分档 reject", _band(0.1, DEFAULT_BANDS)[0] == "reject")
+    # 自动选参: 严格门槛 → 全被拒(None 或全 high); 宽松门槛 → 选出带参数的因子
+    strict = recommend(bank_codes, "2024-01-01", "2026-06-01",
+                       min_icir=2.0, min_ic=0.005, min_coverage=0.5)
+    chk("严格ICIR(2.0)→无因子或全high",
+        strict is None or strict.get("confidence") == "high" or strict.get("abs_icir", 0) >= 2.0,
+        f"{strict.get('dsl_key') if strict else 'None'} |ICIR|={strict.get('abs_icir', 0):.2f}" if strict else "None")
+    loose = recommend(bank_codes, "2024-01-01", "2026-06-01",
+                      min_icir=0.3, min_ic=0.005, min_coverage=0.5)
+    chk("宽松ICIR(0.3)→选出因子", loose is not None and loose.get("dsl_key") in CANDIDATES,
+        f"{loose.get('dsl_key')} IC={loose.get('ic', 0):.3f} ICIR={loose.get('icir', 0):.2f} "
+        f"conf={loose.get('confidence')}" if loose else "None")
+    chk("推荐含置信度/阈值/参数",
+        loose is not None and all(k in loose for k in ("confidence", "threshold", "bands",
+                                                       "icir_threshold", "direction")))
+    # 方向感知 entry: 由 direction 决定 op
+    from backend.strategy.factor_selector import entry_for_factor  # noqa: E402
+    e1 = entry_for_factor({"dsl_key": "MOMENTUM_20", "direction": 1, "threshold": 0.0})
+    e2 = entry_for_factor({"dsl_key": "REVERSAL_5", "direction": -1, "threshold": 0.0})
+    chk("方向感知 entry(高→gt)", e1 == {"type": "gt", "args": ["MOMENTUM_20", 0.0]}, str(e1))
+    chk("方向感知 entry(低→lt)", e2 == {"type": "lt", "args": ["REVERSAL_5", 0.0]}, str(e2))
 
     # ── 3) AI 决策门 ─────────────────────────────────────────────────
     print("\n── AI 决策门(Stub/清洗) ──")

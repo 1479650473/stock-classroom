@@ -112,19 +112,26 @@ def compute_factor_series(klines):
                 d["PRICE_POS_20"] = f((closes[i] - win_l) / (win_h - win_l))
 
         # 截面研究因子(与 factor_research 一致, 使研究-生成的因子可对应)
-        if i >= 20 and closes[i - 20] > 0:
-            d["MOMENTUM_20"] = f(closes[i] / closes[i - 20] - 1)
-        if i >= 60 and closes[i - 60] > 0:
-            d["MOMENTUM_60"] = f(closes[i] / closes[i - 60] - 1)
-        if i >= 5 and closes[i - 5] > 0:
-            d["REVERSAL_5"] = f(-(closes[i] / closes[i - 5] - 1))
-        if i >= 20:
-            win = closes[i - 19:i + 1]
-            rets = [win[j] / win[j - 1] - 1 for j in range(1, 20) if win[j - 1] > 0]
-            if len(rets) >= 2:
-                m = sum(rets) / len(rets)
-                var = sum((r - m) ** 2 for r in rets) / (len(rets) - 1)
-                d["VOLATILITY_20"] = f(var ** 0.5)
+        # 动量 (close/close[N]-1)
+        for mwin in (5, 10, 20, 40, 60):
+            if i >= mwin and closes[i - mwin] > 0:
+                d[f"MOMENTUM_{mwin}"] = f(closes[i] / closes[i - mwin] - 1)
+        # 反转 (-(close/close[N]-1))
+        for rwin in (5, 10, 20):
+            if i >= rwin and closes[i - rwin] > 0:
+                d[f"REVERSAL_{rwin}"] = f(-(closes[i] / closes[i - rwin] - 1))
+        # 波动 (近 N 日日收益标准差, ddof=1; 对应研究 rolling(N).std())
+        for vwin in (5, 10, 20, 60):
+            if i >= vwin:
+                win = closes[i - vwin:i + 1]
+                rets = [win[j] / win[j - 1] - 1 for j in range(1, vwin) if win[j - 1] > 0]
+                if len(rets) >= 2:
+                    m = sum(rets) / len(rets)
+                    var = sum((r - m) ** 2 for r in rets) / (len(rets) - 1)
+                    d[f"VOLATILITY_{vwin}"] = f(var ** 0.5)
+        # RSI_14 (与研究面板 RSI 同概念; 复用 indicators Wilder RSI)
+        if rsi14[i] is not None:
+            d["RSI_14"] = f(rsi14[i])
 
         # 布尔因子
         if ma5[i] is not None and ma10[i] is not None:

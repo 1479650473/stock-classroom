@@ -21,7 +21,6 @@ from . import gateway as gw_mod, services as svc, jobs as jobs_mod
 from .decision_gate import BaseDecisionGate  # noqa: F401
 from ..strategy.spec import StrategySpec
 from ..strategy import factors as fac_mod
-from ..strategy.factor_selector import FACTOR_HINTS
 from ..factor_engine.dsl import evaluate as eval_dsl
 
 
@@ -126,16 +125,18 @@ class StubBackend(BaseBackend):
         if rec:
             key = rec["dsl_key"]
             direction = rec["direction"]
-            hint = FACTOR_HINTS.get(key, {"signed": True, "threshold": 0.0})
-            thresh = hint.get("threshold", 0.0)
+            thresh = rec.get("threshold", 0.0)
             op = "gt" if direction == 1 else "lt"
             revop = "lt" if op == "gt" else "gt"
             entry = {"type": op, "args": [key, thresh]}
             exit = {"type": revop, "args": [key, thresh]}
-            # 附加趋势过滤(收盘>MA20)提高可信度
-            entry = {"type": "and", "args": [entry, {"type": "gt", "args": ["CLOSE", "MA20"]}]}
+            # 自动选参: ICIR 置信度弱/中 → 附加趋势过滤(收盘>MA20)收紧; 高 → 纯因子
+            confidence = rec.get("confidence", "weak")
+            if confidence != "high":
+                entry = {"type": "and", "args": [entry, {"type": "gt", "args": ["CLOSE", "MA20"]}]}
             name = f"stub-研究因子[{key}]"
-            desc = f"IC={rec['ic']:.3f} ICIR={rec['icir']:.2f} 方向={'高' if direction==1 else '低'} 入场; 反向离场"
+            desc = (f"IC={rec['ic']:.3f} ICIR={rec['icir']:.2f} conf={confidence} "
+                    f"方向={'高' if direction==1 else '低'} 入场; 反向离场")
         else:
             entry, exit = _PROVEN_ENTRY, _PROVEN_EXIT
             name = "stub-均线金叉+回调(round1)"
