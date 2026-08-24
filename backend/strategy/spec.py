@@ -33,6 +33,14 @@ KNOWN_FACTORS = frozenset({
     "MA5_CROSS_UP_MA10", "MA5_CROSS_DOWN_MA10", "MACD_CROSS_UP", "MACD_CROSS_DOWN",
 })
 
+# 已知 DSL 操作符(与 factor_engine/dsl.py 的 evaluate 支持的节点类型一致)。
+# 未知 type 会被 evaluate() 静默返回 False → 死策略；在 validate() 阶段拒绝。
+DSL_OPS = frozenset({
+    "and", "or", "not", "true",
+    "gt", "gte", "lt", "lte", "eq", "neq",
+    "between", "cross_above", "cross_below",
+})
+
 
 def _unknown_factor_keys(cond: dict) -> set:
     """遍历 DSL 条件树，返回引用了但不在词表内的因子键(字符串参数)。
@@ -65,6 +73,25 @@ def _unknown_factor_keys(cond: dict) -> set:
                     found.add(val)
                 else:
                     bad.add(val)
+    return bad
+
+
+def _unknown_op(cond: dict) -> set:
+    """返回条件树中不属于 DSL_OPS 的节点 type。"""
+    bad = set()
+    stack = [cond]
+    while stack:
+        node = stack.pop()
+        if not isinstance(node, dict):
+            continue
+        t = str(node.get("type", ""))
+        if t and t not in DSL_OPS:
+            bad.add(t)
+        for val in node.values():
+            if isinstance(val, dict):
+                stack.append(val)
+            elif isinstance(val, list):
+                stack.extend(v for v in val if isinstance(v, dict))
     return bad
 
 
@@ -165,10 +192,14 @@ class StrategySpec:
         for label, cond in (("entry", self.entry), ("exit", self.exit)):
             if cond is None:
                 continue
-            bad = _unknown_factor_keys(cond)
-            if bad:
-                raise ValueError(f"策略契约 {label} 引用了未知因子: {', '.join(sorted(bad))}。"
+            bad_f = _unknown_factor_keys(cond)
+            if bad_f:
+                raise ValueError(f"策略契约 {label} 引用了未知因子: {', '.join(sorted(bad_f))}。"
                                  f"可用因子见 strategy/factors.py")
+            bad_o = _unknown_op(cond)
+            if bad_o:
+                raise ValueError(f"策略契约 {label} 使用了未知 DSL 操作符: {', '.join(sorted(bad_o))}。"
+                                 f"支持: {', '.join(sorted(DSL_OPS))}")
 
     def resolve_universe(self) -> dict:
         """把 universe(单码 或 目录selector) 解析成具体代码列表。

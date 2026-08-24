@@ -86,6 +86,15 @@ def main():
     except Exception as e:
         chk("契约拒绝未知因子", True, str(e)[:40])
 
+    # 未知 DSL 操作符 → 拒绝(与未知因子同为"静默死策略"缺口)
+    bad_op = {"name": "bad-op", "universe": {"code": "600036"},
+              "entry": {"type": "foobar", "args": ["CLOSE", 1]}, "risk": {}}
+    try:
+        s = svc.create_strategy(gw.token_id, gw.agent_id, bad_op)
+        chk("契约拒绝未知DSL操作符", False, f"未拒绝({s})")
+    except Exception as e:
+        chk("契约拒绝未知DSL操作符", True, str(e)[:40])
+
     # 非 JSON / 代码注入 → LLMBackend 的 extract_json 必须抛错(不会把任意代码当成策略)
     from backend.agent.llm_client import extract_json, LLMError
     try:
