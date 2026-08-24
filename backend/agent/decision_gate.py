@@ -174,6 +174,110 @@ def value_tilt_state(load_index=None) -> dict:
             "index_close": last, "ma120": round(ma, 2), "drawdown": round(dd, 4)}
 
 
+# ── 组合级价值tilt 分配器(任务①) + 市场宽度第三路开关(任务②) ──
+# value_hard_rule 是**单票**'卖不卖'硬裁决. 这里升级到**组合层**: 整个重平衡/选股组合里
+# 价值层的*权重*. 景气/收缩期增配价值层, 扩张/risk-on 减配价值层(weight-tilt 而非二值开关).
+# 三路信号: ①宽基指数 regime(value_tilt_state) ②价值价差自指(价值是否在工作)
+#          ③市场宽度(破年线占比, 新增第三路) —— 融合成 {tilt_label, w_value, evidence}.
+
+# 价值层权重档(顺风增配 / 中性 / 逆风减配) —— 与 verify_portfolio_framework 口径一致
+PORTFOLIO_W_FAV = 1.5
+PORTFOLIO_W_NEU = 1.0
+PORTFOLIO_W_HEAD = 0.3
+
+
+def _fraction_gt_ma(close_panel, ma: int = 250) -> float:
+    """破年线(MA={ma}日)占比: 逐股用*各自最新收盘* vs *自身年线*, 平均. 用于市场宽度信号.
+    close_panel: {code: DataFrame(index=date, 列含close)} 或 {'close': DataFrame(code x date)}.
+    (不用'公共index+dropna'避免公共日期卡在最早停更股的陈旧日, 造成误导性低/高值.)
+    空 → 0.5(中性)."""
+    import pandas as pd  # noqa: F401  (decision_gate 顶层不依赖 pandas)
+    if close_panel is None:
+        return 0.5
+    above, has_ma = 0, 0
+    for code, df in close_panel.items():
+        if isinstance(df, dict) and "close" in df:
+            df = df["close"]
+        if df is None or df.empty:
+            continue
+        s = pd.to_numeric(df["close"], errors="coerce").dropna()
+        s = s.sort_index()
+        if len(s) < ma:
+            continue
+        ma_val = float(s.rolling(ma, min_periods=ma).mean().iloc[-1])
+        if not pd.isna(ma_val) and ma_val > 0:
+            has_ma += 1
+            if float(s.iloc[-1]) > ma_val:
+                above += 1
+    if not has_ma:
+        return 0.5
+    return above / has_ma
+
+
+def market_breadth(pool=None, close_panel=None, ma: int = 250) -> dict:
+    """市场宽度(破年线占比) → 弱市/强市/中性 信号(第三路开关, 任务②).
+
+    宽度=破 {ma} 日年线的股票占比. <50% → 弱市(价值顺风 value_favorable);
+    >60% → 强市(价值逆风 value_headwind); 其余 → 中性. pool 给定则加载该池(有限样本),
+    否则用跨板块均衡池(build_wide_pool ~287只)作宽度代理. 真实数据, 无前视(仅用≤当日K线)."""
+    if close_panel is None:
+        try:
+            from ..strategy.factor_selector import build_wide_pool
+            from ..strategy.factor_data import load_universe_frames
+            codes = pool if pool else build_wide_pool()
+            fp = load_universe_frames(codes, limit=ma + 60)
+            close_panel = dict(fp)
+        except Exception:
+            return {"breadth": 0.5, "tilt": "value_neutral", "reason": "市场宽度数据不可用"}
+    frac = _fraction_gt_ma(close_panel, ma)
+    if frac < 0.5:
+        return {"breadth": round(frac, 4), "tilt": "value_favorable",
+                "reason": f"破年线占比 {frac:.0%} < 50% → 弱市, 价值(低PB)防御窗口"}
+    if frac > 0.6:
+        return {"breadth": round(frac, 4), "tilt": "value_headwind",
+                "reason": f"破年线占比 {frac:.0%} > 60% → 强市, 价值(低PB)跑输成长"}
+    return {"breadth": round(frac, 4), "tilt": "value_neutral",
+            "reason": f"破年线占比 {frac:.0%} 在中性区间(50%~60%)"}
+
+
+def portfolio_value_alloc(index_tilt: Optional[dict] = None, breadth: Optional[dict] = None,
+                          value_spread: Optional[float] = None) -> dict:
+    """组合级价值 tilt 分配器(任务①): 融合三路信号 → 价值层权重 w_value + tilt 标签.
+
+    三路信号(每路指价值顺风/逆风/中性):
+      index_tilt   — value_tilt_state() 返回(value_favorable/headwind/neutral)
+      breadth      — market_breadth() 返回
+      value_spread — 价值价差自指信号: 1=价值顺风(便宜跑赢) 0=逆风 0.5=中性
+    融合(多数决, 平局取中性): 顺风 → PORTFOLIO_W_FAV(增配); 逆风 → PORTFOLIO_W_HEAD(减配);
+      中性/无数据 → PORTFOLIO_W_NEU. 返回 {tilt_label, w_value, signal_parts, evidence, source}."""
+    def _side(v: str) -> float:
+        if v == "value_favorable":
+            return 1.0
+        if v == "value_headwind":
+            return 0.0
+        return 0.5
+
+    it = index_tilt or {}
+    v1 = _side(it.get("value_tilt", "value_neutral"))
+    br = breadth or {}
+    v2 = _side(br.get("tilt", "value_neutral"))
+    v3 = _side("value_favorable" if value_spread == 1.0 else
+                ("value_headwind" if value_spread == 0.0 else "value_neutral"))
+
+    votes = [v1, v2, v3]
+    n_fav = sum(1 for v in votes if v >= 0.5 + 1e-9)
+    n_head = sum(1 for v in votes if v <= 0.5 - 1e-9)
+    if n_fav > n_head:
+        label, w = "value_favorable", PORTFOLIO_W_FAV
+    elif n_head > n_fav:
+        label, w = "value_headwind", PORTFOLIO_W_HEAD
+    else:
+        label, w = "value_neutral", PORTFOLIO_W_NEU
+    return {"tilt_label": label, "w_value": w, "signal_parts": {"index": v1, "breadth": v2, "value_spread": v3},
+            "evidence": {"index_favor": v1 == 1.0, "breadth_favor": v2 == 1.0, "value_spread_favor": v3 == 1.0},
+            "source": "portfolio_alloc"}
+
+
 class StubDecisionGate(BaseDecisionGate):
     """确定性：信号为 True → enter；否则 hold。用于无 key 验证。"""
 

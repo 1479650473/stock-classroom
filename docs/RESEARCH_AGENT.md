@@ -150,6 +150,38 @@ value_tilt=value_headwind(减配/决策门强制hold)。动量在 A 股是**反�
 **注意 RSI_14 engine bug(已修)**：`factor_research._factor_panel` 曾检查 `fid=="rsi14"` 而实际是 `"rsi_14"`(带下划线)
 → 静默退化到默认 momentum_20(RSI研究一直被误算成动量)。已改为 `fid in ("rsi14","rsi_14")`。
 
+### 价值作为组合层: 多因子分层 + 组合级tilt + 市场宽度第三路信号 (2026-08, verify_portfolio_framework)
+把价值从"单票硬裁决"进一步升级为**整个重平衡/选股组合里的一层**。同一份 2018-幸存池(2500只, holding=20, top=20%, GROSS, 窗口 2018→now)一次加载帧跑出三任务证据：
+
+| 策略 | NAV | 年化 | MaxDD |
+|------|-----|-----|-------|
+| A 纯价值(BP) | 2.586 | 11.83% | -28.9% |
+| B 纯动量反转(REV20) | 2.477 | 11.38% | -26.8% |
+| C 纯低波动(-VOL20) | **2.729**(最佳单因子) | 12.54% | -29.6% |
+| **D 多因子等权 z(BP)+z(REV20)-z(VOL20)** | **2.823** | 12.99% | -28.7% |
+| E 多因子+指数regime | 2.950 | 13.58% | -28.4% |
+| **F 多因子+价值价差(自指)** | **2.987** | 13.74% | -28.3% |
+| G 多因子+市场宽度 | 2.923 | 13.45% | -28.9% |
+| H 宽基等权买持 | 1.986 | 8.41% | -29.6% |
+
+**①多因子分层(任务③)成立**：D(2.823) > 最佳单因子 C(2.729) > 买持 H(1.986)。"分层而非独立"——把价值层叠在
+反转+低波动上，比各自单跑更能贡献。但注意 MaxDD 各策略都约 -28%(窗口含 2018/2022 两个真熊)，组合大幅**抬升收益**
+(+98%→+182~199%)而**回撤相近**(防御tilt并未戏剧性压低回撤)。
+
+**②组合级 value_tilt(任务①)成立**：景气期调节价值层权重(顺风增配1.5/中性1.0/逆风减配0.3 = 收缩增配/扩张减配)。
+三个 tilt 变体(E/F/G)全部 > 无 tilt(D 2.823)；**F(价值价差自指 2.987)最优**，其次 E(指数 2.950)、G(宽度 2.923)。
+与 `verify_value_regime2` 结论一致：**用"价值是否在工作"(价值价差)做开关最贴防御窗口**。
+
+**③市场宽度第三路信号(任务②)可用**：破 250 日年线占比 <50%→弱市→value_favorable, >60%→强市→value_headwind。
+与价值价差信号交叉验证(104期)：**同指价值 40 / 同指宽基 11 / 分歧 37**(51 同侧 vs 37 分歧) → 两信号在"价值顺风"一侧
+**大体互证**。作为独立 tilt 驱动(G=2.923)跑赢无tilt但略逊价值价差。真实宽度(2026-08, 跨板块池) = **28.4% → 弱市/价值顺风**，
+与指数 `value_tilt_state`("risk-on→headwind")**分歧**——正是第三路信号的独立价值(指数看趋势、宽度看广度)。
+
+**生产落地**：`agent/decision_gate.py` 新增 `market_breadth()`(破年线占比) + `portfolio_value_alloc()`(三路信号多数决融成
+{tilt_label, w_value}) + 权重常量 PORTFOLIO_W_FAV/NEU/HEAD。这是"单票卖不卖"(value_hard_rule)的**组合层类比**：价值是一层、
+权重随景气调节，而非某只股票的二值开关。确定性验证 `verify_portfolio_tilt_alloc.py`(全过)。**口径注意**：本组为 GROSS(未计重平衡成本)；
+每个 tilt 都增加了换手(缩增扩减会部分抵消)，NET 需要重算——诚实标注。
+
 ---
 
 ## 四、安全模型
@@ -200,6 +232,8 @@ C:/Python314/python.exe backend/strategy/verify_value_regime2.py    # 价值价�
 C:/Python314/python.exe backend/strategy/verify_factor_cycle_2018.py # 因子×景气周期矩阵(2018-2026) timeout 600; BEAR_UNIVERSE_MAX 限内存
 C:/Python314/python.exe backend/strategy/verify_value_cycle_2018.py # 真熊市跨周期(2018/2022) timeout 600; BEAR_UNIVERSE_MAX 限内存
 C:/Python314/python.exe backend/strategy/prefetch_kline_history.py  # 补抓 2018-2021 历史K线(解锁真熊市跨周期; 可 KLINE_BACKFILL_LIMIT 冒烟)
+C:/Python314/python.exe backend/strategy/verify_portfolio_framework.py  # 组合级价值tilt+市场宽度+多因子分层(2018幸存池2500) timeout 700
+C:/Python314/python.exe backend/agent/verify_portfolio_tilt_alloc.py    # 组合值tilt分配器/市场宽度 确定性验证
 ```
 
 ## 七、诚实约束 / 已知限制
@@ -216,6 +250,11 @@ C:/Python314/python.exe backend/strategy/prefetch_kline_history.py  # 补抓 201
 - **价值 regime 条件化开关(概念验证)**: 无前视宽基 regime 开关未跑赢纯价值(GROSS 开关+38% vs 纯价值+46%; NET 同序)——简单 SH指数规则过度转向宽基。**价值顺风信号不是指数趋势**，需更细(价值价差/市场宽度)。
 - **方法警告(value-vs-broad NET 随口径翻转)**: value 组合是否跑赢等权买持，结论随**窗口**(2023-now 等权→价值赢 vs 2024-now 买持→价值输)与**基准定义**(重平衡等权 vs open-to-open 买持)而变。报告时必须同时给**窗口 + 基准口径**。
 - **metrics 统一小数**口径(0.537=+53.7%)；`run_backtest` 与 gateway 本就同口径，改动仅为消除"存百分数→消费者再×100"的歧义。
+- **组合级框架(verify_portfolio_framework) 口径注意**：主口径为 **GROSS(未计重平衡成本)**；每个 tilt 都增加换手(收缩增配/扩张减配会部分抵消)，
+  NET 需重算(单因子净 vs 多因子净的差距会收窄)。池=**2018 幸存者∩有基本面**(幸存者偏差)；权重(1.5/1.0/0.3)手工拟定、
+  **未全局寻优**(不是"调参出最优"的过拟合，是语义化选择)；单窗口(2018→now)含 2018/2022 两真熊，结论跨窗口需再验。
+- **市场宽度 vs 指数 regime 会分歧**：宽度(破年线占比)看广度、指数 `value_tilt_state` 看趋势/回撤——二者在 2026-08 真实分歧
+  (宽度 28.4%→弱市/价值顺风 vs 指数 risk-on→价值逆风)。报告必须说明用的是哪路信号，不能混为一谈。
 - **LLM key** 存 `backend/configs/settings.json`(非 git 跟踪)。
 - 财报/估值注意披露时点；本实现用**东财每日估值**天然点时间(某日 PE/PB 即该日成交)，规避披露滞后。
 
