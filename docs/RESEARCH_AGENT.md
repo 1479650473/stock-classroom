@@ -32,6 +32,8 @@
         ↓
 ⑧ AI 决策门               decision_gate: {action,score,confidence,horizon,risk_level,reason}
                           —— 仅"上 paper 盘"那瞬调用(回测不调用保确定性); 非 enter 暂缓下单
+                          —— 现注入 **value_tilt_state()**(无前视宽基趋势/回撤→ value_favorable/headwind/neutral),
+                             决策门据此对价值在 growth 跑输期保守(实测 risk_on→headwind→hold)
         ↓
 ⑨ paper 盘               TradeEngine 模拟撮合(独立 AI 账户, 默认 paper-only, kill-switch 熔断)
 ```
@@ -174,6 +176,8 @@ C:/Python314/python.exe backend/agent/verify_llm_run.py     # 真 LLM 端到端(
 C:/Python314/python.exe backend/strategy/verify_value_selection.py  # 价值选股(LLM生成+截面回测+决策门) timeout 600
 C:/Python314/python.exe backend/strategy/verify_value_overlay.py    # 价值作为过滤/择时叠加层(纯价值/价值+趋势/纯动量/买持)
 C:/Python314/python.exe backend/strategy/verify_value_cycle.py      # 跨周期稳健性(2023-2026 逐年 IC/多空/组合/基准) timeout 600
+C:/Python314/python.exe backend/strategy/verify_value_regime.py     # 价值 regime 条件化开关(GROSS+NET) timeout 600
+C:/Python314/python.exe backend/strategy/prefetch_kline_history.py  # 补抓 2018-2021 历史K线(解锁真熊市跨周期; 可 KLINE_BACKFILL_LIMIT 冒烟)
 ```
 
 ## 七、诚实约束 / 已知限制
@@ -187,6 +191,9 @@ C:/Python314/python.exe backend/strategy/verify_value_cycle.py      # 跨周期�
 - **跨周期测试受限(数据现实)**：**2022 年末 K 线才有广度**(2018-2021 各年仅 ~1 只股有 K 线)。故无 2018/2022 深熊
   样本；"跨周期稳健性"仅覆盖 **2023→now**(`verify_value_cycle`, 价值 IC 跨年一致为正但弱, 选股组合跨年多数跑输)。
   要补真正的深熊跨周期，需先补抓 2018/2019-21 全市场历史 K 线(未来工作)。
+- **价值 regime 条件化开关(概念验证)**: 无前视宽基 regime 开关未跑赢纯价值(GROSS 开关+38% vs 纯价值+46%; NET 同序)——简单 SH指数规则过度转向宽基。**价值顺风信号不是指数趋势**，需更细(价值价差/市场宽度)。
+- **方法警告(value-vs-broad NET 随口径翻转)**: value 组合是否跑赢等权买持，结论随**窗口**(2023-now 等权→价值赢 vs 2024-now 买持→价值输)与**基准定义**(重平衡等权 vs open-to-open 买持)而变。报告时必须同时给**窗口 + 基准口径**。
+- **2018/2019-21 深熊跨周期(补抓后解锁)**: 该年月 K 线广度=1 只股 → 先被挡死；`prefetch_kline_history.py` 补抓 2018-2021 全市场历史 K 线后，`verify_value_cycle` 可扩到 2018-2022，做真正熊市的"IC 真实但弱、跨周期普适"最严格检验。
 - **metrics 统一小数**口径(0.537=+53.7%)；`run_backtest` 与 gateway 本就同口径，改动仅为消除"存百分数→消费者再×100"的歧义。
 - **LLM key** 存 `backend/configs/settings.json`(非 git 跟踪)。
 - 财报/估值注意披露时点；本实现用**东财每日估值**天然点时间(某日 PE/PB 即该日成交)，规避披露滞后。
