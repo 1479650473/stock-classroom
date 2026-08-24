@@ -48,14 +48,18 @@ def _get_write_conn():
     return _write_conn
 
 
-def _min_kline_date(code: str) -> str:
+def _min_kline_date(code: str) -> tuple:
+    """返回 (最早日期, 最晚日期, 是否已有早段2022数据[2022-01~06])。"""
     try:
         c = sqlite3.connect(get_kline_db_path(), timeout=30)
         r = c.execute("SELECT MIN(date), MAX(date) FROM kline_daily WHERE code=?", (code,)).fetchone()
+        has_early = c.execute(
+            "SELECT 1 FROM kline_daily WHERE code=? AND date>='20220101' AND date<='20220630' LIMIT 1",
+            (code,)).fetchone() is not None
         c.close()
-        return (r[0] or "99999999"), (r[1] or "")
+        return (r[0] or "99999999"), (r[1] or ""), bool(has_early)
     except Exception:
-        return "99999999", ""
+        return "99999999", "", False
 
 
 def _write_stock(rows) -> int:
@@ -87,9 +91,9 @@ def _write_stock(rows) -> int:
 
 def backfill_one(code: str) -> tuple:
     """单只: 若缺 2018 或 2022 则抓取+写入。返回 (code, 新增行数, 状态)。"""
-    lo, hi = _min_kline_date(code)
-    # 已同时有 2018 与 2022 → 跳过(幂等可恢复); 否则补抓 2016-2022
-    if lo <= MISSING_THRESHOLD and hi and hi >= "20220101":
+    lo, hi, has_early22 = _min_kline_date(code)
+    # 已同时有 2018 与 **早段2022(2022-01~06)** → 跳过(幂等可恢复); 否则补抓 2016-2022(填早段缺口)
+    if lo <= MISSING_THRESHOLD and has_early22:
         return code, 0, "skip"
     try:
         rows = ak_fetch_kline(code, days=DAYS)
@@ -105,6 +109,8 @@ def backfill_one(code: str) -> tuple:
 def main() -> int:
     limit_env = os.environ.get("KLINE_BACKFILL_LIMIT")
     pool = build_full_pool()
+    if os.environ.get("KLINE_BACKFILL_2018_ONLY") == "1":
+        pool = [c for c in pool if _min_kline_date(c)[0] <= MISSING_THRESHOLD]  # 只补有2018的(熊市池)
     if limit_env:
         pool = pool[: int(limit_env)]
     print(f"=== 补抓 2018-2021 历史 K 线(新浪全历史) ===", flush=True)
