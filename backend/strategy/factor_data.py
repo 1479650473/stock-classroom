@@ -12,8 +12,11 @@ from .data import load_klines
 
 
 def load_universe_frames(codes, start: str | None = None, end: str | None = None,
-                         limit: int = 1200) -> dict:
-    """codes: 列表; 返回 {code: DataFrame}。start/end: 'YYYYMMDD' 过滤。"""
+                         limit: int = 1200, with_fundamentals: bool = False) -> dict:
+    """codes: 列表; 返回 {code: DataFrame}。start/end: 'YYYYMMDD' 过滤。
+
+    with_fundamentals=True 时附加点时间 EP/BP/ROE 列(价值/质量, 含披露滞后, 无前视)。
+    """
     frames = {}
     for code in codes:
         kd, _ = load_klines(code, limit=limit, warn_short=False)
@@ -32,4 +35,10 @@ def load_universe_frames(codes, start: str | None = None, end: str | None = None
         df = df[[c for c in needed if c in df.columns]]
         if len(df) >= 60:
             frames[code] = df
+    if with_fundamentals and frames:
+        from ..fundamental import attach_fundamentals, ensure_fundamental
+        # 确保已缓存(缺的补抓; 失败则该项为 NaN 被忽略)
+        for code in list(frames):
+            ensure_fundamental(code)
+        frames = attach_fundamentals(frames)
     return frames

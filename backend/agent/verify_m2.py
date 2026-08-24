@@ -123,6 +123,22 @@ def main():
     chk("方向感知 entry(高→gt)", e1 == {"type": "gt", "args": ["MOMENTUM_20", 0.0]}, str(e1))
     chk("方向感知 entry(低→lt)", e2 == {"type": "lt", "args": ["REVERSAL_5", 0.0]}, str(e2))
 
+    # ── 2c) 价值/质量因子(基本面, 东财每日估值 EP/BP/ROE) ────────────────
+    print("\n── M2b3 价值/质量因子(EP/BP/ROE, 东财每日估值) ──")
+    from backend.strategy.factor_selector import study_value_factors, VALUE_CANDIDATES  # noqa: E402
+    from backend.fundamental import load_vals  # noqa: E402
+    value_codes = ["601398", "601288", "601988", "601939", "601328",
+                   "601658", "600036", "600000", "600016", "601166"]
+    cached = sum(1 for c in value_codes if load_vals(c))
+    chk("基本面已缓存(每日估值)", cached >= 5, f"{cached}/{len(value_codes)} 只")
+    vres = study_value_factors(value_codes, "2024-01-01", "2026-06-01")
+    for v in vres:
+        chk(f"价值/质量因子[{v['dsl_key']}] IC/ICIR",
+            isinstance(v.get("ic"), float) and len(v.get("research", {}).get("groupCurves", [])) == 5,
+            f"IC={v['ic']:.3f} ICIR={v['icir']:.2f} 覆盖={v['coverage']:.0%} 多空净={v['net_long_short']:+.2%}")
+    chk("价值因子为研究维度(非策略候选)", VALUE_CANDIDATES == ["EP", "BP", "ROE"]
+        and not set(VALUE_CANDIDATES) & set(CANDIDATES))
+
     # ── 3) AI 决策门 ─────────────────────────────────────────────────
     print("\n── AI 决策门(Stub/清洗) ──")
     gate = StubDecisionGate()

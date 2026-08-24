@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -311,6 +312,18 @@ class ResearchLoop:
                       f"方向={'高' if rec['direction']==1 else '低'} 覆盖={rec['coverage']:.0%}")
             else:
                 print("  [因子研究] 未选出显著因子 → 回退样例策略")
+            # 2c) 价值/质量研究维度(基本面 EP/BP/ROE, 点时间无前视) —— 扩展单日K线之外
+            try:
+                from ..strategy.factor_selector import study_value_factors
+                pool = self._universe_pool(universe)
+                vres = study_value_factors(pool, "2024-01-01", datetime.now().strftime("%Y%m%d"))
+                if vres:
+                    context["value_research"] = vres
+                    top = max(vres, key=lambda v: abs(v["icir"]))
+                    print(f"  [价值/质量研究] {len(vres)}因子 | 最强 {top['dsl_key']} "
+                          f"IC={top['ic']:.3f} ICIR={top['icir']:.2f} 覆盖={top['coverage']:.0%}")
+            except Exception as e:
+                print(f"  [价值/质量研究跳过] {type(e).__name__}: {str(e)[:50]}")
         result = LoopResult(macro=macro, universe=universe)
 
         # 3) 生成 → 回测 → 复盘修订 多轮
@@ -371,9 +384,18 @@ class ResearchLoop:
     def _recommend_factor(self, universe, macro) -> Optional[dict]:
         """在标的域所属板块的股票池上跑截面 IC/ICIR, 选出被研究支撑的因子。"""
         from ..strategy.factor_selector import recommend as _recommend
-        from datetime import datetime as _dt
+        codes = self._universe_pool(universe)
+        if not codes:
+            return None
+        end = datetime.now().strftime("%Y%m%d")
+        try:
+            return _recommend(codes, "2024-01-01", end)
+        except Exception:
+            return None
+
+    def _universe_pool(self, universe) -> list:
+        """标的域所属板块的活跃股池代码(最多25只) + 标的本身。"""
         code = universe.get("code", "")
-        # 板块: 优先 universe 自带; 否则由 code 反查
         sector = universe.get("sector")
         if not sector:
             d = svc.catalog_describe(code) or {}
@@ -388,14 +410,7 @@ class ResearchLoop:
                 codes = []
         if code and code not in codes:
             codes = [code] + codes[:24]
-        if not codes:
-            return None
-        end = _dt.now().strftime("%Y%m%d")
-        start = "2024-01-01"
-        try:
-            return _recommend(codes, start, end)
-        except Exception:
-            return None
+        return codes
 
     def _pick_universe(self, code, selector, macro) -> dict:
         if code:

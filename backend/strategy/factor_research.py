@@ -168,6 +168,9 @@ class FactorResearchEngine:
             return close.pct_change().rolling(self._suffix_number(fid, 20)).kurt()
         if fid == "rsi14":
             return self._rsi(close, 14)
+        # 价值/质量因子(基本面; 点时间无前视, 由 attach_fundamentals 附加)
+        if fid in ("ep", "bp", "roe"):
+            return self._panel(frames, fid.upper())
         return close.pct_change(20)  # 未知 → 退化为 momentum20
 
     @staticmethod

@@ -107,3 +107,36 @@ def entry_for_factor(rec: Optional[dict]) -> Optional[dict]:
     threshold = rec.get("threshold", 0.0)
     op = "gt" if direction == 1 else "lt"
     return {"type": op, "args": [key, threshold]}
+
+
+# ── 价值/质量因子(基本面) —— 研究诊断, 非 DSL 策略候选(需 with_fundamentals 附着) ──
+VALUE_CANDIDATES = ["EP", "BP", "ROE"]
+
+
+def study_value_factors(codes, start: str, end: str, engine: Optional[FactorResearchEngine] = None,
+                        min_universe: int = 5) -> list:
+    """研究价值/质量因子(EP/BP/ROE)的截面 IC/ICIR(点时间, 含披露滞后无前视)。
+
+    扩展单日 K 线之外的研究维度: 用基本面对每只股在每交易日给出 盈利收益率EP/账面市值比BP/ROE。
+    返回 [ {dsl_key, ic, icir, coverage, net_long_short, research}, ... ]。
+    """
+    frames = load_universe_frames(codes, start=start, end=end, with_fundamentals=True)
+    if len(frames) < min_universe:
+        return []
+    engine = engine or FactorResearchEngine()
+    out = []
+    for fid in VALUE_CANDIDATES:
+        try:
+            r = engine.run(frames=frames, factor_id=fid, start_date=start, end_date=end,
+                           groups=5, holding_period=5, compute_correlation=False)
+            out.append({
+                "dsl_key": fid,
+                "ic": float(r.get("rankIc", 0.0) or 0.0),
+                "icir": float(r.get("icir", 0.0) or 0.0),
+                "coverage": float(r.get("coverage", 0.0) or 0.0),
+                "net_long_short": float(r.get("netLongShortReturn", 0.0) or 0.0),
+                "research": r,
+            })
+        except Exception:
+            continue
+    return out
