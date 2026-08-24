@@ -12,6 +12,11 @@ from typing import List, Dict, Optional
 import pandas as pd
 import akshare as ak
 
+from codec import normalize_a_code, ak_symbol
+from resilience import (
+    retry_with_backoff, akshare_wait, sina_wait, get_request_headers, get_random_user_agent,
+)
+
 log = logging.getLogger("ak_source")
 
 
@@ -138,13 +143,16 @@ AKSHARE_API_DICT = {
 #  核心数据获取函数（AKShare 主 + 新浪 fallback）
 # ══════════════════════════════════════════════════════════════
 
+@retry_with_backoff(max_attempts=3, retry_on_empty=True, on_retry=lambda a, e: log.warning("ak_fetch_kline 第%s次重试: %s", a, str(e)[:60]))
 def ak_fetch_kline(code: str, days: int = 10):
-    """获取个股日K线（前复权），返回统一格式的 tuple 列表
-    Returns: [(code, date_yyyymmdd, open, high, low, close, volume, amount)]
+    """获取个股日K线（前复权）。code 经 normalize_a_code 规范化成裸 6 位存储码。
+    Returns: [(stored_code, date_yyyymmdd, open, high, low, close, volume, amount, hsl)]
     """
-    prefix = "sh" if code.startswith(("6", "9")) else "sz"
+    stored = normalize_a_code(code, "stock")       # 规范存储码(裸6位)
+    symbol = ak_symbol(code, "stock")              # akshare 用 sh/sz 前缀
+    akshare_wait()
     try:
-        df = ak.stock_zh_a_daily(symbol=prefix + code, adjust="qfq")
+        df = ak.stock_zh_a_daily(symbol=symbol, adjust="qfq")
         if df is None or df.empty:
             return []
         df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y%m%d")
@@ -154,7 +162,7 @@ def ak_fetch_kline(code: str, days: int = 10):
             amount_val = float(bar.get("amount", 0)) if "amount" in df.columns else round(float(bar["close"]) * float(bar["volume"]), 2)
             hsl = float(bar.get("turnover", 0)) * 100
             rows.append((
-                code,
+                stored,
                 bar["date"],
                 float(bar["open"]),
                 float(bar["high"]),
@@ -170,21 +178,17 @@ def ak_fetch_kline(code: str, days: int = 10):
 
 
 def _normalize_index_code(code: str) -> str:
-    """指数码必须带交易所前缀(namespace)，避免与同码股票在 kline_daily 撞库。
-    约定: 上证指数系(000xxx 等)前缀 sh，深证指数系(399xxx 等)前缀 sz。"""
-    if code[:2] in ("sh", "sz", "bj"):
-        return code
-    if code.startswith("399"):
-        return "sz" + code
-    return "sh" + code
+    """指数码规范化为 sh/sz 前缀(委托 codec)；保留旧名向后兼容。"""
+    return normalize_a_code(code, "index")
 
 
+@retry_with_backoff(max_attempts=3, retry_on_empty=True, on_retry=lambda a, e: log.warning("ak_fetch_index_kline 第%s次重试: %s", a, str(e)[:60]))
 def ak_fetch_index_kline(code: str, days: int = 500):
-    """获取指数日K线
-    Returns: [(code, date_yyyymmdd, open, high, low, close, volume, amount)]
-    code 会强制带上交易所前缀(sh/sz)，防止与同码股票撞库(详见 _normalize_index_code)。
+    """获取指数日K线。code 强制带 sh/sz 前缀入库，避免与同码股票撞库(详见 codec)。
+    Returns: [(stored_code, date_yyyymmdd, open, high, low, close, volume, amount)]
     """
-    stored = _normalize_index_code(code)
+    stored = normalize_a_code(code, "index")       # 规范存储码(sh000001/sz399001)
+    akshare_wait()
     try:
         df = ak.stock_zh_index_daily(symbol=stored)
         if df is None or df.empty:
@@ -208,17 +212,18 @@ def ak_fetch_index_kline(code: str, days: int = 500):
         return []
 
 
+@retry_with_backoff(max_attempts=2, retry_on_empty=True, on_retry=lambda a, e: log.warning("ak_get_all_stocks 第%s次重试: %s", a, str(e)[:60]))
 def ak_get_all_stocks():
-    """用新浪原生 API 获取全部 A 股列表"""
+    """用新浪原生 API 获取全部 A 股列表(带限流+UA轮换+每页容错)"""
     import http.client, json as _json
-    UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    sina_wait()
     codes = []
     for board in ("sh_a", "sz_a"):
         for page in range(1, 60):
             try:
                 conn = http.client.HTTPConnection("vip.stock.finance.sina.com.cn", timeout=15)
                 path = f"/quotes_service/api/json_v2.php/Market_Center.getHQNodeData?page={page}&num=100&sort=symbol&asc=1&node={board}"
-                conn.request("GET", path, headers={"User-Agent": UA})
+                conn.request("GET", path, headers=get_request_headers(referer="https://vip.stock.finance.sina.com.cn/"))
                 data = _json.loads(conn.getresponse().read().decode("gbk"))
                 conn.close()
                 if not data:
@@ -239,6 +244,7 @@ def ak_get_all_stocks():
 
 def ak_get_spot_all() -> List[Dict]:
     """沪深A股实时行情，失败则 fallback 到新浪"""
+    akshare_wait()
     try:
         df = ak.stock_zh_a_spot_em()
         if df is None or df.empty:
@@ -288,6 +294,7 @@ def _sina_spot_fallback() -> List[Dict]:
 
 def ak_get_index_spot() -> List[Dict]:
     """指数实时行情"""
+    akshare_wait()
     try:
         df = ak.stock_zh_index_spot_em()
         if df is None or df.empty:
