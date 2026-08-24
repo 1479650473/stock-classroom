@@ -73,6 +73,7 @@ def run_backtest(spec, klines):
     """spec: StrategySpec；klines: 按时间升序的 dict 列表(需含 date/open/high/low/close/volume)。"""
     from .factors import compute_factor_series
     from .metrics import compute_metrics, buy_hold_equity
+    from .protection import ProtectionEngine, ProtectionSpec, ProtectionState
     from backend.factor_engine.dsl import evaluate as _eval_dsl
 
     f = dict(FEES)
@@ -89,7 +90,7 @@ def run_backtest(spec, klines):
 
     initial = spec.params.get("initial_balance", 100000.0)
     cash = initial
-    pos = None            # {qty, cost, entry_price, entry_index, stop_price, take_price, name}
+    pos = None            # {qty, cost, entry_price, entry_index, prot, name}
     pending = None        # 'buy' | 'sell'
 
     code = spec.universe.get("code", "")
@@ -97,6 +98,8 @@ def run_backtest(spec, klines):
     pct = limit_pct(code, name)
     stop_loss_pct = spec.risk.stop_loss_pct
     take_profit_pct = spec.risk.take_profit_pct
+    prot_spec = ProtectionSpec.from_risk(spec.risk)
+    prot_engine = ProtectionEngine(intrabar_mode=spec.risk.intrabar_mode)
 
     def eval_cond(cond, vals):
         if cond is None:
@@ -143,12 +146,10 @@ def run_backtest(spec, klines):
         fee = _fee_buy(qty, open_price, f)
         cost = qty * open_price + fee
         cash -= cost
-        stop_price = open_price * (1 - stop_loss_pct) if stop_loss_pct else None
-        take_price = open_price * (1 + take_profit_pct) if take_profit_pct else None
         pos = {
             "qty": qty, "cost": cost, "entry_price": open_price,
-            "entry_index": idx, "stop_price": stop_price, "take_price": take_price,
-            "entry_date": bar["date"], "fees": fee,
+            "entry_index": idx, "entry_date": bar["date"], "fees": fee,
+            "prot": ProtectionState.open(open_price, idx, prot_spec, "long"),
         }
 
     def do_sell(bar, idx, price=None):
@@ -184,12 +185,19 @@ def run_backtest(spec, klines):
             do_sell(bar, i)
         pending = None
 
-        # 2) 持仓中：止损/止盈(跳过开仓当日 —— T+1)
+        # 2) 持仓中：保护引擎(止损/移动止损/止盈/时间止损，gap 感知成交价；跳过开仓当日 T+1)
         if pos is not None and i > pos["entry_index"]:
-            if pos["stop_price"] is not None and bar["low"] <= pos["stop_price"]:
-                do_sell(bar, i, price=pos["stop_price"])
-            elif pos["take_price"] is not None and bar["high"] >= pos["take_price"]:
-                do_sell(bar, i, price=pos["take_price"])
+            decision = prot_engine.evaluate_bar(pos["prot"], bar=bar, bar_index=i)
+            if decision is not None:
+                if decision.reason == "stop_loss":
+                    res.errors.append(f"{bar['date']} 止损 @{decision.price:.2f}")
+                elif decision.reason == "trailing_stop":
+                    res.errors.append(f"{bar['date']} 移动止损 @{decision.price:.2f}")
+                elif decision.reason == "take_profit":
+                    res.errors.append(f"{bar['date']} 止盈 @{decision.price:.2f}")
+                elif decision.reason == "time_limit":
+                    res.errors.append(f"{bar['date']} 时间止损 @{decision.price:.2f}")
+                do_sell(bar, i, price=decision.price)
 
         # 3) 收盘信号 → 决定次日动作
         vals = series[i] if i < len(series) else {}

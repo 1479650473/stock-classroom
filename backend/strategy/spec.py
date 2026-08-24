@@ -21,9 +21,14 @@ class PositionSizing:
 
 @dataclass
 class Risk:
-    stop_loss_pct: Optional[float] = 0.05      # 相对开仓价, None=不启用
-    take_profit_pct: Optional[float] = 0.12    # 相对开仓价, None=不启用
-    allow_short: bool = False                  # A股散户默认做多, T+1 禁日内
+    """风控/保护参数(相对开仓价)。支持移动止损、同bar Intrabar 裁决、时间止损(禁做空 T+1)。"""
+    stop_loss_pct: Optional[float] = 0.05      # 止损, 相对开仓价, None=不启用
+    take_profit_pct: Optional[float] = 0.12    # 止盈, 相对开仓价, None=不启用
+    trailing_stop_pct: Optional[float] = 0.0      # 移动止损幅度(0=禁用)
+    trailing_activation_pct: Optional[float] = 0.0  # 盈利达该比例才激活移动止损
+    intrabar_mode: str = "conservative"  # conservative|balanced|aggressive(同bar多保护裁决)
+    time_limit_bars: int = 0             # 持仓超过 N 根bar 强制退出(0=禁用)
+    allow_short: bool = False            # A股散户默认做多, T+1 禁日内
 
 
 @dataclass
@@ -53,6 +58,10 @@ class StrategySpec:
             "risk": {
                 "stop_loss_pct": self.risk.stop_loss_pct,
                 "take_profit_pct": self.risk.take_profit_pct,
+                "trailing_stop_pct": self.risk.trailing_stop_pct,
+                "trailing_activation_pct": self.risk.trailing_activation_pct,
+                "intrabar_mode": self.risk.intrabar_mode,
+                "time_limit_bars": self.risk.time_limit_bars,
                 "allow_short": self.risk.allow_short,
             },
             "params": self.params,
@@ -72,6 +81,8 @@ class StrategySpec:
             position_sizing=PositionSizing(ps.get("mode", "percent_of_equity"),
                                            float(ps.get("value", 0.95))),
             risk=Risk(rk.get("stop_loss_pct"), rk.get("take_profit_pct"),
+                      rk.get("trailing_stop_pct", 0.0), rk.get("trailing_activation_pct", 0.0),
+                      rk.get("intrabar_mode", "conservative"), rk.get("time_limit_bars", 0),
                       bool(rk.get("allow_short", False))),
             params=d.get("params", {}) or {},
             created_at=d.get("created_at", ""),
