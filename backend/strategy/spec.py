@@ -12,6 +12,69 @@
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+# 已知因子词表(与 strategy/factors.py 的 compute_factor_series 产出的 key 一致)。
+# LLM 只能引用这些键；未知键在 validate() 阶段拒绝(否则 DSL 会静默判 False 成死策略)。
+KNOWN_FACTORS = frozenset({
+    # 基础价量
+    "CLOSE", "OPEN", "HIGH", "LOW", "VOLUME", "AMOUNT",
+    # 均线
+    "MA5", "MA10", "MA20", "MA60",
+    # MACD
+    "MACD_DIF", "MACD_DEA", "MACD_HIST",
+    # 摆动
+    "RSI6", "RSI14",
+    # 布林
+    "BOLL_UPPER", "BOLL_MID", "BOLL_LOWER",
+    # 派生
+    "CHANGE_PCT", "VOL_RATIO_5", "PRICE_POS_20",
+    # 布尔
+    "MA5_GT_MA10", "MA10_GT_MA20", "CLOSE_GT_MA20",
+    # 金叉死叉
+    "MA5_CROSS_UP_MA10", "MA5_CROSS_DOWN_MA10", "MACD_CROSS_UP", "MACD_CROSS_DOWN",
+})
+
+
+def _unknown_factor_keys(cond: dict) -> set:
+    """遍历 DSL 条件树，返回引用了但不在词表内的因子键(字符串参数)。
+    数字字面量与嵌套条件节点(dict)跳过。"""
+    found = set()
+    bad = set()
+    stack = [cond]
+    while stack:
+        node = stack.pop()
+        if not isinstance(node, dict):
+            continue
+        for key, val in node.items():
+            if key in ("type", "and", "or", "not", "gt", "lt", "eq", "between"):
+                continue
+            if isinstance(val, dict):
+                stack.append(val)
+            elif isinstance(val, list):
+                for item in val:
+                    if isinstance(item, dict):
+                        stack.append(item)
+                    elif isinstance(item, str) and item.strip() and not _is_number(item):
+                        item = item.strip()
+                        if item in KNOWN_FACTORS:
+                            found.add(item)
+                        else:
+                            bad.add(item)
+            elif isinstance(val, str) and val.strip() and not _is_number(val):
+                val = val.strip()
+                if val in KNOWN_FACTORS:
+                    found.add(val)
+                else:
+                    bad.add(val)
+    return bad
+
+
+def _is_number(s: str) -> bool:
+    try:
+        float(s)
+        return True
+    except (ValueError, TypeError):
+        return False
+
 
 @dataclass
 class PositionSizing:
@@ -98,6 +161,14 @@ class StrategySpec:
         if self.risk.allow_short:
             # 当前回测器仅支持做多(T+1 禁日内回转)；契约层面先拦截
             raise ValueError("A股 T+1 场景暂不支持做空")
+        # 安全红线: entry/exit 引用的因子必须在已知词表内，防 LLM 写出"未知因子/静默死策略"
+        for label, cond in (("entry", self.entry), ("exit", self.exit)):
+            if cond is None:
+                continue
+            bad = _unknown_factor_keys(cond)
+            if bad:
+                raise ValueError(f"策略契约 {label} 引用了未知因子: {', '.join(sorted(bad))}。"
+                                 f"可用因子见 strategy/factors.py")
 
     def resolve_universe(self) -> dict:
         """把 universe(单码 或 目录selector) 解析成具体代码列表。
