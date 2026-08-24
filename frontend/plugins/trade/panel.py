@@ -629,6 +629,7 @@ class TradePanel(QWidget):
         self._price_worker = None
         self.on_open_kline = None
         self.on_status = None
+        self.on_account_changed = None
 
         self._timer = QTimer(self)
         self._timer.setInterval(8000)
@@ -649,6 +650,27 @@ class TradePanel(QWidget):
     def set_kline_db(self, path):
         self._kline_db = path
         self._search.set_db(path)
+
+    def current_account_id(self):
+        return self._cur_account
+
+    def reload_accounts(self, select_id=None):
+        """Reload the account combo (e.g. after the companion created/deleted an
+        account). Optionally select `select_id`, else restore the current
+        selection, then re-emit + refresh so the right-side companion stays in
+        sync."""
+        combo = self._account_bar._combo
+        self._account_bar._load()
+        target = select_id if select_id is not None else self._cur_account
+        found = False
+        for i in range(combo.count()):
+            if combo.itemData(i) == target:
+                combo.setCurrentIndex(i)
+                found = True
+                break
+        if not found and combo.count() > 0:
+            combo.setCurrentIndex(0)
+        self.refresh()
 
     def _status(self, msg):
         if self.on_status:
@@ -718,6 +740,8 @@ class TradePanel(QWidget):
         self._cur_account = aid
         self._poll_prices()
         self._timer.start()
+        if self.on_account_changed:
+            self.on_account_changed(aid)
 
     # ── Stock selection ──
 

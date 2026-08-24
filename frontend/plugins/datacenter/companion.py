@@ -3,10 +3,11 @@
 
 import sqlite3
 from frontend.platform.theme import dp, dps
+from .panorama import DataPanorama
 from datetime import datetime
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QFrame, QTableWidget,
-    QTableWidgetItem, QHeaderView, QAbstractItemView,
+    QTableWidgetItem, QHeaderView, QAbstractItemView, QScrollArea,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QColor
@@ -56,18 +57,45 @@ class DCCompanion(QWidget):
         super().__init__(parent)
         self.setStyleSheet(f"background:{C_BG}")
         self._range_worker = None
+        self._panorama = None
         self._build_ui()
 
     def _build_ui(self):
-        lo = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet(f"QScrollArea{{background:{C_BG};border:none}}")
+        outer.addWidget(scroll)
+
+        container = QWidget()
+        container.setStyleSheet(f"background:{C_BG}")
+        lo = QVBoxLayout(container)
         lo.setContentsMargins(12, 12, 12, 12)
         lo.setSpacing(10)
 
-        title = QLabel("\U0001f4cb \u9009\u4e2d\u8868\u8be6\u60c5")
+        # ── Data panorama (database coverage across time) ──
+        pano_title = QLabel("\U0001f4ca 数据全景")
+        pano_title.setStyleSheet(f"color:{C_ACCENT};font-size:21px;font-weight:600;background:transparent")
+        lo.addWidget(pano_title)
+
+        self._panorama = DataPanorama()
+        self._panorama.setMinimumHeight(220)
+        lo.addWidget(self._panorama)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet(f"QFrame{{border:none;border-top:1px solid {C_BORDER}}}")
+        sep.setFixedHeight(2)
+        lo.addWidget(sep)
+
+        # ── Selected table details ──
+        title = QLabel("\U0001f4cb 选中表详情")
         title.setStyleSheet(f"color:{C_ACCENT};font-size:21px;font-weight:600;background:transparent")
         lo.addWidget(title)
 
-        self._info_label = QLabel("\u8bf7\u5728\u5de6\u4fa7\u9009\u62e9\u4e00\u4e2a\u6570\u636e\u8868")
+        self._info_label = QLabel("请在左侧选择一个数据表")
         self._info_label.setStyleSheet(f"color:{C_SUBTEXT};font-size:20px;padding:6px 0;background:transparent")
         self._info_label.setWordWrap(True)
         lo.addWidget(self._info_label)
@@ -75,7 +103,7 @@ class DCCompanion(QWidget):
         # ── Column table ──
         self._col_table = QTableWidget()
         self._col_table.setColumnCount(2)
-        self._col_table.setHorizontalHeaderLabels(["\u5217\u540d", "\u7c7b\u578b"])
+        self._col_table.setHorizontalHeaderLabels(["列名", "类型"])
         self._col_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._col_table.verticalHeader().setVisible(False)
         self._col_table.setShowGrid(False)
@@ -87,7 +115,7 @@ class DCCompanion(QWidget):
         lo.addWidget(self._col_table)
 
         # ── Range ──
-        range_section = QLabel("\U0001f4c5 \u6570\u636e\u8303\u56f4")
+        range_section = QLabel("\U0001f4c5 数据范围")
         range_section.setStyleSheet(f"color:{C_ACCENT};font-size:20px;font-weight:600;background:transparent")
         lo.addWidget(range_section)
 
@@ -97,6 +125,12 @@ class DCCompanion(QWidget):
         lo.addWidget(self._range_label)
 
         lo.addStretch()
+        scroll.setWidget(container)
+
+    def set_databases(self, kline_db, cache_db):
+        """Point the data-panorama at the kline + cache databases."""
+        if self._panorama is not None:
+            self._panorama.load(kline_db, cache_db)
 
     def show_table(self, t):
         name = t.get("name", "?")

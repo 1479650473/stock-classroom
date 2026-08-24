@@ -27,6 +27,7 @@ class DataCenterPlugin(IPlugin):
         if self._companion is None:
             from .companion import DCCompanion
             self._companion = DCCompanion()
+            self._companion.set_databases(self._services.db_path, self._services.cache_path)
         return self._companion
 
     def _on_table_selected(self, t):
@@ -40,6 +41,11 @@ class DataCenterPlugin(IPlugin):
         if self._widget and hasattr(self._widget, 'load'):
             try:
                 self._widget.load()
+            except Exception:
+                pass
+        if self._companion is not None:
+            try:
+                self._companion.set_databases(self._services.db_path, self._services.cache_path)
             except Exception:
                 pass
 

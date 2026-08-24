@@ -226,6 +226,7 @@ class TradeCompanion(QWidget):
         self.setStyleSheet("background:%s" % C_BG)
         self._engine = TradeEngine()
         self._account_id = None
+        self.on_account_changed = None
         self._build_ui()
 
     def _build_ui(self):
@@ -355,10 +356,16 @@ class TradeCompanion(QWidget):
     def set_account(self, account_id):
         self._account_id = account_id
         if not account_id:
-            self._info_label.setText("\u8bf7\u5728\u5de6\u4fa7\u9009\u62e9\u8d26\u6237")
+            self._info_label.setText("请在左侧选择账户")
             self._curve.set_data([])
             return
         self._refresh()
+
+    def _notify(self):
+        """Tell the plugin the (selected) account changed so it can keep the
+        left panel's account bar in sync."""
+        if self.on_account_changed:
+            self.on_account_changed(self._account_id)
 
     def _refresh(self):
         if not self._account_id:
@@ -406,6 +413,7 @@ class TradeCompanion(QWidget):
                 conn.commit()
                 conn.close()
                 self._refresh()
+                self._notify()
             except Exception:
                 pass
 
@@ -423,8 +431,9 @@ class TradeCompanion(QWidget):
         if ret == QMessageBox.Yes:
             self._engine.delete_account(self._account_id)
             self._account_id = None
-            self._info_label.setText("\u8d26\u6237\u5df2\u5220\u9664")
+            self._info_label.setText("账户已删除")
             self._curve.set_data([])
+            self._notify()
 
     def _on_reset(self):
         if not self._account_id:
@@ -437,6 +446,7 @@ class TradeCompanion(QWidget):
         if ret == QMessageBox.Yes:
             self._engine.reset_account(self._account_id)
             self._refresh()
+            self._notify()
 
     def _on_create(self):
         name = self._new_name.text().strip()
@@ -447,3 +457,4 @@ class TradeCompanion(QWidget):
         self._account_id = aid
         self._new_name.clear()
         self._refresh()
+        self._notify()
