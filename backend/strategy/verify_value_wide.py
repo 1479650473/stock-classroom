@@ -43,7 +43,8 @@ def main():
     print(f"板块数 {secs} | 已缓存基本面 {cached}/{len(pool)}")
     chk("池规模 ≥ 200", len(pool) >= 200, f"{len(pool)} 只")
     if FULL:
-        print(f"      [全市场抓取中] 基本面已缓存 {cached}/{len(pool)} — 抓取完成后再验全量")
+        msg = "已建库" if cached / max(len(pool), 1) >= 0.95 else "抓取中"
+        print(f"      [全市场{msg}] 基本面已缓存 {cached}/{len(pool)}")
     else:
         chk("基本面覆盖 ≥ 60%", cached / max(len(pool), 1) >= 0.6, f"{cached}/{len(pool)}")
     # 研究只用已缓存(避免触发抓取)

@@ -33,6 +33,7 @@ def load_universe_frames(codes, start: str | None = None, end: str | None = None
         df["date"] = pd.to_datetime(df["date"], format="%Y%m%d", errors="coerce")
         df = df.dropna(subset=["date"])
         df = df.set_index("date").sort_index()
+        df = df[~df.index.duplicated(keep="last")]  # 去重日期(数据异常/停牌重列), 防 panel 合并撞重复标签
         if start:
             df = df.loc[df.index >= pd.Timestamp(start)]
         if end:
