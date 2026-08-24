@@ -21,6 +21,7 @@
 | 🔍 **多因子选股** | 43因子 DSL 条件引擎，Top 20 推荐 |
 | 💰 **模拟交易** | **完整交易系统 (v4.2)**: 账户/下单/撮合/持仓/T+1风控/费率 |
 | 🤖 **AI 自主交易** | **6工具 function calling (v4.2)**: 查行情→分析→下单全自动 |
+| 🧠 **量化研究代理** | **backend/agent 研究闭环**: LLM 生成→回测→复盘→择优→AI决策门→paper，双维度因子研究(技术+价值/质量) |
 | 📈 **K线图表** | QPainter 原生 60fps 渲染，MACD/RSI/BOLL 指标 |
 | 🎯 **筹码分布** | JS 引擎本地计算，获利比例/平均成本/集中度 |
 | 📦 **持仓管理** | 模拟持仓面板，摘要卡片 + 明细表格 |
@@ -84,6 +85,8 @@ package\build_desktop.bat
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构设计、插件系统、目录结构 |
 | [TECH_MANUAL.md](docs/TECH_MANUAL.md) | 技术手册、交易引擎、AI 工具、数据库 |
 | [SESSION_PROMPT.md](docs/SESSION_PROMPT.md) | AI 对话提示词、API 路由 |
+| [RESEARCH_AGENT.md](docs/RESEARCH_AGENT.md) | backend/agent 量化研究代理层：闭环架构/因子库/安全/验证 |
+| [TASK_LOG.md](docs/TASK_LOG.md) | 量化研究里程碑：提交序列 + 验证状态 |
 
 ## 🛠 技术栈
 

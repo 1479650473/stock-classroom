@@ -60,6 +60,21 @@ POST `/strategies`，body 即 `StrategySpec` JSON(v 见 `backend/strategy/spec.p
 C:/Python314/python.exe backend/agent/smoke_test.py   # 36 项端到端自检，自清理
 ```
 
+## 上层研究闭环 (M1/M2)
+
+网关之上是 **LLM 研究闭环**：`research_loop.py`(Runner) 完成
+`宏观 → 选板块 → 因子研究(IC/ICIR) → 生成(声明式契约) → 回测 → LLM复盘 → 多轮择优 → AI决策门 → paper`。
+含双维度因子研究：技术因子(动/反转/波动/RSI 多窗口) + 价值/质量因子(EP/BP/ROE，东财每日估值，点时间)。
+因子选择器 `factor_selector.recommend()` 按 ICIR 阈值**自动选参**。
+完整说明见 **`docs/RESEARCH_AGENT.md`**；任务进度见 **`docs/TASK_LOG.md`**。
+
+研究闭环验证：
+```bash
+C:/Python314/python.exe backend/agent/verify_research_loop.py  # 11/11
+C:/Python314/python.exe backend/agent/verify_m2.py             # 34/34
+C:/Python314/python.exe backend/agent/verify_llm_run.py        # 真LLM端到端(需 key)
+```
+
 ## 安全红线
 
 - 不要给 agent `C`(凭据)级能力——本应用无凭据流转，未启用。
