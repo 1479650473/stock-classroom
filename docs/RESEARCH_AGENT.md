@@ -131,6 +131,25 @@
 **相关口径**：`factor_selector` 把价值研究结果(IC/ICIR/confidence) 交给 LLM；但**生成端必须知道这只说明"信号层",
 组合层可能跑输**——决策门(第⑧步)是独立审校, `verify_value_selection` 里决策门返回 hold 正是对"价值短期跑输"的保护。
 
+### 因子 × 景气周期矩阵 — 价值作为多因子框架的「防御层」(非独立信号)
+`verify_factor_cycle_2018.py` 在 2018(真熊)/2019-21(修复)/2022(真熊)/2023-26(成长) 上跑截面(2500池, 月度20)：
+
+| 因子 | 2018(熊) | 2019-21(修复) | 2022(熊) | 2023-26(成长) | 角色 |
+|------|------|------|------|------|------|
+| **BP 价值** | ICIR **+0.88** | +0.52 | **+1.60** | +1.00 | **唯一四期皆为正** → 稳健核心/防御层 |
+| MOMENTUM_20 | ICIR −3.00 | −1.91 | −2.05 | −1.00 | **A股动量是反转**(买跌) → 非成长alpha |
+| RSI_14 | (修复前≈动量; 已修engine) | | | | 情绪/超买超卖 |
+| VOLATILITY_20 | −1.66 | −1.51 | −3.08 | −1.75 | 低波动异象 |
+
+**定位**：价值(BP)是**唯一跨所有景气期 IC 均为正**的截面因子——它是**稳健的核心/防御层**；其多头低PB组合只在
+**熊市/收缩期跑赢等权买持**(2018/2022 跑赢)，在成长/修复期**跑输**(不capture成长beta)。故价值**不能作为独立满仓
+信号**，而应作为**按景气周期调仓的权重/防御倾斜**：收缩期value_tilt=value_favorable(增配/放行)，扩张期
+value_tilt=value_headwind(减配/决策门强制hold)。动量在 A 股是**反转**信号(与欧美不同)——所以"成长alpha"在
+本样本里来自宽基beta而非截面动量。落地：`value_hard_rule`(决策门硬裁决) + `verify_value_regime2`(价值价差自指开关)。
+
+**注意 RSI_14 engine bug(已修)**：`factor_research._factor_panel` 曾检查 `fid=="rsi14"` 而实际是 `"rsi_14"`(带下划线)
+→ 静默退化到默认 momentum_20(RSI研究一直被误算成动量)。已改为 `fid in ("rsi14","rsi_14")`。
+
 ---
 
 ## 四、安全模型
@@ -177,6 +196,8 @@ C:/Python314/python.exe backend/strategy/verify_value_selection.py  # 价值选�
 C:/Python314/python.exe backend/strategy/verify_value_overlay.py    # 价值作为过滤/择时叠加层(纯价值/价值+趋势/纯动量/买持)
 C:/Python314/python.exe backend/strategy/verify_value_cycle.py      # 跨周期稳健性(2023-2026 逐年 IC/多空/组合/基准) timeout 600
 C:/Python314/python.exe backend/strategy/verify_value_regime.py     # 价值 regime 条件化开关(GROSS+NET) timeout 600
+C:/Python314/python.exe backend/strategy/verify_value_regime2.py    # 价值价差自指开关(升级) timeout 600
+C:/Python314/python.exe backend/strategy/verify_factor_cycle_2018.py # 因子×景气周期矩阵(2018-2026) timeout 600; BEAR_UNIVERSE_MAX 限内存
 C:/Python314/python.exe backend/strategy/verify_value_cycle_2018.py # 真熊市跨周期(2018/2022) timeout 600; BEAR_UNIVERSE_MAX 限内存
 C:/Python314/python.exe backend/strategy/prefetch_kline_history.py  # 补抓 2018-2021 历史K线(解锁真熊市跨周期; 可 KLINE_BACKFILL_LIMIT 冒烟)
 ```

@@ -91,6 +91,46 @@ class BaseDecisionGate:
         raise NotImplementedError
 
 
+_VALUE_FX = {"EP", "BP", "ROE"}
+
+
+def _tree_uses_value(node) -> bool:
+    """递归判断 DSL 条件树是否引用价值因子(EP/BP/ROE)。"""
+    if isinstance(node, dict):
+        args = node.get("args") or []
+        if isinstance(args, list):
+            for a in args:
+                if isinstance(a, str) and a in _VALUE_FX:
+                    return True
+        return any(_tree_uses_value(a) for a in args)
+    if isinstance(node, list):
+        return any(_tree_uses_value(x) for x in node)
+    return False
+
+
+def _strategy_uses_value(contract) -> bool:
+    """契约的 entry/exit 是否引用价值因子。"""
+    if not isinstance(contract, dict):
+        return False
+    return bool(_tree_uses_value(contract.get("entry")) or
+                _tree_uses_value(contract.get("exit")))
+
+
+def value_hard_rule(context: dict) -> Optional[Decision]:
+    """价值 tilt 硬裁决(防御/轮动语义): 策略引用价值因子 且 价值处于 headwind → 强制 hold。
+
+    value_headwind = 成长领涨市, 价值(低PB)短期跑输 → 不进场价值多仓(强制暂缓)。
+    value_favorable/neutral → 不强制(放行, 交回各 gate 决定)。
+    """
+    vt = context.get("value_tilt") or {}
+    if vt.get("value_tilt") == "value_headwind" and _strategy_uses_value(context.get("strategy")):
+        return Decision(action="hold", score=0.0, confidence=0.9, horizon="",
+                        risk_level="medium",
+                        reason=f"value_headwind 硬裁决: 价值(低PB)短期跑输成长({vt.get('reason','')}) → 强制暂缓",
+                        source="value_rule")
+    return None
+
+
 def value_tilt_state(load_index=None) -> dict:
     """当前价值 factor tilt 所处的市场状态(用于决策门上下文)。
 
@@ -140,6 +180,9 @@ class StubDecisionGate(BaseDecisionGate):
     name = "stub"
 
     def decide(self, context: dict) -> Decision:
+        hard = value_hard_rule(context)
+        if hard is not None:
+            return hard
         if context.get("signal"):
             return Decision(action="enter", score=0.6, confidence=0.6, horizon="1w",
                             risk_level="medium", reason="信号触发(确定性折中)", source="fallback")
@@ -190,6 +233,9 @@ class LLMDecisionGate(BaseDecisionGate):
         )
 
     def decide(self, context: dict) -> Decision:
+        hard = value_hard_rule(context)
+        if hard is not None:
+            return hard
         prompt = self._prompt(context)
         key = _ctx_hash(prompt)
         cached = self._cache.get(key)

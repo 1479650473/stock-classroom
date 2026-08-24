@@ -166,7 +166,7 @@ class FactorResearchEngine:
             return close.pct_change().rolling(self._suffix_number(fid, 20)).skew()
         if fid.startswith("kurt"):
             return close.pct_change().rolling(self._suffix_number(fid, 20)).kurt()
-        if fid == "rsi14":
+        if fid in ("rsi14", "rsi_14"):
             return self._rsi(close, 14)
         # 价值/质量因子(基本面; 点时间无前视, 由 attach_fundamentals 附加)
         if fid in ("ep", "bp", "roe"):
