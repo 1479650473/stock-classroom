@@ -15,9 +15,9 @@ from frontend.platform.local_worker import LocalWorker
 
 
 INDEX_MAP = {
-    "000001": "上证指数", "399001": "深证成指",
-    "399006": "创业板指", "000688": "科创50",
-    "000300": "沪深300",
+    "sh000001": "上证指数", "sz399001": "深证成指",
+    "sz399006": "创业板指", "sh000688": "科创50",
+    "sh000300": "沪深300",
 }
 
 class MarketPanel(QWidget):

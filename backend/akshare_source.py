@@ -169,12 +169,24 @@ def ak_fetch_kline(code: str, days: int = 10):
         return []
 
 
+def _normalize_index_code(code: str) -> str:
+    """指数码必须带交易所前缀(namespace)，避免与同码股票在 kline_daily 撞库。
+    约定: 上证指数系(000xxx 等)前缀 sh，深证指数系(399xxx 等)前缀 sz。"""
+    if code[:2] in ("sh", "sz", "bj"):
+        return code
+    if code.startswith("399"):
+        return "sz" + code
+    return "sh" + code
+
+
 def ak_fetch_index_kline(code: str, days: int = 500):
     """获取指数日K线
     Returns: [(code, date_yyyymmdd, open, high, low, close, volume, amount)]
+    code 会强制带上交易所前缀(sh/sz)，防止与同码股票撞库(详见 _normalize_index_code)。
     """
+    stored = _normalize_index_code(code)
     try:
-        df = ak.stock_zh_index_daily(symbol=code)
+        df = ak.stock_zh_index_daily(symbol=stored)
         if df is None or df.empty:
             return []
         df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y%m%d")
@@ -182,7 +194,7 @@ def ak_fetch_index_kline(code: str, days: int = 500):
         rows = []
         for _, bar in df.iterrows():
             rows.append((
-                code,
+                stored,
                 bar["date"],
                 float(bar["open"]),
                 float(bar["high"]),
