@@ -29,7 +29,7 @@
 | — | 价值选股(全市场实证标定+LLM生成) | `b3b9432` | factor_selector 标定 + LLM 生成低PB选股 + 决策门 | verify_value_selection |
 | — | 价值叠加层+跨周期稳健性+三分离方法论 | `9215315` | 价值作过滤/择时叠加层(证伪) + 2023-2026 逐年稳健性 + RESEARCH_AGENT 三分离 | overlay/cycle |
 | — | 价值 regime 开关+价值tilt接决策门+补抓历史K线 | `8529196` | value_tilt_state + 决策门tilt + verify_value_regime + prefetch_kline_history | regime/gate |
-| — | 价值 regime 开关升级+value_tilt硬裁决+因子×景气周期框架 | `pending` | 价值价差自指开关 + value_hard_rule + factor_cycle矩阵 | regime2/gate/facycle |
+| — | 价值 regime 开关升级+value_tilt硬裁决+因子×景气周期框架 | `d579ea3` | 价值价差自指开关 + value_hard_rule + factor_cycle矩阵 | regime2/gate/facycle |
 
 ## 关键验证汇总(2026-08-24，工作区干净)
 
