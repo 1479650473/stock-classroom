@@ -49,3 +49,8 @@ Thumbs.db
 # SQLite WAL files
 *.db-shm
 *.db-wal
+
+# flow cockpit 运行时产物
+_chain_result.json
+_run_chain.py
+_flow_server.log

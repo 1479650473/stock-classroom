@@ -80,20 +80,34 @@ def _run_stage(stage):
 def build_status():
     import copy
     st = _st(None)
-    # 各阶段状态合并
+    # 真实主干链结果(_chain_result.json)
+    chain = {}
+    try:
+        chain = json.load(open(os.path.join(ROOT, '_chain_result.json'), encoding='utf-8'))
+    except Exception:
+        chain = {}
+    r = chain.get('research') or {}
+    b = chain.get('backtest') or {}
+    p = (chain.get('paper') or {}).get('paper') or {}
+    ps = (chain.get('paper') or {}).get('_summary') or {}
     stages = []
-    def mk(sid, title, key, desc, extra=None):
+    def mk(sid, title, key, desc, **extra):
         l = LAST.get(sid)
-        status = 'running' if RUNNING.get(sid) else (l['status'] if l else 'idle')
+        status = 'running' if RUNNING.get(sid) else (l['status'] if l else ('ok' if chain else 'idle'))
         stages.append({'id': sid, 'title': title, 'desc': desc, 'status': status,
-                       'last': l, **(extra or {})})
-    base = st['kline']['max']
-    mk('data', '数据管道', 'data', 'K线/基本面日更', {'kline_max': base, 'active': st['kline']['active_stocks'], 'last_update': st['kline']['last_update']})
-    mk('research', '因子研究', 'research', '价值/动量/波动 IC', {'bp_icir': '1.54', 'note': 'BP 全市场 ICIR'})
-    mk('backtest', '策略回测', 'backtest', '组合级多因子分层', {'net': '2.520', 'note': '多因子 NET(2500池)'})
-    mk('paper', '纸面盘', 'paper', '保持分层+慢调仓', {'balance': st['paper']['accounts'][-1]['balance'] if st['paper']['accounts'] else None, 'trades': st['paper']['trades']})
-    mk('compare', '收益对比', 'compare', 'paper vs 买持', {'paper_vs': '+39.84% vs +40.70%', 'note': 'as_of 2026-07-03'})
-    return {'data': st, 'stages': stages}
+                       'last': l, **extra})
+    bp = r.get('BP') or {}
+    mk('data', '数据管道', 'data', 'K线/基本面日更', kline_max=st['kline']['max'], active=st['kline']['active_stocks'])
+    mk('research', '因子研究', 'research', '价值/动量/波动 IC',
+       bp_ic=bp.get('ic'), bp_icir=bp.get('icir'), as_of=r.get('as_of'), pool=r.get('pool_size'))
+    g = b.get('groups') or []
+    top = g[0].get('net') if g and isinstance(g[0], dict) else None
+    mk('backtest', '策略回测', 'backtest', 'BP 单因子截面', ic=b.get('ic'), icir=b.get('icir'), top_net=top)
+    mk('paper', '纸面盘', 'paper', '保持分层+慢调仓',
+       final_nav=ps.get('final_nav'), rebalances=ps.get('rebalances'), turnover=ps.get('turnover_avg'))
+    mk('compare', '收益对比', 'compare', 'paper vs 买持',
+       paper=ps.get('final_nav'), buyhold=ps.get('buyhold_final'), as_of=(chain.get('paper') or {}).get('as_of'))
+    return {'meta': {'sec': chain.get('_sec'), 'updated': st['update_time']}, 'data': st, 'stages': stages}
 
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass

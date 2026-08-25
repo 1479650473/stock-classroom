@@ -11,6 +11,7 @@
     "datapipeline",
     "datacenter",
     "trainer",
+    "flow",
     "kline"
   ],
   "default_left": "market",

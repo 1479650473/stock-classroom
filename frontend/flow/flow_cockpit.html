@@ -76,12 +76,14 @@
 </div>
 
 <script>
+const pctr = (v)=>(v==null?'—':(v>=0?'+':'')+v.toFixed(1)+'%');
+const pctnav = (nav)=>(nav==null?'—':((nav/1e6-1)*100>=0?'+':'')+((nav/1e6-1)*100).toFixed(1)+'%');
 const STAGE_DEF = [
-  {id:'data', title:'数据管道', desc:'K线 / 基本面 / 股票列表日更', metric:(d)=>`最新 <b>${d.kline?.max||'—'}</b> <span class="small">活跃 ${d.kline?.active_stocks||0} 只 · 上期 ${d.kline?.last_update?.[0]||'—'}</span>`},
-  {id:'research', title:'因子研究', desc:'价值 / 动量 / 波动 IC', metric:(d)=>`BP ICIR <b>1.54</b> <span class="small">全市场价值最强 · EP/R=0.83</span>`},
-  {id:'backtest', title:'策略回测', desc:'组合级多因子分层', metric:(d)=>`多因子 NET <b>2.520</b> <span class="small">>最佳单2.389 > 买持1.985</span>`},
-  {id:'paper', title:'纸面盘', desc:'保持分层 + 慢调仓', metric:(d)=>`净值 <b>${fmt(d.paper?.accounts?.[d.paper.accounts.length-1]?.balance)}</b> <span class="small">${d.paper?.trades||0} 笔成交 · ${d.paper?.positions||0} 持仓</span>`},
-  {id:'compare', title:'收益对比', desc:'纸面盘 vs 买持', metric:(d)=>`<b>+39.84%</b> vs +40.70% <span class="small">as_of 2026-07-03 · 换手47.4%</span>`},
+  {id:'data', title:'数据管道', desc:'K线 / 基本面 / 股票列表日更', metric:(m)=>`最新 <b>${m.kline_max||'—'}</b> <span class="small">活跃 ${m.active||0} 只</span>`},
+  {id:'research', title:'因子研究', desc:'价值 / 动量 / 波动 IC', metric:(m)=>`BP IC <b>${m.bp_ic}</b> · ICIR <b>${m.bp_icir}</b> <span class="small">as_of ${m.as_of||'—'} · 池 ${m.pool||0} 只</span>`},
+  {id:'backtest', title:'策略回测', desc:'BP 单因子截面 HP20', metric:(m)=>`IC <b>${m.ic}</b> · ICIR <b>${m.icir}</b> <span class="small">最高分位 ${(m.top_net==null?'—':'+'+m.top_net.toFixed(1)+'%')}</span>`},
+  {id:'paper', title:'纸面盘', desc:'保持分层 + 慢调仓', metric:(m)=>`净值 <b>${fmt(m.final_nav)}</b> <span class="small">${m.rebalances||0} 调仓 · 换手 ${(m.turnover==null?'—':(m.turnover*100).toFixed(1)+'%')}</span>`},
+  {id:'compare', title:'收益对比', desc:'纸面盘 vs 买持', metric:(m)=>`<b>${pctnav(m.paper)}</b> vs 买持 ${pctr((m.buyhold==null?null:(m.buyhold-1)*100))} <span class="small">as_of ${m.as_of||'—'}</span>`},
 ];
 function fmt(v){ if(v==null) return '—'; return Number(v).toLocaleString('zh-CN',{maximumFractionDigits:0}) }
 function statusOf(s){ return s.status || 'idle' }
@@ -102,7 +104,7 @@ async function load(){
     return `<div class="stage ${cls}">
       <div class="top"><i class="dot status-dot ${dcls}"></i><span class="num">0${i+1}</span><span class="title">${s.title}</span></div>
       <div class="desc">${s.desc}</div>
-      <div class="metrics">${s.metric(d.data)}</div>
+      <div class="metrics">${s.metric(m)}</div>
       <button class="btn" ${st==='running'?'disabled':''} onclick="runStage('${s.id}',this)">${st==='running'?'<span class="spin"></span> 运行中':'介入 / 运行'}</button>
       ${last}
     </div>`;

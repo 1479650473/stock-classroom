@@ -146,6 +146,9 @@ class MarketPanel(QWidget):
         self._worker = LocalWorker(self._work_market, "market")
         self._worker.result.connect(self._on_market)
         self._worker.start()
+        # 板块表也随激活自动加载(否则打开市场页时板块区空白, 需手动点'行业板块')
+        if getattr(self, "_sector_worker", None) is None or not self._sector_worker.isRunning():
+            self._load_sectors()
 
     def _work_market(self):
         conn = sqlite3.connect(self.db_path)
