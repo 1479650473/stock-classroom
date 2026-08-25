@@ -6,7 +6,11 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QFont
 from frontend.platform.local_worker import LocalWorker
-from frontend.platform.theme import dp, dps, fs, C_ACCENT, C_TEXT, C_SUBTEXT
+from frontend.platform.theme import (
+    dp, dps, fs, C_ACCENT, C_TEXT, C_SUBTEXT, C_FAINT, C_PANEL, C_BORDER_SOFT,
+    qss_table, qss_list, qss_input,
+)
+from frontend.platform.premium import PAL, card_qss, value_ss, label_ss, CountUpLabel
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "data")
 
@@ -24,6 +28,16 @@ CN = {
 BG_EVEN = QColor("#0D1117")
 BG_ODD = QColor("#161B22")
 C_BORDER = "#21262D"
+
+# 模式分段控件 — 高级暗金(深色渐变 + 金色选中) 替代旧扁平 toggle
+_SEG_QSS = (
+    "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+    "stop:0 #1B222C,stop:1 #151A24);color:#8B949E;border:1px solid #222A35;"
+    "border-top:1px solid #2C3542;border-radius:6px;padding:3px 14px;font-size:20px;font-weight:500;}"
+    "QPushButton:hover{color:#D5DCE5;border-top-color:#D4A574;}"
+    "QPushButton:checked{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+    "stop:0 #C99763,stop:1 #B07F4E);color:#1A1410;border-color:#C99763;font-weight:600;}"
+)
 
 
 class DCPanel(QWidget):
@@ -62,14 +76,8 @@ class DCPanel(QWidget):
             btn = QPushButton(name)
             btn.setCheckable(True)
             btn.setChecked(i == 0)
-            btn.setFixedHeight(dp(24))
-            btn.setStyleSheet(
-                "QPushButton{background:#161B22;color:#8B949E;border:1px solid #21262D;"
-                "border-radius:6px;padding:2px 10px;font-size:20px}"
-                "QPushButton:hover{background:#1C2128}"
-                "QPushButton:checked{background:rgba(212,165,116,0.10);color:#D4A574;"
-                "border-color:#D4A574}"
-            )
+            btn.setFixedHeight(dp(26))
+            btn.setStyleSheet(_SEG_QSS)
             btn.clicked.connect(lambda checked, idx=i: self._switch_mode(idx))
             mode_bar.addWidget(btn)
             self._mode_btns.append(btn)
@@ -82,7 +90,8 @@ class DCPanel(QWidget):
         lo.addWidget(self._stack, 1)
 
         self._status_bar = QLabel("")
-        self._status_bar.setStyleSheet("color:#484F58;font-size:20px;padding:2px 4px;background:transparent")
+        self._status_bar.setStyleSheet(
+            f"color:{C_FAINT};font-size:{fs(11)};padding:{dps(2)} {dps(4)};background:transparent")
         lo.addWidget(self._status_bar)
 
     def _switch_mode(self, idx):
@@ -100,7 +109,12 @@ class DCPanel(QWidget):
         self.tree.setFixedWidth(dp(220))
         self.tree.setHeaderLabel("数据表")
         self.tree.itemClicked.connect(self._on_tree_select)
-        self.tree.setStyleSheet("QTreeWidget{background:#0D1117;color:#C9D1D9;border:1px solid #21262D}")
+        self.tree.setStyleSheet(
+            "QTreeWidget{background:#10141B;color:#C9D1D9;border:1px solid #1E2530;"
+            "border-radius:8px;outline:none;}"
+            "QTreeWidget::item{padding:3px 6px;border-radius:4px;}"
+            "QTreeWidget::item:selected{background:rgba(212,165,116,0.13);color:#E8C9A0;}"
+            "QTreeWidget::item:hover:!selected{background:#1A212B;}")
         body.addWidget(self.tree)
 
         right = QVBoxLayout()
@@ -108,6 +122,7 @@ class DCPanel(QWidget):
         self.search = QLineEdit()
         self.search.setPlaceholderText("搜索过滤...")
         self.search.textChanged.connect(self._on_filter)
+        self.search.setStyleSheet(qss_input())
         right.addWidget(self.search)
         self.table = QTableWidget()
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -117,9 +132,7 @@ class DCPanel(QWidget):
         self.table.setShowGrid(False)
         self.table.horizontalHeader().setSortIndicatorShown(True)
         self.table.horizontalHeader().sectionClicked.connect(self._on_header_click)
-        self.table.setStyleSheet("QTableWidget{background:#0D1117;color:#E6EDF3;gridline-color:#1A1F28}"
-                                 "QHeaderView::section{background:#161B22;color:#8B949E;"
-                                 "border:1px solid #21262D;padding:3px;font-size:19px}")
+        self.table.setStyleSheet(qss_table())
         right.addWidget(self.table, 1)
         body.addLayout(right, 1)
         return w
@@ -136,16 +149,19 @@ class DCPanel(QWidget):
         self.stock_search = QLineEdit()
         self.stock_search.setPlaceholderText("搜股票代码/名称...")
         self.stock_search.textChanged.connect(self._filter_stocks)
+        self.stock_search.setStyleSheet(qss_input())
         left_panel.addWidget(self.stock_search)
         self.stock_list = QListWidget()
         self.stock_list.itemClicked.connect(self._on_stock_select)
-        self.stock_list.setStyleSheet("QListWidget{background:#0D1117;color:#C9D1D9;border:1px solid #21262D}")
+        self.stock_list.setStyleSheet(qss_list())
         left_panel.addWidget(self.stock_list, 1)
 
         right = QVBoxLayout()
         right.setSpacing(4)
         self.stock_info = QLabel("请从左侧选择一只股票")
-        self.stock_info.setStyleSheet("color:#8B949E;padding:2px 4px;font-size:19px;background:transparent")
+        self.stock_info.setStyleSheet(
+            f"color:{C_SUBTEXT};padding:{dps(2)} {dps(4)};font-size:{fs(12)};background:transparent")
+        self.stock_info.setWordWrap(True)
         right.addWidget(self.stock_info)
         self.stock_table = QTableWidget()
         self.stock_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -155,9 +171,7 @@ class DCPanel(QWidget):
         self.stock_table.setShowGrid(False)
         self.stock_table.horizontalHeader().setSortIndicatorShown(True)
         self.stock_table.horizontalHeader().sectionClicked.connect(self._on_stock_header_click)
-        self.stock_table.setStyleSheet("QTableWidget{background:#0D1117;color:#E6EDF3;gridline-color:#1A1F28}"
-                                       "QHeaderView::section{background:#161B22;color:#8B949E;"
-                                       "border:1px solid #21262D;padding:3px;font-size:19px}")
+        self.stock_table.setStyleSheet(qss_table())
         right.addWidget(self.stock_table, 1)
 
         body.addLayout(left_panel, 1)
@@ -222,24 +236,34 @@ class DCPanel(QWidget):
 
         for info in db_infos:
             card = QFrame()
-            card.setObjectName("card")
-            card.setFixedSize(dp(160), dp(52))
+            card.setObjectName("procard")
+            card.setStyleSheet(card_qss("procard"))
+            card.setFixedSize(dp(214), dp(96))
             cl = QVBoxLayout(card)
-            cl.setContentsMargins(8, 3, 8, 3)
-            cl.setSpacing(1)
+            cl.setContentsMargins(dp(12), dp(9), dp(12), dp(9))
+            cl.setSpacing(dp(2))
             if info["found"]:
                 title = QLabel(info["label"])
-                title.setStyleSheet(f"color:{info['color']};font-size:20px;font-weight:bold;background:transparent")
-                title.setAlignment(Qt.AlignCenter)
+                title.setStyleSheet(
+                    f"color:{info['color']};font-size:{fs(10)};font-weight:500;"
+                    f"letter-spacing:{dp(1.5)}px;background:transparent;")
                 cl.addWidget(title)
-                detail = QLabel(f"{info['size_mb']:.0f}MB  ·  {info['table_count']}表  ·  {info['total_rows']:,}行")
-                detail.setStyleSheet("color:#666;font-size:19px;background:transparent")
-                detail.setAlignment(Qt.AlignCenter)
+                rows_lbl = CountUpLabel(fmt=lambda v: "{:,.0f} 行".format(v), duration=900)
+                rows_lbl.setStyleSheet(
+                    value_ss(color=C_TEXT, size=18))
+                cl.addWidget(rows_lbl)
+                detail = QLabel("{:.0f}MB  ·  {}表".format(info["size_mb"], info["table_count"]))
+                detail.setStyleSheet(label_ss(size=9))
                 cl.addWidget(detail)
-                card.setToolTip(f"{info['label']}: {info['size_mb']:.1f}MB, {info['table_count']} tables, {info['total_rows']:,} rows")
+                card.setToolTip(
+                    "{}: {:.1f}MB, {} tables, {:,.0f} rows".format(
+                        info["label"], info["size_mb"], info["table_count"], info["total_rows"]))
+                rows_lbl.animate_to(info["total_rows"])
             else:
                 title = QLabel(info["label"] + "\n未找到")
-                title.setStyleSheet(f"color:{info['color']};font-size:19px;font-weight:bold;background:transparent")
+                title.setStyleSheet(
+                    f"color:{info['color']};font-size:{fs(14)};font-weight:500;"
+                    f"background:transparent;")
                 title.setAlignment(Qt.AlignCenter)
                 cl.addWidget(title)
             self.overview.addWidget(card)

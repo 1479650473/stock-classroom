@@ -1,10 +1,15 @@
 # -*- coding: utf-8 -*-
-"""DataCenter Companion Panel — right-side table details for datacenter tab."""
+"""DataCenter Companion Panel — right-side table details + data panorama (premium)."""
 
 import sqlite3
-from frontend.platform.theme import dp, dps
-from .panorama import DataPanorama
 from datetime import datetime
+from frontend.platform.theme import (
+    dp, dps, fs, C_TEXT, C_SUBTEXT, C_FAINT, C_PANEL, qss_table,
+)
+from frontend.platform.premium import (
+    PAL, card_qss, value_ss, label_ss, SectionTitle,
+)
+from .panorama import DataPanorama
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QFrame, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QScrollArea,
@@ -12,20 +17,9 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QColor
 
-C_BG = "#0D1117"
-C_PANEL = "#161B22"
-C_BORDER = "#21262D"
-C_TEXT = "#E6EDF3"
-C_SUBTEXT = "#8B949E"
-C_ACCENT = "#D4A574"
-
 TYPE_CN = {
-    "TEXT": "\u6587\u672c",
-    "REAL": "\u6d6e\u70b9",
-    "INTEGER": "\u6574\u6570",
-    "BLOB": "\u4e8c\u8fdb\u5236",
-    "": "\u672a\u77e5",
-    "NUMERIC": "\u6570\u5b57",
+    "TEXT": "文本", "REAL": "浮点", "INTEGER": "整数", "BLOB": "二进制",
+    "": "未知", "NUMERIC": "数字",
 }
 
 
@@ -55,7 +49,7 @@ class RangeWorker(QThread):
 class DCCompanion(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setStyleSheet(f"background:{C_BG}")
+        self.setStyleSheet(f"background:{PAL['bg']}")
         self._range_worker = None
         self._panorama = None
         self._build_ui()
@@ -66,41 +60,36 @@ class DCCompanion(QWidget):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setStyleSheet(f"QScrollArea{{background:{C_BG};border:none}}")
+        scroll.setStyleSheet(
+            f"QScrollArea{{background:{PAL['bg']};border:none;}}")
         outer.addWidget(scroll)
 
         container = QWidget()
-        container.setStyleSheet(f"background:{C_BG}")
+        container.setStyleSheet(f"background:{PAL['bg']}")
         lo = QVBoxLayout(container)
-        lo.setContentsMargins(12, 12, 12, 12)
-        lo.setSpacing(10)
+        lo.setContentsMargins(dp(12), dp(12), dp(12), dp(12))
+        lo.setSpacing(dp(10))
 
         # ── Data panorama (database coverage across time) ──
-        pano_title = QLabel("\U0001f4ca 数据全景")
-        pano_title.setStyleSheet(f"color:{C_ACCENT};font-size:21px;font-weight:600;background:transparent")
-        lo.addWidget(pano_title)
-
+        lo.addWidget(SectionTitle("数据全景"))
+        pano_card = QFrame()
+        pano_card.setObjectName("pano_card")
+        pano_card.setStyleSheet(card_qss("pano_card"))
+        pcl = QVBoxLayout(pano_card)
+        pcl.setContentsMargins(dp(8), dp(8), dp(8), dp(8))
         self._panorama = DataPanorama()
         self._panorama.setMinimumHeight(220)
-        lo.addWidget(self._panorama)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet(f"QFrame{{border:none;border-top:1px solid {C_BORDER}}}")
-        sep.setFixedHeight(2)
-        lo.addWidget(sep)
+        pcl.addWidget(self._panorama)
+        lo.addWidget(pano_card)
 
         # ── Selected table details ──
-        title = QLabel("\U0001f4cb 选中表详情")
-        title.setStyleSheet(f"color:{C_ACCENT};font-size:21px;font-weight:600;background:transparent")
-        lo.addWidget(title)
-
+        lo.addWidget(SectionTitle("选中表详情"))
         self._info_label = QLabel("请在左侧选择一个数据表")
-        self._info_label.setStyleSheet(f"color:{C_SUBTEXT};font-size:20px;padding:6px 0;background:transparent")
+        self._info_label.setStyleSheet(
+            f"color:{C_SUBTEXT};font-size:{fs(13)};padding:{dps(6)} 0;background:transparent")
         self._info_label.setWordWrap(True)
         lo.addWidget(self._info_label)
 
-        # ── Column table ──
         self._col_table = QTableWidget()
         self._col_table.setColumnCount(2)
         self._col_table.setHorizontalHeaderLabels(["列名", "类型"])
@@ -108,19 +97,15 @@ class DCCompanion(QWidget):
         self._col_table.verticalHeader().setVisible(False)
         self._col_table.setShowGrid(False)
         self._col_table.horizontalHeader().setStretchLastSection(True)
-        self._col_table.setStyleSheet(
-            "QTableWidget{background:#0D1117;color:#E6EDF3;gridline-color:#1A1F28}"
-            "QHeaderView::section{background:#161B22;color:#8B949E;border:1px solid #21262D;padding:3px;font-size:19px}")
+        self._col_table.setStyleSheet(qss_table())
         self._col_table.setColumnWidth(0, dp(140))
         lo.addWidget(self._col_table)
 
         # ── Range ──
-        range_section = QLabel("\U0001f4c5 数据范围")
-        range_section.setStyleSheet(f"color:{C_ACCENT};font-size:20px;font-weight:600;background:transparent")
-        lo.addWidget(range_section)
-
+        lo.addWidget(SectionTitle("数据范围"))
         self._range_label = QLabel("--")
-        self._range_label.setStyleSheet(f"color:{C_SUBTEXT};font-size:20px;padding:6px 12px;background:transparent")
+        self._range_label.setStyleSheet(
+            f"color:{C_SUBTEXT};font-size:{fs(13)};padding:{dps(6)} {dps(12)};background:transparent")
         self._range_label.setWordWrap(True)
         lo.addWidget(self._range_label)
 
@@ -139,22 +124,19 @@ class DCCompanion(QWidget):
         db_path = t.get("db_path", "")
 
         self._info_label.setText(
-            f"\u8868: {name}\n"
-            f"\u603b\u884c\u6570: {count:,}\n"
-            f"\u5217\u6570: {len(cols)}"
-        )
+            f"表: {name}\n"
+            f"总行数: {count:,}\n"
+            f"列数: {len(cols)}")
 
         self._col_table.setRowCount(len(cols))
         for i, (col_name, col_type) in enumerate(cols):
-            bg = QColor(C_PANEL) if i % 2 == 0 else QColor(C_BG)
-
+            bg = QColor(C_PANEL) if i % 2 == 0 else QColor(PAL["bg"])
             nm = QTableWidgetItem(col_name)
             nm.setForeground(QColor(C_TEXT))
             nm.setBackground(bg)
             nm.setFlags(Qt.ItemIsEnabled)
             self._col_table.setItem(i, 0, nm)
-
-            tp = TYPE_CN.get(col_type.upper(), col_type) if col_type else "\u672a\u77e5"
+            tp = TYPE_CN.get(col_type.upper(), col_type) if col_type else "未知"
             tp_item = QTableWidgetItem(tp)
             tp_item.setForeground(QColor(C_SUBTEXT))
             tp_item.setBackground(bg)
@@ -162,7 +144,7 @@ class DCCompanion(QWidget):
             tp_item.setTextAlignment(Qt.AlignCenter)
             self._col_table.setItem(i, 1, tp_item)
 
-        self._range_label.setText("\u67e5\u8be2\u4e2d...")
+        self._range_label.setText("查询中...")
         if self._range_worker:
             self._range_worker.terminate()
         self._range_worker = RangeWorker(db_path, name)
@@ -171,8 +153,6 @@ class DCCompanion(QWidget):
 
     def _on_range(self, data):
         if data:
-            self._range_label.setText(
-                f"  {data['min']}  ~  {data['max']}"
-            )
+            self._range_label.setText(f"  {data['min']}  ~  {data['max']}")
         else:
-            self._range_label.setText("  \u65e0\u65e5\u671f\u5217\u6216\u65e0\u6570\u636e")
+            self._range_label.setText("  无日期列或无数据")
