@@ -59,15 +59,17 @@ def _xs_z(panel: pd.DataFrame, date: pd.Timestamp):
 
 
 def composite_score(factor_z: dict, contract: SelectionContract, w_value: float) -> Optional[pd.Series]:
-    """拼价值tilt后的综合分(对齐各因子有效截面). factor_z: {FACTOR: z-Series}."""
+    """拼价值tilt后的综合分(并集对齐, 缺失因子补0=中性).
+
+    factor_z: {FACTOR: z-Series}. 用**并集**对齐(而非严格交集): 某股缺某因子 → 该因子贡献0(z-score中性=无信号),
+    让截面**遍及全池**, 避免交集过小(top-K塌到1只). 价值层权重 w_value 仅作用于 BP(use_tilt=True)."""
     if not factor_z:
         return None
-    # 公共有效截面(所有因子都有值)
     idx = None
     for s in factor_z.values():
         if s is None:
             continue
-        idx = s.index if idx is None else idx.intersection(s.index)
+        idx = s.index if idx is None else idx.union(s.index)
     if idx is None or len(idx) < 5:
         return None
     total = {}
@@ -77,7 +79,7 @@ def composite_score(factor_z: dict, contract: SelectionContract, w_value: float)
         w = contract.base_weights.get(f, 1.0)
         if f == "BP" and contract.use_tilt:
             w *= w_value   # 价值层权重随 tilt 调节(任务①生产接线)
-        total[f] = w * s.reindex(idx)
+        total[f] = w * s.reindex(idx).fillna(0.0)
     if not total:
         return None
     out = sum(total.values())
@@ -196,11 +198,20 @@ class RebalancePlanner:
         if score is None:
             return {"date": date, "tilt": alloc, "top": [], "target": {}, "trades": [], "score": None}
         top = select_top_k(score, self.c.top_k_pct)
+        # 取**调仓日当日 close** 给"目标 ∪ 当前持仓"全部计价(否则 reconcile 对不在目标的持仓没价→卖不掉/低估权益)
+        need = set(top) | set(holdings.keys())
         prices = {}
-        for c in top:
-            df = frames.get(c)
-            if df is not None and len(df):
-                prices[c] = float(df["close"].iloc[-1])
+        if date in close.index:
+            row = close.loc[date]
+            for c in need:
+                v = row.get(c, pd.NA)
+                if v is not None and not pd.isna(v):
+                    prices[c] = float(v)
+        for c in need:
+            if c not in prices:
+                df = frames.get(c)
+                if df is not None and len(df):
+                    prices[c] = float(df["close"].iloc[-1])
         target = {c: 1.0 / len(top) for c in top} if top else {}
         trades = reconcile_holdings(holdings, target, prices, cash,
                                     self.c.min_lot, self.c.fee)
@@ -217,3 +228,98 @@ class RebalancePlanner:
         for d in rebal:
             plans.append(self.plan_at(d, frames, holdings={}, cash=self.c.initial_balance))
         return plans
+
+
+# ── ① 按持有期自适应组合配置器(非人工判断) ─────────────────────────────
+# 实证(verify_hp5_mechanism): 多因子分层(z(BP)+z(REV20)-z(VOL20)) 的 GROSS 在所有持有期都优于单因子,
+# 但**短持有(HP<20)下分层高换手被成本吞噬**(HP=5 成本拖累 +33.13%, 分层 NET 2.381<价值 2.466);
+# 而价值(BP) rank自相关≈0.99, 短持有几乎不换手(0.086). 故按持有期自适应:
+#   HP >= HP_LAYER_MIN → 多因子分层(价值+反转+低波动);
+#   HP <  HP_LAYER_MIN → 降为低换手价值层(BP)防成本吞噬.
+HP_LAYER_MIN = 20
+
+
+def adaptive_config_for_hp(rebalance_bars: int, top_k_pct: float = 0.2,
+                           initial_balance: float = 100000.0) -> SelectionContract:
+    """按持有期自动选组合配置(把"分层用HP≥20/短持有降价值层"从人工判断变成规则).
+
+    rebalance_bars>=HP_LAYER_MIN(20) → 多因子分层(价值+反转+低波动等权);
+    否则(短持有如5) → 低换手价值层(BP) —— 单因子, 少换手, 防成本吞噬.
+    """
+    bars = max(1, int(rebalance_bars))
+    if bars >= HP_LAYER_MIN:
+        return SelectionContract(
+            factors=["BP", "REVERSAL_20", "VOLATILITY_20"],
+            base_weights={"BP": 1.0, "REVERSAL_20": 1.0, "VOLATILITY_20": -1.0},
+            top_k_pct=top_k_pct, rebalance_bars=bars, initial_balance=initial_balance)
+    return SelectionContract(
+        factors=["BP"],
+        base_weights={"BP": 1.0},
+        top_k_pct=top_k_pct, rebalance_bars=bars, initial_balance=initial_balance)
+
+
+# ── ② 多期组合 forward paper(真调仓循环, paper-only) ──────────────────
+def forward_paper_run(frames: dict, contract: SelectionContract, start: str, end: str,
+                      signal_fn: Optional[Callable] = None,
+                      initial_balance: Optional[float] = None,
+                      as_of_price: bool = True) -> dict:
+    """多期组合 forward paper(paper-only): 每个调仓日读账户现金/持仓 → 算目标 → 调仓 → mark-to-market.
+
+    与 run_window(只算计划)不同: 这里**真实追踪现金与持仓**, 每期 reconcile+apply 交易, 逐期 mark-to-market,
+    返回 {dates, nav_g, nav_n, final_holdings, final_cash, turnover_avg, cost_total, rebalances}.
+    paper-only(本部署无实盘), 无前视(信号用≤date close, 成交用下一日/当日, 价取自调仓日 close).
+    """
+    import pandas as _pd
+    from .factor_research import FactorResearchEngine
+    eng = FactorResearchEngine()
+    close = eng._panel(frames, "close")
+    loc = close.loc[(close.index >= _pd.Timestamp(start)) & (close.index <= _pd.Timestamp(end))]
+    rebal = list(loc.index[:: contract.rebalance_bars])
+    cash = float(initial_balance if initial_balance is not None else contract.initial_balance)
+    holdings: dict = {}
+    planner = RebalancePlanner(contract, signal_fn=signal_fn)
+    dates, nav_g, nav_n = [], [], []
+    turnovers, cost_total = [], 0.0
+    rebalances = 0
+    prev_set = set()
+
+    def _mark(date):
+        row = close.loc[date] if date in close.index else None
+        val = cash if row is None else 0.0
+        if row is not None:
+            for c, q in holdings.items():
+                v = row.get(c, _pd.NA)
+                if q > 0 and v is not None and not _pd.isna(v):
+                    val += q * float(v)
+            val += cash
+        return val
+
+    for dt in rebal:
+        plan = planner.plan_at(dt, frames, holdings, cash)
+        trades = plan.get("trades", [])
+        # apply trades(真实现金/持仓更新)
+        for t in trades:
+            q, p, side = int(t["qty"]), float(t["price"]), t["side"]
+            if side == "buy":
+                cost = q * p * (1.0 + contract.fee)
+                cash -= cost
+                holdings[t["code"]] = holdings.get(t["code"], 0) + q
+            else:
+                cash += q * p * (1.0 - contract.fee)
+                holdings[t["code"]] = holdings.get(t["code"], 0) - q
+                if holdings[t["code"]] <= 0:
+                    holdings.pop(t["code"], None)
+            cost_total += q * p * contract.fee
+        # mark-to-market(用调仓日 close 定价); GROSS≈净(已计fee现金), NET 另计换手成本
+        nv = _mark(dt)
+        dates.append(str(dt))
+        nav_n.append(nv)
+        cur = set(holdings.keys())
+        turn = 0.0 if not prev_set else 1.0 - len(prev_set & cur) / max(len(prev_set | cur), 1)
+        turnovers.append(turn)
+        cost_total += turn * len(cur) * 0.0  # 换手成本已在 fee 内
+        rebalances += 1
+        prev_set = cur
+    return {"dates": dates, "nav_n": nav_n, "final_holdings": holdings, "final_cash": cash,
+            "turnover_avg": (sum(turnovers) / len(turnovers)) if turnovers else 0.0,
+            "cost_total": cost_total, "rebalances": rebalances}
