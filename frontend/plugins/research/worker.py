@@ -24,6 +24,7 @@ from backend.strategy.factor_selector import build_wide_pool  # noqa: E402
 from backend.strategy.factor_data import load_universe_frames  # noqa: E402
 from backend.strategy.portfolio_rebalance import (  # noqa: E402
     adaptive_config_for_hp, forward_paper_run, composite_score, _xs_z, select_top_k,
+    SelectionContract,
 )
 from backend.strategy.factor_research import FactorResearchEngine  # noqa: E402
 from backend.agent.decision_gate import (  # noqa: E402
@@ -174,6 +175,118 @@ def build_paper_only(hp: int = 20, top_k_pct: float = 0.2,
         import logging; logging.getLogger('research').warning('paper 持久化失败: %s', repr(e)[:80])
     return {"paper": paper, "as_of": str(pd.Timestamp(as_of).date()), "pool_size": len(frames),
             "hp": hp}
+
+
+# ── 多策略纸面盘账本(持仓面板数据源) ───────────────────────────
+STRATEGY_LABELS = ["F价值Tilt", "D多因子", "A价值", "B反转", "C低波动"]
+
+
+def _strategy_contracts(hp, top_k_pct=0.2, initial_balance=1_000_000.0):
+    """5 个策略家族契约(与 verify 权威组合口径一致). 价值/反转/低波动单因子 + 多因子/tilt."""
+    base = dict(top_k_pct=top_k_pct, rebalance_bars=max(1, int(hp)), initial_balance=initial_balance)
+    return {
+        'F价值Tilt': SelectionContract(factors=["BP", "REVERSAL_20", "VOLATILITY_20"],
+                       base_weights={"BP": 1.0, "REVERSAL_20": 1.0, "VOLATILITY_20": -1.0}, use_tilt=True, **base),
+        'D多因子': SelectionContract(factors=["BP", "REVERSAL_20", "VOLATILITY_20"],
+                       base_weights={"BP": 1.0, "REVERSAL_20": 1.0, "VOLATILITY_20": -1.0}, use_tilt=False, **base),
+        'A价值': SelectionContract(factors=["BP"], base_weights={"BP": 1.0}, use_tilt=True, **base),
+        'B反转': SelectionContract(factors=["REVERSAL_20"], base_weights={"REVERSAL_20": 1.0}, use_tilt=False, **base),
+        'C低波动': SelectionContract(factors=["VOLATILITY_20"], base_weights={"VOLATILITY_20": -1.0}, use_tilt=False, **base),
+    }
+
+
+def _build_buyhold(close, fwd_start, as_of, grid=None):
+    """等权买持基准, 返回 {dates, nav}(nav=相对起点倍数).
+
+    grid: 可选重平衡日列表(与策略同采样), 以便与策略**公平对比**(同为重平衡日快照, 而非日频抖动)."""
+    loc = close.loc[(close.index >= pd.Timestamp(fwd_start)) & (close.index <= as_of)]
+    if len(loc) < 2:
+        return {"dates": [], "nav": []}
+    bh = {}
+    start_row = loc.iloc[0]
+    for c in start_row.index:
+        v = start_row.get(c)
+        if v is not None and not pd.isna(v) and float(v) > 0:
+            bh[c] = float(v)
+    dates = list(grid) if grid else [str(ts) for ts in loc.index]
+    out_d, nav = [], []
+    for ts in dates:
+        ts = pd.Timestamp(ts)
+        if ts not in close.index:
+            continue
+        row = close.loc[ts]
+        vals, cnt = 0.0, 0
+        for c, p0 in bh.items():
+            v = row.get(c)
+            if v is not None and not pd.isna(v) and float(v) > 0:
+                vals += float(v) / p0
+                cnt += 1
+        if cnt:
+            out_d.append(str(ts))
+            nav.append(vals / cnt)
+    return {"dates": out_d, "nav": nav}
+
+
+def _persist_paper_runs(as_of, pool_size, hp, fwd_start, selected, runs, buyhold):
+    import json as _json
+    import numpy as _np
+    def _conv(o):
+        if isinstance(o, _np.integer): return int(o)
+        if isinstance(o, _np.floating): return float(o)
+        if isinstance(o, _np.bool_): return bool(o)
+        return str(o)
+    try:
+        with open(os.path.join(os.path.dirname(_ROOT), 'data', 'paper_runs.json'), 'w', encoding='utf-8') as f:
+            _json.dump({"as_of": str(pd.Timestamp(as_of).date()), "pool_size": pool_size, "hp": hp,
+                        "fwd_start": fwd_start, "selected": selected, "runs": runs, "buyhold": buyhold},
+                       f, ensure_ascii=False, indent=1, default=_conv)
+    except Exception as e:
+        import logging; logging.getLogger('research').warning('paper_runs 持久化失败: %s', repr(e)[:80])
+
+
+def run_paper_multi(hp=20, top_k_pct=0.2, fwd_start="2024-01-01",
+                    strategies=None, selected=None, progress=None) -> dict:
+    """跑一组策略契约 → 每策略收益曲线/每日持仓/每笔调仓 → 持久化 data/paper_runs.json(供持仓面板).
+
+    strategies: {name: SelectionContract}; None → 5 策略家族. selected: 默认选中策略名.
+    返回 {runs:{name->{dates,nav,daily_holdings,rebalance_log,...}}, buyhold, selected, as_of, pool_size, hp}."""
+    frames = _load_frames()
+    if not frames:
+        return {"error": "无frames"}
+    now = datetime.now().strftime("%Y-%m-%d")
+    eng = FactorResearchEngine()
+    close = eng._panel(frames, "close")
+    as_of = _as_of(close, len(frames))
+    fwd_end = str(pd.Timestamp(as_of).date())
+    contracts = strategies if strategies is not None else _strategy_contracts(hp, top_k_pct)
+    names = list(contracts)
+    sel = selected if selected in contracts else names[0]
+    runs = {}
+    for i, name in enumerate(names):
+        if progress:
+            progress(f"纸面盘 {i+1}/{len(names)} · {name}", round(12 + (i / len(names)) * 56, 0))
+        try:
+            fw = forward_paper_run(frames, contracts[name], fwd_start, fwd_end, initial_balance=1_000_000.0)
+            runs[name] = {
+                "dates": fw["dates"], "nav": fw["nav_n"],
+                "final_holdings": fw["final_holdings"], "final_cash": fw["final_cash"],
+                "turnover_avg": fw["turnover_avg"], "cost_total": fw["cost_total"],
+                "rebalances": fw["rebalances"],
+                "daily_holdings": fw.get("daily_holdings", []),
+                "rebalance_log": fw.get("rebalance_log", []),
+            }
+        except Exception as e:
+            runs[name] = {"error": str(e)}
+    if progress:
+        progress("计算等权买持基准...", 78.0)
+    grid = next((r['dates'] for r in runs.values()
+                 if isinstance(r, dict) and not r.get('error') and r.get('dates')), None)
+    buyhold = _build_buyhold(close, fwd_start, as_of, grid) if grid else _build_buyhold(close, fwd_start, as_of)
+    _persist_paper_runs(as_of, len(frames), hp, fwd_start, sel, runs, buyhold)
+    if progress:
+        progress("完成", 100.0)
+    return {"runs": runs, "buyhold": buyhold, "selected": sel,
+            "as_of": str(pd.Timestamp(as_of).date()), "pool_size": len(frames), "hp": hp}
 
 
 # ── 单因子回测(AI助手工具用) ───────────────────────────────────

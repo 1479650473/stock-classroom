@@ -74,10 +74,12 @@ def _run_one(stage):
             r = run_backtest('BP', 20, '2022-01-01', progress=cb)
             detail = f"BP HP20 IC {r.get('ic')} ICIR {r.get('icir')}"
         elif stage == 'paper':
-            from frontend.plugins.research.worker import build_paper_only
-            r = build_paper_only(hp=20, fwd_start='2024-01-01', progress=cb)
-            s = (r.get('_summary') or r.get('paper') or {})
-            detail = f"final_nav {s.get('final_nav')}"
+            from frontend.plugins.research.worker import run_paper_multi
+            r = run_paper_multi(hp=20, fwd_start='2024-01-01', progress=cb)
+            sp = (r.get('selected') if isinstance(r, dict) else None) or 'F价值Tilt'
+            pr = ((r.get('runs') or {}).get(sp) if isinstance(r, dict) else None) or {}
+            naw = pr.get('nav') or []
+            detail = f"final_nav {(naw[-1] if naw else None)}"
         elif stage == 'compare':
             from backend.agent.decision_gate import market_breadth
             _set_progress(stage, 'running', '计算市场宽度...', 0.5)

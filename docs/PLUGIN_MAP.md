@@ -30,7 +30,7 @@
 | 3 | agent | Agent | LEFT | LLM 聊天(研究员/复盘) | DeepSeek(`settings.json`) | **LLM 迭代(最后一步)** | 真 LLM |
 | 4 | market | 市场 | LEFT | 大盘指数卡 + 涨跌分布 + 行业/概念板块表 | `kline.db`(sector_board/kline_daily) | 行情总览 | ✅ 板块表激活即自动加载(已修) |
 | 5 | picks | 选股 | LEFT | 选股(价值/策略) | 需动作按钮 | 策略选股 | ⚠️ 打开为空, 需点「选股」 |
-| 6 | **holdings** | 持仓 | LEFT | 模拟账户持仓/订单/成交 | `sim_trade.db` | **纸面盘持仓(末步)** | ❌ **当前无用** — 待重做(每日持仓/调仓历史/收益曲线) |
+| 6 | **holdings** | 持仓 | LEFT | **纸面盘账本**: 多策略收益曲线对比 + 每日持仓 + 每笔调仓 | `data/paper_runs.json`(run_paper_multi) | **纸面盘持仓(末步)** | ✅ **已重做**: 5 策略对比/持仓/调仓/曲线 |
 | 7 | research | 研究 | LEFT | 因子研究: BP/EP/ROE IC·ICIR、纸面盘 | `backend.strategy.factor_research` etc. | **因子研究** | ⚠️ 打开为空, 需点「运行研究」 |
 | 8 | trade | 交易 | LEFT | 模拟账户管理/下单/成交 | `trade_engine.engine.TradeEngine`(sim_trade.db) | 模拟盘操作 | ✅ 后端 7 账户正常 |
 | 9 | datapipeline | 数据管道 | LEFT | 数据更新步骤表 | `data_manager` + `cache_modules` | **数据更新** | ✅ 10 步; K线步函数改名已修 |
@@ -52,21 +52,25 @@
 | ① 数据更新 | `data_manager.daily_update` | datapipeline（步骤表） |
 | ② 因子研究 | `study_factors` | research（运行研究） |
 | ③ 策略回测 | `run_backtest` | trainer / research |
-| ④ 组合重平衡/纸面盘 | `build_paper_only`(forward_paper_run) | **holdings（应展示每日持仓+调仓+收益曲线）** / trade |
+| ④ 组合重平衡/纸面盘 | `run_paper_multi`(forward_paper_run×N 契约) | **holdings（多策略账本: 曲线对比+每日持仓+调仓历史）** / trade |
 | ⑤ 收益对比 | paper vs buyhold | flow compare 步 |
 | ⑥ LLM 迭代 | `agent.*` | agent（聊天） |
 
 ## 6. 发现的脱节/问题（前端跟不上后端）
-1. **holdings 目前毫无用处**（见 §7 重做方案）：只显示 sim_trade 当天持仓，**不展示主流程末步的纸面盘每日持仓/每笔调仓/收益曲线**。
+1. **holdings 从前毫无用处**（只显示 sim_trade 当天持仓）——**已重做**：读 `paper_runs.json` 展示 5 策略纸面盘账本（收益曲线对比/每日持仓/每笔调仓），见 §7。
 2. **market 板块表**激活即空（需点「行业板块」）——已修（激活自动 `_load_sectors()`）。
 3. **research/picks/trainer** 打开为空，需点「运行」按钮——功能藏在按钮后，体感「用不了」。
 4. **datacenter 详情**需选股才出（正常交互）。
 5. **`data_manager.update_kline`** 已改名为 `daily_update`（datapipeline 曾调用不存在函数，已修）。
 6. **frontend/ 加入 sys.path 会遮蔽 stdlib `platform`** → pandas 导入崩（研究代理/面板隐患；app 本体不受影响）。
 
-## 7. holdings 重做方案（待实现）
-目标：把 holdings 变成主流程**末步（纸面盘）的账本**，展示：
-- **整体收益曲线**：`paper_run.json` 的 `dates`/`nav`（纸面盘净值 vs 买持基准）。
-- **每日/每调仓日持仓**：`daily_holdings[]`（date → holdings{code:qty} + cash + nav）。
-- **每笔调仓历史**：`rebalance_log[]`（date → trades[{code, side, qty, price}]）。
-数据源：`frontend/plugins/research/worker.py::build_paper_only()` 持久化的 `data/paper_run.json`（后端已增强 `forward_paper_run` 记录以上字段）。
+## 7. holdings 重做（已完成）
+持仓 = 主流程末步「纸面盘」账本，读 `data/paper_runs.json`（`research/worker.py::run_paper_multi` 持久化，5 策略契约 + 买持基准）：
+- **策略选择器**：F价值Tilt / D多因子 / A价值 / B反转 / C低波动（下拉切换；单策略时自动隐藏）。
+- **收益曲线(策略对比)**：5 策略净值线 + 买持虚线，选中加亮(★)；买持按策略重平衡日网格采样（公平对比，避免日频抖动拉伸）。
+- **每日/每调仓日持仓**：`daily_holdings[]`（date→holdings{code:qty}+cash+nav）；市值/现价/权重用 `kline_daily` join（日期归一化为紧凑 `YYYYMMDD`）。
+- **每笔调仓历史**：`rebalance_log[]`（date→trades[{code, side, qty, price}]）。
+数据源后端：`research/worker.py::run_paper_multi()`（内部 `forward_paper_run(frames, contract, ...)`×5）+ `portfolio_rebalance.py::forward_paper_run`（已增强记录 daily_holdings/rebalance_log）。
+
+> 数据口径：纸面盘用 ~287 跨板块池(wide_pool)，`forward_paper_run` 真实现金/持仓追踪+逐期 mark-to-market。
+> 取数时间：`data/paper_runs.json` 由 flow 指挥舱「纸面盘」步（`run_paper_multi`）或 `_gen_paper_multi.py` 生成；as_of 2026-07-03。

@@ -54,3 +54,7 @@ Thumbs.db
 _chain_result.json
 _run_chain.py
 _flow_server.log
+_gen_paper.py
+paper_run.json
+_gen_paper_multi.py
+paper_runs.json
