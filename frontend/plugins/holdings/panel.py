@@ -7,7 +7,7 @@
 import os, json, sqlite3
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
                              QTableWidget, QTableWidgetItem, QHeaderView, QComboBox, QTabWidget,
-                             QAbstractItemView)
+                             QAbstractItemView, QPushButton, QButtonGroup, QDialog, QGridLayout)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QPainter, QPen, QPolygonF, QFont, QFontMetricsF
 from PyQt5.QtCore import QPointF
@@ -304,6 +304,112 @@ class _EquityCurve(QWidget):
         p.drawText(QPointF(w // 2 - dp(70), h // 2), "无纸面盘数据(需先运行流程)")
 
 
+def _rebalance_rows(paper):
+    """把 rebalance_log 摊平成 [{date, code, side, qty, price, amt}] 行(供调仓表/详图分页)."""
+    log = paper.get('rebalance_log', []) or []
+    rows = []
+    for r in log:
+        for t in r.get('trades', []) or []:
+            amt = t['qty'] * t['price']
+            rows.append([r['date'], t['code'], "买入" if t['side'] == 'buy' else "卖出",
+                         f'{t["qty"]:,}', f'{t["price"]:.2f}', f'{amt:,.0f}'])
+    return rows
+
+
+class StrategyDetailDialog(QDialog):
+    """单策略详图: 大号净值曲线(vs 买持/沪深300) + 该策略完整调仓记录(分页)."""
+    PER_PAGE = 100
+    HEADERS = ["调仓日", "代码", "方向", "数量", "价格", "金额"]
+
+    def __init__(self, name, paper, buyhold, hs300, as_of, parent=None):
+        super().__init__(parent)
+        self._name = name
+        self._paper = paper
+        self._rows = _rebalance_rows(paper)
+        self._page = 0
+        self.setWindowTitle(f"单策略详图 · {name}")
+        self.resize(dp(960), dp(780))
+        self.setStyleSheet(f"background:{PAL['bg']}; color:{PAL['text']};")
+        root = QVBoxLayout(self); root.setContentsMargins(dp(14), dp(12), dp(14), dp(12)); root.setSpacing(dp(10))
+        # 标题
+        t = QLabel(f"单策略详图 · {name}")
+        t.setStyleSheet(label_ss(size=13) + f"color:{PAL['text']};")
+        root.addWidget(t)
+        # 摘要卡
+        nav = paper.get('nav', []) or []
+        ret = (nav[-1] / _INIT - 1) if nav else 0
+        terms = [("期初", f"{_INIT:,.0f}"), ("期末净值", f"{(nav[-1] if nav else 0):,.0f}"),
+                 ("累计收益", f"{ret:+.1%}"), ("调仓次数", str(paper.get('rebalances', 0))),
+                 ("换手率", f"{(paper.get('turnover_avg', 0) * 100):.1f}%"), ("as_of", str(as_of or '—'))]
+        sum_row = QHBoxLayout(); sum_row.setSpacing(dp(8))
+        for k, val in terms:
+            card = QFrame(); card.setStyleSheet(card_qss("card"))
+            lo = QVBoxLayout(card); lo.setContentsMargins(dp(10), dp(8), dp(10), dp(8)); lo.setSpacing(0)
+            lb = QLabel(k); lb.setStyleSheet(label_ss(size=8))
+            v = QLabel(val); v.setStyleSheet(value_ss(color=PAL['accent'], size=13))
+            lo.addWidget(lb); lo.addWidget(v)
+            sum_row.addWidget(card, 1)
+        root.addLayout(sum_row)
+        # 大曲线(单策略 vs 基线)
+        cur = QFrame(); cur.setStyleSheet(card_qss("card"))
+        clo = QVBoxLayout(cur); clo.setContentsMargins(dp(10), dp(6), dp(10), dp(6))
+        cl = QLabel("净值走势 · vs 买持 / 沪深300"); cl.setStyleSheet(label_ss(size=9) + f"color:{PAL['sub']};")
+        clo.addWidget(cl)
+        self._curve = _EquityCurve(); self._curve.setMinimumHeight(dp(300))
+        series = [{'name': name, 'dates': paper.get('dates', []), 'nav': paper.get('nav', []), 'selected': True}]
+        bh_abs = {'dates': buyhold.get('dates', []), 'nav': [(v * _INIT) for v in buyhold.get('nav', [])]} if buyhold else None
+        self._curve.set_series(series, bh_abs, hs300)
+        clo.addWidget(self._curve)
+        root.addWidget(cur, 1)
+        # 完整调仓记录(分页)
+        tbl_frame = QFrame(); tbl_frame.setStyleSheet(card_qss("card"))
+        tlo = QVBoxLayout(tbl_frame); tlo.setContentsMargins(dp(10), dp(6), dp(10), dp(6)); tlo.setSpacing(dp(4))
+        tl = QLabel("调仓记录(完整 · 分页)"); tl.setStyleSheet(label_ss(size=9) + f"color:{PAL['sub']};")
+        tlo.addWidget(tl)
+        self._table = QTableWidget()
+        self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._table.verticalHeader().setVisible(False); self._table.setShowGrid(False)
+        self._table.verticalHeader().setDefaultSectionSize(dp(22))
+        self._table.setFont(QFont("Microsoft YaHei", _pt(9)))
+        tlo.addWidget(self._table)
+        pg_row = QHBoxLayout(); pg_row.setSpacing(dp(8))
+        self._prev = QPushButton("◀ 上一页"); self._prev.setObjectName("indBtn")
+        self._next = QPushButton("下一页 ▶"); self._next.setObjectName("indBtn")
+        self._pg_label = QLabel("—"); self._pg_label.setStyleSheet(value_ss(size=9) + f"color:{PAL['sub']};")
+        self._prev.clicked.connect(lambda: self._go(self._page - 1))
+        self._next.clicked.connect(lambda: self._go(self._page + 1))
+        pg_row.addWidget(self._prev); pg_row.addStretch(1)
+        pg_row.addWidget(self._pg_label); pg_row.addStretch(1)
+        pg_row.addWidget(self._next)
+        tlo.addLayout(pg_row)
+        root.addWidget(tbl_frame)
+        self._render_page()
+
+    def _go(self, page):
+        n = max(1, (len(self._rows) + self.PER_PAGE - 1) // self.PER_PAGE)
+        self._page = max(0, min(page, n - 1))
+        self._render_page()
+
+    def _render_page(self):
+        rows = self._rows
+        n = max(1, (len(rows) + self.PER_PAGE - 1) // self.PER_PAGE)
+        self._page = min(self._page, max(0, n - 1))
+        start = self._page * self.PER_PAGE
+        page_rows = rows[start:start + self.PER_PAGE]
+        self._table.setColumnCount(len(self.HEADERS)); self._table.setHorizontalHeaderLabels(self.HEADERS)
+        self._table.setRowCount(len(page_rows))
+        for i, row in enumerate(page_rows):
+            for j, val in enumerate(row):
+                it = QTableWidgetItem(str(val))
+                it.setTextAlignment(Qt.AlignCenter if j else Qt.AlignLeft)
+                self._table.setItem(i, j, it)
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._pg_label.setText(f"第 {self._page + 1} / {n} 页 · 共 {len(rows)} 条")
+        self._prev.setEnabled(self._page > 0)
+        self._next.setEnabled(self._page < n - 1)
+
+
 class HoldingsPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -331,12 +437,17 @@ class HoldingsPanel(QWidget):
         cap = QLabel("主流程末步 · 组合重平衡/纸面盘 · 多策略对比 · 每日持仓 · 每笔调仓")
         cap.setStyleSheet(value_ss(size=10) + f"color:{PAL['sub']};")
         self._cards_lo.addWidget(cap)
-        # 策略选择器
-        self._strategy_combo = QComboBox()
-        self._strategy_combo.setStyleSheet(f"QComboBox{{background:{PAL['c_mid']};color:{PAL['text']};"
-                                           f"border:1px solid {PAL['border_lo']};padding:2px 8px;}}")
-        self._strategy_combo.currentIndexChanged.connect(lambda _: self._render())
-        self._cards_lo.addWidget(self._strategy_combo)
+        # 策略卡片(点卡片选中并进单策略详图)
+        self._chips_wrap = QWidget()
+        self._chips_lo = QVBoxLayout(self._chips_wrap); self._chips_lo.setContentsMargins(0, 0, 0, 0); self._chips_lo.setSpacing(dp(6))
+        self._chip_row = QHBoxLayout(); self._chip_row.setSpacing(dp(6))
+        self._chips_lo.addLayout(self._chip_row)
+        self._zoom_btn = QPushButton("🔍 进入单策略详图"); self._zoom_btn.setObjectName("indBtn")
+        self._zoom_btn.clicked.connect(lambda: self._show_detail(self._selected_strategy()))
+        self._chips_lo.addWidget(self._zoom_btn)
+        self._cards_lo.addWidget(self._chips_wrap)
+        self._strategy_btns = {}
+        self._strategy_group = QButtonGroup(self); self._strategy_group.setExclusive(True)
         # 摘要卡
         self._sum_row = QHBoxLayout(); self._sum_row.setSpacing(dp(8))
         self._sum_labels = {}
@@ -385,22 +496,58 @@ class HoldingsPanel(QWidget):
     def load(self):
         self._data = _load_paper_runs()
         runs = self._data.get('runs') or {}
-        self._strategy_combo.blockSignals(True)
-        self._strategy_combo.clear()
-        for name in runs:
-            self._strategy_combo.addItem(name)
+        # 重建策略卡片
+        while self._chip_row.count():
+            it = self._chip_row.takeAt(0)
+            if it.widget(): it.widget().deleteLater()
+        for b in list(self._strategy_group.buttons()):
+            self._strategy_group.removeButton(b)
+        self._strategy_btns = {}
         sel = self._data.get('selected')
         if sel not in runs:
             sel = list(runs)[0] if runs else None
+        for name in runs:
+            btn = QPushButton(name)
+            btn.setObjectName("indBtn"); btn.setCheckable(True)
+            btn.setProperty('strategy', name)
+            btn.setFont(QFont("Microsoft YaHei", _pt(8)))
+            btn.setToolTip(f"{name} · 点卡片查看单策略详图")
+            self._strategy_group.addButton(btn)
+            self._strategy_btns[name] = btn
+            self._chip_row.addWidget(btn, 1)
+            btn.clicked.connect(lambda _=False, n=name: self._select_strategy(n))
+        self._chips_wrap.setVisible(len(runs) > 1)
         if sel:
-            self._strategy_combo.setCurrentIndex(list(runs).index(sel))
-        self._strategy_combo.setVisible(len(runs) > 1)
-        self._strategy_combo.blockSignals(False)
+            b = self._strategy_btns.get(sel)
+            if b: b.setChecked(True)
         self._render()
+
+    def _selected_strategy(self):
+        b = self._strategy_group.checkedButton()
+        return b.property('strategy') if b else None
+
+    def _select_strategy(self, name):
+        b = self._strategy_btns.get(name)
+        if b: b.setChecked(True)
+        self._render()
+        self._show_detail(name)   # 点策略卡片 → 进入单策略详图
+
+    def _show_detail(self, name):
+        if not name:
+            return
+        runs = self._data.get('runs') or {}
+        paper = runs.get(name)
+        if not isinstance(paper, dict) or paper.get('error'):
+            return
+        bh = self._data.get('buyhold') or {}
+        grid = paper.get('dates', []) or []
+        hs300 = _load_hs300(grid) if grid else None
+        dlg = StrategyDetailDialog(name, paper, bh, hs300, self._data.get('as_of'), self)
+        dlg.exec_()
 
     def _active_paper(self):
         runs = self._data.get('runs') or {}
-        name = self._strategy_combo.currentText()
+        name = self._selected_strategy()
         return runs.get(name) if name else None
 
     def _render(self):
@@ -412,7 +559,7 @@ class HoldingsPanel(QWidget):
             if not isinstance(run, dict) or run.get('error'):
                 continue
             series.append({'name': name, 'dates': run.get('dates', []), 'nav': run.get('nav', []),
-                           'selected': name == self._strategy_combo.currentText()})
+                           'selected': name == self._selected_strategy()})
         bh = self._data.get('buyhold') or {}
         bh_abs = {'dates': bh.get('dates', []), 'nav': [(v * _INIT) for v in bh.get('nav', [])]}
         grid = series[0]['dates'] if series else []
@@ -461,14 +608,7 @@ class HoldingsPanel(QWidget):
                            f'{r["val"]/(h.get("nav") or 1):.1%}' if r['val'] else "—"] for r in rows])
 
     def _render_reb(self, paper):
-        log = paper.get('rebalance_log', [])
-        rows = []
-        entry = paper.get('daily_holdings', [])
-        for r in log:
-            for t in r.get('trades', []):
-                amt = t['qty'] * t['price']
-                rows.append([r['date'], t['code'], "买入" if t['side'] == 'buy' else "卖出",
-                             f'{t["qty"]:,}', f'{t["price"]:.2f}', f'{amt:,.0f}'])
+        rows = _rebalance_rows(paper)
         self._fill_table(self._reb_table, ["调仓日", "代码", "方向", "数量", "价格", "金额"], rows)
 
     def _fill_table(self, tbl, headers, rows):
