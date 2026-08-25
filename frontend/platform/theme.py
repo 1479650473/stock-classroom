@@ -306,6 +306,7 @@ def build_style(base_fs: int = 13, key: str = None) -> str:
         s = s.replace(f"$fs{sz}", f"{round(sz * scale)}px")
     for dm in range(2, 61):
         s = s.replace(f"$dp{dm}", f"{round(dm * scale)}px")
+    globals()["STYLE"] = s
     return s
 
 
@@ -431,3 +432,7 @@ QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {{ border-top: 1px solid {t['card
 
 def _ivory_template(t: dict) -> str:
     return _shared_parts(t)
+
+
+# Backwards-compat: pre-built default global stylesheet (kept in sync by build_style)
+STYLE = build_style(FONT_BASE)
