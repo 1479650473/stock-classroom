@@ -46,6 +46,13 @@
   .status-dot.s-idle{background:var(--idle)} .status-dot.s-running{background:var(--run)}
   .status-dot.s-ok{background:var(--ok)} .status-dot.s-error{background:var(--err)}
   .last{font-size:10px;color:var(--faint);margin-top:9px;font-family:var(--mono);min-height:14px}
+  .prog{margin-top:8px}
+  .bar{height:5px;background:rgba(122,162,247,.12);border-radius:3px;overflow:hidden}
+  .bar i{display:block;height:100%;background:var(--run);transition:width .3s}
+  .pmsg{font-size:10px;color:var(--sub);font-family:var(--mono);display:block;margin-top:4px}
+  .runall{margin-left:14px;background:rgba(122,162,247,.10);color:var(--accent2);border:1px solid var(--border2);border-radius:7px;padding:4px 12px;font-size:12px;cursor:pointer}
+  .runall:hover{background:rgba(122,162,247,.18)}
+  .runall:disabled{opacity:.5}
   .spin{display:inline-block;width:11px;height:11px;border:2px solid rgba(255,255,255,.15);border-top-color:var(--run);border-radius:50%;animation:sp .8s linear infinite;vertical-align:-2px}
   @keyframes sp{to{transform:rotate(360deg)}}
   .foot{color:var(--faint);font-size:11px;margin-top:30px;border-top:1px solid var(--border);padding-top:14px}
@@ -58,6 +65,7 @@
     <h1>全流程指挥舱</h1>
     <span class="chip">stock-classroom v4.3</span>
     <span class="fresh">数据新鲜度 K线 <b id="f_kmx">…</b> · 基本面 <b id="f_fmx">…</b> · 活跃股 <b id="f_nact">…</b></span>
+    <button class="runall" id="btn_runall" onclick="runAll()">整链运行</button>
   </div>
 
   <div class="legend">
@@ -104,6 +112,7 @@ async function load(){
     return `<div class="stage ${cls}">
       <div class="top"><i class="dot status-dot ${dcls}"></i><span class="num">0${i+1}</span><span class="title">${s.title}</span></div>
       <div class="desc">${s.desc}</div>
+      ${st==='running' && m.progress ? `<div class="prog"><div class="bar"><i style="width:${m.progress.pct==null?0:m.progress.pct}%"></i></div><span class="pmsg">${m.progress.msg||''} · ${Math.floor(m.progress.elapsed||0)}s</span></div>` : ''}
       <div class="metrics">${s.metric(m)}</div>
       <button class="btn" ${st==='running'?'disabled':''} onclick="runStage('${s.id}',this)">${st==='running'?'<span class="spin"></span> 运行中':'介入 / 运行'}</button>
       ${last}
@@ -114,9 +123,14 @@ function time(sec){ if(sec==null) return ''; const n=Math.round((sec)*10)/10; re
 async function runStage(id, btn){
   btn.innerHTML='<span class="spin"></span> 运行中'; btn.disabled=true;
   try{ await fetch('/run/'+id,{method:'POST'}); }catch(e){ console.error(e); }
-  setTimeout(load, 800);
+  setTimeout(load, 600);
 }
-load(); setInterval(load, 5000);
+async function runAll(){
+  const b=document.getElementById('btn_runall'); b.disabled=true; b.textContent='整链运行中…';
+  try{ await fetch('/run-all',{method:'POST'}); }catch(e){ console.error(e); }
+  setTimeout(()=>{ b.disabled=false; b.textContent='整链运行'; }, 2000);
+}
+load(); setInterval(load, 2000);
 </script>
 </body>
 </html>

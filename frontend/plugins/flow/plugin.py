@@ -11,6 +11,12 @@ class FlowPlugin(IPlugin):
     region = PluginRegion.LEFT
 
     def create_widget(self):
+        # 优先用 QWebEngineView 嵌 web 指挥舱(省原生Qt驱动); 不可用则回退原生 FlowPanel
+        try:
+            from .webview import WebCockpit
+            return WebCockpit()
+        except Exception:
+            pass
         from .panel import FlowPanel
         w = FlowPanel()
         w.on_status = self._services.status

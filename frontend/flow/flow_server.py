@@ -14,7 +14,13 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 
 RUNNING = {}     # stage -> True/False
 LAST = {}        # stage -> {time, status, detail}
+PROGRESS = {}    # stage -> {status, msg, pct, started}  实时进度
 def _busy(stage): RUNNING.setdefault(stage, False)
+
+def _set_progress(stage, status, msg='', pct=None):
+    p = PROGRESS.setdefault(stage, {})
+    p['status'] = status; p['msg'] = msg; p['pct'] = pct
+    p['started'] = p.get('started') or time.time()
 
 def _st(data):
     import os as _os, sqlite3
@@ -42,40 +48,68 @@ def _st(data):
                   'trades': ntrade, 'positions': npos},
     }
 
-# 各阶段介入函数 (真实后端)
+# 各阶段介入函数 (真实后端 + 实时进度回调 progress(msg,pct))
+def _progress_cb(stage):
+    def cb(msg, pct):
+        _set_progress(stage, 'running', msg, pct)
+    return cb
+
+def _run_one(stage):
+    """执行单个阶段, 回填 LAST + PROGRESS."""
+    _busy(stage); t0 = time.time()
+    _set_progress(stage, 'running', '启动...', 0.0)
+    cb = _progress_cb(stage)
+    try:
+        if stage == 'data':
+            from data_manager import daily_update
+            _set_progress(stage, 'running', '日更 K线/基本面...', 0.1)
+            n = daily_update(catch_up_days=10)
+            detail = f'daily_update 返回 {n}'
+        elif stage == 'research':
+            from frontend.plugins.research.worker import study_factors
+            r = study_factors('2022-01-01', progress=cb)
+            detail = f"BP ICIR {((r.get('BP') or {}).get('icir'))}"
+        elif stage == 'backtest':
+            from frontend.plugins.research.worker import run_backtest
+            r = run_backtest('BP', 20, '2022-01-01', progress=cb)
+            detail = f"BP HP20 IC {r.get('ic')} ICIR {r.get('icir')}"
+        elif stage == 'paper':
+            from frontend.plugins.research.worker import build_paper_only
+            r = build_paper_only(hp=20, fwd_start='2024-01-01', progress=cb)
+            s = (r.get('_summary') or r.get('paper') or {})
+            detail = f"final_nav {s.get('final_nav')}"
+        elif stage == 'compare':
+            from backend.agent.decision_gate import market_breadth
+            _set_progress(stage, 'running', '计算市场宽度...', 0.5)
+            b = market_breadth()
+            detail = f'市场宽度={b}'
+        else:
+            detail = f'未识别阶段 {stage}'
+        LAST[stage] = {'status': 'ok', 'detail': detail, 'sec': round(time.time()-t0,1)}
+        _set_progress(stage, 'ok', detail, 100.0)
+    except Exception as e:
+        import traceback
+        LAST[stage] = {'status': 'error', 'detail': repr(e)[:140], 'sec': round(time.time()-t0,1)}
+        _set_progress(stage, 'error', repr(e)[:80], None)
+    finally:
+        RUNNING[stage] = False
+
 def _run_stage(stage):
-    def wrap(st):
-        try:
-            _busy(st); t0 = time.time()
-            if st == 'data':
-                from data_manager import daily_update
-                n = daily_update(catch_up_days=10)
-                LAST[st] = {'status': 'ok', 'detail': f'daily_update 返回 {n}', 'sec': round(time.time()-t0,1)}
-            elif st == 'research':
-                from backend.strategy.factor_research import FactorResearchEngine
-                eng = FactorResearchEngine()
-                r = eng.run()
-                LAST[st] = {'status': 'ok', 'detail': f'因子研究完成', 'sec': round(time.time()-t0,1)}
-            elif st == 'backtest':
-                from backend.strategy.portfolio_rebalance import composite_score, _xs_z
-                LAST[st] = {'status': 'ok', 'detail': '组合分层回测函数已加载', 'sec': round(time.time()-t0,1)}
-            elif st == 'paper':
-                from backend.strategy.portfolio_rebalance import forward_paper_run
-                r = forward_paper_run()
-                LAST[st] = {'status': 'ok', 'detail': f'forward_paper_run 完成', 'sec': round(time.time()-t0,1)}
-            elif st == 'compare':
-                from backend.agent.decision_gate import market_breadth
-                b = market_breadth() if callable(market_breadth) else None
-                LAST[st] = {'status': 'ok', 'detail': f'市场宽度={b}', 'sec': round(time.time()-t0,1)}
-            else:
-                LAST[st] = {'status': 'unknown', 'detail': f'未识别阶段 {st}', 'sec': 0}
-        except Exception as e:
-            import traceback
-            LAST[st] = {'status': 'error', 'detail': f'{repr(e)[:120]}', 'sec': round(time.time()-t0,1)}
-        finally:
-            RUNNING[st] = False
-    threading.Thread(target=wrap, args=(stage,), daemon=True).start()
+    threading.Thread(target=_run_one, args=(stage,), daemon=True).start()
     return {'started': True, 'stage': stage}
+
+def _run_all():
+    """顺序跑完整条链 data→research→backtest→paper→compare, 报告整链进度."""
+    chain = ['data', 'research', 'backtest', 'paper', 'compare']
+    def wrap():
+        _set_progress('_chain', 'running', '整链运行中...', 0.0)
+        for i, st in enumerate(chain):
+            _set_progress('_chain', 'running', f'第 {i+1}/{len(chain)} 步 · {st}', round(i/len(chain)*100, 0))
+            _run_one(st)
+        _set_progress('_chain', 'ok', '整链完成', 100.0)
+        _run_one('compare')
+    threading.Thread(target=wrap, daemon=True).start()
+    return {'started': True, 'chain': chain}
 
 def build_status():
     import copy
@@ -93,9 +127,17 @@ def build_status():
     stages = []
     def mk(sid, title, key, desc, **extra):
         l = LAST.get(sid)
-        status = 'running' if RUNNING.get(sid) else (l['status'] if l else ('ok' if chain else 'idle'))
+        p = PROGRESS.get(sid)
+        if RUNNING.get(sid) or (p and p.get('status') == 'running'):
+            status = 'running'
+        else:
+            status = (l['status'] if l else ('ok' if chain else 'idle'))
+        prog = None
+        if status == 'running' and p:
+            prog = {'msg': p.get('msg'), 'pct': p.get('pct'),
+                    'elapsed': round(time.time() - p.get('started', time.time()), 1)}
         stages.append({'id': sid, 'title': title, 'desc': desc, 'status': status,
-                       'last': l, **extra})
+                       'last': l, 'progress': prog, **extra})
     bp = r.get('BP') or {}
     mk('data', '数据管道', 'data', 'K线/基本面日更', kline_max=st['kline']['max'], active=st['kline']['active_stocks'])
     mk('research', '因子研究', 'research', '价值/动量/波动 IC',
@@ -107,7 +149,13 @@ def build_status():
        final_nav=ps.get('final_nav'), rebalances=ps.get('rebalances'), turnover=ps.get('turnover_avg'))
     mk('compare', '收益对比', 'compare', 'paper vs 买持',
        paper=ps.get('final_nav'), buyhold=ps.get('buyhold_final'), as_of=(chain.get('paper') or {}).get('as_of'))
-    return {'meta': {'sec': chain.get('_sec'), 'updated': st['update_time']}, 'data': st, 'stages': stages}
+    cp = PROGRESS.get('_chain')
+    chain_prog = None
+    if cp and cp.get('status') == 'running':
+        chain_prog = {'msg': cp.get('msg'), 'pct': cp.get('pct'),
+                      'elapsed': round(time.time() - cp.get('started', time.time()), 1)}
+    return {'meta': {'sec': chain.get('_sec'), 'updated': st['update_time'], 'chain_progress': chain_prog},
+            'data': st, 'stages': stages}
 
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
@@ -127,7 +175,9 @@ class H(BaseHTTPRequestHandler):
             else:
                 self._json({'error': 'no html'}, 404)
     def do_POST(self):
-        if self.path.startswith('/run/'):
+        if self.path == '/run-all':
+            self._json(_run_all())
+        elif self.path.startswith('/run/'):
             stage = self.path.split('/')[-1]
             self._json(_run_stage(stage))
         else:

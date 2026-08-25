@@ -8,9 +8,13 @@ sys.path.insert(0, os.path.join(PROJECT_DIR, "backend"))
 
 from PyQt5.QtWidgets import QApplication, QStyleFactory
 from PyQt5.QtGui import QFont
+from PyQt5.QtCore import Qt
 from frontend.platform.theme import build_style
 from frontend.platform.platform_shell import PlatformShell
 from frontend.plugins.settings.config import load_settings
+
+# QWebEngineView(指挥舱插件) 需在 QApplication 创建前设该属性, 否则无法创建 Web 视图
+QApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
 
 
 if __name__ == "__main__":

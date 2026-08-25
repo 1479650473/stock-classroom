@@ -64,7 +64,7 @@ def _as_of(close: pd.DataFrame, n_pool: int):
 
 
 # ── ② 价值因子研究(IC/ICIR) ─────────────────────────────────────
-def study_factors(study_start: str = "2022-01-01") -> dict:
+def study_factors(study_start: str = "2022-01-01", progress=None) -> dict:
     """BP/EP/ROE 截面 IC·ICIR(板块中性化). 返回 {BP:{...},EP:{...},ROE:{...},as_of}."""
     frames = _load_frames()
     if not frames:
@@ -88,8 +88,12 @@ def study_factors(study_start: str = "2022-01-01") -> dict:
             return {"error": str(e)}
 
     out = {}
-    for f in ("BP", "EP", "ROE"):
+    for i, f in enumerate(("BP", "EP", "ROE")):
+        if progress:
+            progress(f"计算 {f} IC/ICIR...", round((i / 3) * 100, 0))
         out[f] = _icir(f)
+    if progress:
+        progress("汇总推荐因子...", 95.0)
     # 最强(非reject)
     best = None
     for f, v in out.items():
@@ -104,7 +108,7 @@ def study_factors(study_start: str = "2022-01-01") -> dict:
 
 # ── ④ 组合纸面盘(重平衡NET vs 等权买持) ──────────────────────────
 def build_paper_only(hp: int = 20, top_k_pct: float = 0.2,
-                     fwd_start: str = "2024-01-01") -> dict:
+                     fwd_start: str = "2024-01-01", progress=None) -> dict:
     """仅组合纸面盘(不跑信号/研究/排名). 返回 paper字典 + as_of(供交易伴侣/AI工具)."""
     frames = _load_frames()
     if not frames:
@@ -117,7 +121,11 @@ def build_paper_only(hp: int = 20, top_k_pct: float = 0.2,
     paper = {}
     try:
         fwd_end = str(pd.Timestamp(as_of).date())
+        if progress:
+            progress("组合纸面盘前向推进...", 15.0)
         fw = forward_paper_run(frames, contract, fwd_start, fwd_end, initial_balance=1_000_000.0)
+        if progress:
+            progress("计算等权买持基准...", 75.0)
         bh_dates, bh_nav = [], []
         loc = close.loc[(close.index >= pd.Timestamp(fwd_start)) & (close.index <= as_of)]
         if len(loc) >= 2:
@@ -150,7 +158,7 @@ def build_paper_only(hp: int = 20, top_k_pct: float = 0.2,
 
 # ── 单因子回测(AI助手工具用) ───────────────────────────────────
 def run_backtest(factor: str = "BP", holding_period: int = 20,
-                 start: str = "2022-01-01") -> dict:
+                 start: str = "2022-01-01", progress=None) -> dict:
     """单因子截面回测(wide池, 板块中性化). 返回 {IC,ICIR,IC正率,单调,多空净,分组净值,coverage}."""
     frames = _load_frames()
     if not frames:
@@ -158,9 +166,13 @@ def run_backtest(factor: str = "BP", holding_period: int = 20,
     now = datetime.now().strftime("%Y-%m-%d")
     eng = FactorResearchEngine()
     try:
+        if progress:
+            progress("截面回测计算中...", 30.0)
         r = eng.run(frames=frames, factor_id=str(factor).lower(), start_date=start, end_date=now,
                     groups=5, holding_period=int(holding_period or 20),
                     neutralize_industry=True, compute_correlation=False)
+        if progress:
+            progress("汇总分组净值...", 90.0)
     except Exception as e:  # noqa: BLE001
         return {"error": str(e)}
     curves = r.get("groupCurves", [])
