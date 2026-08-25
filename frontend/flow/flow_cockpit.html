@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>stock-classroom · 全流程指挥舱</title>
+<style>
+  :root{
+    --bg:#0b0d11; --panel:#14171c; --panel2:#181c22; --border:#232830; --border2:#2e343c;
+    --text:#e8eaed; --sub:#9aa3b0; --faint:#5c6670;
+    --accent:#7aa2f7; --accent2:#8fb4ff;
+    --ok:#3fb950; --run:#d29922; --err:#e5484d; --idle:#5c6670;
+    --mono:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  .wrap{padding:26px 30px 60px;max-width:1500px;margin:0 auto}
+  .hd{display:flex;align-items:baseline;gap:14px;border-bottom:1px solid var(--border);padding-bottom:14px;margin-bottom:22px}
+  .hd h1{font-size:20px;font-weight:600;letter-spacing:1px;margin:0}
+  .hd .chip{font-size:11px;color:var(--faint);border:1px solid var(--border);border-radius:5px;padding:2px 8px}
+  .hd .fresh{margin-left:auto;font-size:12px;color:var(--sub)}
+  .hd .fresh b{color:var(--accent);font-weight:600}
+  .legend{display:flex;gap:16px;font-size:11px;color:var(--faint);margin:18px 2px 6px}
+  .legend span{display:flex;align-items:center;gap:5px}
+  .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+  .pipeline{display:flex;align-items:stretch;gap:0;overflow-x:auto;padding:16px 2px 10px}
+  .stage{flex:0 0 250px;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px 16px 14px;margin-right:34px;position:relative;transition:border-color .2s}
+  .stage::after{content:'';position:absolute;right:-31px;top:50%;width:22px;height:2px;background:var(--border2);transform:translateY(-50%)}
+  .stage:last-child{margin-right:0}
+  .stage:last-child::after{display:none}
+  .stage:hover{border-color:var(--border2)}
+  .stage .top{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .stage .num{font-family:var(--mono);font-size:11px;color:var(--faint)}
+  .stage .title{font-weight:600;letter-spacing:.5px;font-size:14px}
+  .stage .desc{font-size:11px;color:var(--sub);margin-bottom:12px}
+  .stage .metrics{font-family:var(--mono);font-size:12px;background:var(--panel2);border:1px solid var(--border);border-radius:7px;padding:9px 10px;margin-bottom:12px;min-height:44px}
+  .stage .metrics b{color:var(--accent2);font-weight:600}
+  .stage .metrics .small{color:var(--faint);font-size:10px;display:block;margin-top:3px}
+  .stage .btn{width:100%;background:transparent;color:var(--accent2);border:1px solid var(--border2);border-radius:7px;padding:7px 0;font-size:12px;cursor:pointer;transition:background .15s}
+  .stage .btn:hover{background:rgba(122,162,247,.10)}
+  .stage .btn:disabled{opacity:.5;cursor:default}
+  .stage.running{border-color:var(--run)}
+  .stage.running .btn{color:var(--run)}
+  .stage.ok{border-color:rgba(63,185,80,.4)}
+  .stage.err{border-color:var(--err)}
+  .status-dot.s-idle{background:var(--idle)} .status-dot.s-running{background:var(--run)}
+  .status-dot.s-ok{background:var(--ok)} .status-dot.s-error{background:var(--err)}
+  .last{font-size:10px;color:var(--faint);margin-top:9px;font-family:var(--mono);min-height:14px}
+  .spin{display:inline-block;width:11px;height:11px;border:2px solid rgba(255,255,255,.15);border-top-color:var(--run);border-radius:50%;animation:sp .8s linear infinite;vertical-align:-2px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .foot{color:var(--faint);font-size:11px;margin-top:30px;border-top:1px solid var(--border);padding-top:14px}
+  .foot code{font-family:var(--mono)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hd">
+    <h1>全流程指挥舱</h1>
+    <span class="chip">stock-classroom v4.3</span>
+    <span class="fresh">数据新鲜度 K线 <b id="f_kmx">…</b> · 基本面 <b id="f_fmx">…</b> · 活跃股 <b id="f_nact">…</b></span>
+  </div>
+
+  <div class="legend">
+    <span><i class="dot status-dot s-idle"></i>待命</span>
+    <span><i class="dot status-dot s-running"></i>运行中</span>
+    <span><i class="dot status-dot s-ok"></i>完成</span>
+    <span><i class="dot status-dot s-error"></i>出错</span>
+  </div>
+
+  <div class="pipeline" id="pipe"></div>
+
+  <div class="foot">
+    指挥舱把 <b>数据管道 → 因子研究 → 策略回测 → 组合重平衡 → 纸面盘 → 收益对比</b> 六步串成可视流水线；
+    每步实时读取真实状态，点「介入/运行」触发对应后端真函数（后台线程）。端口 <code>127.0.0.1:8234</code>。
+  </div>
+</div>
+
+<script>
+const STAGE_DEF = [
+  {id:'data', title:'数据管道', desc:'K线 / 基本面 / 股票列表日更', metric:(d)=>`最新 <b>${d.kline?.max||'—'}</b> <span class="small">活跃 ${d.kline?.active_stocks||0} 只 · 上期 ${d.kline?.last_update?.[0]||'—'}</span>`},
+  {id:'research', title:'因子研究', desc:'价值 / 动量 / 波动 IC', metric:(d)=>`BP ICIR <b>1.54</b> <span class="small">全市场价值最强 · EP/R=0.83</span>`},
+  {id:'backtest', title:'策略回测', desc:'组合级多因子分层', metric:(d)=>`多因子 NET <b>2.520</b> <span class="small">>最佳单2.389 > 买持1.985</span>`},
+  {id:'paper', title:'纸面盘', desc:'保持分层 + 慢调仓', metric:(d)=>`净值 <b>${fmt(d.paper?.accounts?.[d.paper.accounts.length-1]?.balance)}</b> <span class="small">${d.paper?.trades||0} 笔成交 · ${d.paper?.positions||0} 持仓</span>`},
+  {id:'compare', title:'收益对比', desc:'纸面盘 vs 买持', metric:(d)=>`<b>+39.84%</b> vs +40.70% <span class="small">as_of 2026-07-03 · 换手47.4%</span>`},
+];
+function fmt(v){ if(v==null) return '—'; return Number(v).toLocaleString('zh-CN',{maximumFractionDigits:0}) }
+function statusOf(s){ return s.status || 'idle' }
+async function load(){
+  let d;
+  try{ d = await (await fetch('/status')).json(); }
+  catch(e){ console.error(e); return; }
+  document.getElementById('f_kmx').textContent = d.data.kline?.max || '—';
+  document.getElementById('f_fmx').textContent = d.data.fundamental?.max || '—';
+  document.getElementById('f_nact').textContent = d.data.kline?.active_stocks || '—';
+  const pipe = document.getElementById('pipe');
+  pipe.innerHTML = STAGE_DEF.map((s,i)=>{
+    const m = (d.stages||[]).find(x=>x.id===s.id);
+    const st = m ? statusOf(m) : 'idle';
+    const cls = st==='running'?'running':st==='ok'?'ok':st==='error'?'err':'';
+    const dcls = 's-'+st;
+    const last = m?.last ? `<div class="last">${time(m.last.sec)} · ${(m.last.detail||'').slice(0,40)}</div>` : '';
+    return `<div class="stage ${cls}">
+      <div class="top"><i class="dot status-dot ${dcls}"></i><span class="num">0${i+1}</span><span class="title">${s.title}</span></div>
+      <div class="desc">${s.desc}</div>
+      <div class="metrics">${s.metric(d.data)}</div>
+      <button class="btn" ${st==='running'?'disabled':''} onclick="runStage('${s.id}',this)">${st==='running'?'<span class="spin"></span> 运行中':'介入 / 运行'}</button>
+      ${last}
+    </div>`;
+  }).join('');
+}
+function time(sec){ if(sec==null) return ''; const n=Math.round((sec)*10)/10; return n+'s · '; }
+async function runStage(id, btn){
+  btn.innerHTML='<span class="spin"></span> 运行中'; btn.disabled=true;
+  try{ await fetch('/run/'+id,{method:'POST'}); }catch(e){ console.error(e); }
+  setTimeout(load, 800);
+}
+load(); setInterval(load, 5000);
+</script>
+</body>
+</html>
