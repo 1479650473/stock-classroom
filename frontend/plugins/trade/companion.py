@@ -23,6 +23,8 @@ from .styles import (
     C_BG, C_PANEL, C_BORDER, C_TEXT, C_SUBTEXT, C_ACCENT,
     C_GREEN, C_RED, C_UP, C_DOWN,
 )
+from frontend.platform.local_worker import LocalWorker
+from frontend.plugins.research.worker import build_paper_only
 
 
 class ProfitCurve(QWidget):
@@ -33,6 +35,7 @@ class ProfitCurve(QWidget):
         self.setMouseTracking(True)
         self.setMinimumHeight(dp(160))
         self._points = []
+        self._overlay_points = []
         self._engine = None
         self._account_id = None
         self._hover_idx = -1
@@ -40,6 +43,11 @@ class ProfitCurve(QWidget):
     def set_data(self, points):
         self._points = points if points else []
         self._hover_idx = -1
+        self.update()
+
+    def set_overlay(self, points):
+        """叠加第二根净值曲线(组合纸面盘). points=[(date,value),...]; 传空清除."""
+        self._overlay_points = points if points else []
         self.update()
 
     def load(self, engine, account_id):
@@ -97,12 +105,18 @@ class ProfitCurve(QWidget):
             return
 
         points = self._points
-        if not points:
+        if not points and not self._overlay_points:
             painter.setPen(QColor(C_SUBTEXT))
             f = QFont()
             f.setPixelSize(13)
             painter.setFont(f)
             painter.drawText(self.rect(), Qt.AlignCenter, "\u6682\u65e0\u6536\u76ca\u6570\u636e")
+            painter.end()
+            return
+
+        # 组合纸面盘叠线模式: 双曲线归一化成收益指数(起始=100)对比
+        if self._overlay_points:
+            self._paint_overlay(painter, w, h)
             painter.end()
             return
 
@@ -199,6 +213,105 @@ class ProfitCurve(QWidget):
 
         painter.end()
 
+    def _paint_overlay(self, painter, w, h):
+        """双曲线: 账户收益指数(主) vs 组合纸面盘(叠线), 均归一化到 起始=100."""
+        def idx(points):
+            if not points:
+                return []
+            base = points[0][1] or 1.0
+            return [(p[0], p[1] / base * 100.0) for p in points]
+
+        main = idx(self._points)
+        over = idx(self._overlay_points)
+        allv = [v for _, v in main] + [v for _, v in over]
+        if not allv:
+            return
+        v_min, v_max = min(allv), max(allv)
+        if v_max == v_min:
+            v_max = v_min + 1
+        pad = (v_max - v_min) * 0.1 or 1
+        v_min -= pad
+        v_max += pad
+
+        MARGIN_T, MARGIN_B, MARGIN_L, MARGIN_R = 8, 28, 60, 12
+        chart_w = w - MARGIN_L - MARGIN_R
+        chart_h = h - MARGIN_T - MARGIN_B
+        if chart_w < 10 or chart_h < 10:
+            return
+
+        def to_x(i, n):
+            return MARGIN_L + (i / max(n - 1, 1)) * chart_w
+
+        def to_y(v):
+            return MARGIN_T + (1 - (v - v_min) / (v_max - v_min)) * chart_h
+
+        owner = self._points
+        main_color = QColor(C_UP) if (owner and owner[-1][1] >= owner[0][1]) else QColor(C_DOWN)
+        over_color = QColor(C_ACCENT)
+
+        painter.fillRect(0, 0, w, h, QColor(C_BG))
+        # grid + y labels (收益指数)
+        font_val = QFont(); font_val.setPixelSize(11)
+        painter.setPen(QPen(QColor("#1A1F28"), 1, Qt.DotLine))
+        n_grid = 5
+        for j in range(n_grid + 1):
+            y = MARGIN_T + (j / n_grid) * chart_h
+            painter.drawLine(int(MARGIN_L), int(y), int(w - MARGIN_R), int(y))
+            val = v_max - (j / n_grid) * (v_max - v_min)
+            painter.setFont(font_val)
+            painter.setPen(QColor(C_SUBTEXT))
+            painter.drawText(QRectF(0, y - 8, MARGIN_L - 4, 16), Qt.AlignRight | Qt.AlignVCenter,
+                             "{:.0f}".format(val))
+        # 主曲线(账户) + 面积
+        if len(main) >= 2:
+            grad = QPainterPath()
+            grad.moveTo(to_x(0, len(main)), MARGIN_T + chart_h)
+            for i in range(len(main)):
+                grad.lineTo(to_x(i, len(main)), to_y(main[i][1]))
+            grad.lineTo(to_x(len(main) - 1, len(main)), MARGIN_T + chart_h)
+            grad.closeSubpath()
+            gc = QColor(main_color); gc.setAlpha(28)
+            painter.setPen(Qt.NoPen); painter.setBrush(gc)
+            painter.drawPath(grad)
+            painter.setPen(QPen(main_color, 2)); painter.setBrush(Qt.NoBrush)
+            for i in range(1, len(main)):
+                painter.drawLine(int(to_x(i - 1, len(main))), int(to_y(main[i - 1][1])),
+                                 int(to_x(i, len(main))), int(to_y(main[i][1])))
+            painter.setBrush(QColor("#FFFFFF")); painter.setPen(QPen(main_color, 2))
+            painter.drawEllipse(int(to_x(len(main) - 1, len(main)) - 4),
+                                int(to_y(main[-1][1]) - 4), 8, 8)
+        # 叠线(组合纸面盘)
+        if len(over) >= 2:
+            painter.setPen(QPen(over_color, 2)); painter.setBrush(Qt.NoBrush)
+            for i in range(1, len(over)):
+                painter.drawLine(int(to_x(i - 1, len(over))), int(to_y(over[i - 1][1])),
+                                 int(to_x(i, len(over))), int(to_y(over[i][1])))
+            painter.setBrush(over_color); painter.setPen(Qt.NoPen)
+            painter.drawEllipse(int(to_x(len(over) - 1, len(over)) - 4),
+                                int(to_y(over[-1][1]) - 4), 8, 8)
+        # 图例 + x 轴
+        font_leg = QFont(); font_leg.setPixelSize(10)
+        painter.setFont(font_leg)
+        painter.setPen(main_color)
+        painter.drawText(QRectF(MARGIN_L, MARGIN_T - 16, 70, 16), Qt.AlignLeft, "\u2014 \u8d26\u6237")
+        painter.setPen(over_color)
+        painter.drawText(QRectF(MARGIN_L + 78, MARGIN_T - 16, 90, 16), Qt.AlignLeft, "\u2014 \u7ec4\u5408\u7eb8\u9762\u76d8")
+        # x 轴日期
+        xseries = over if len(over) >= len(main) else main
+        if len(xseries) >= 2:
+            painter.setPen(QColor(C_SUBTEXT))
+            font_date = QFont(); font_date.setPixelSize(9)
+            painter.setFont(font_date)
+            n_labels = min(len(xseries), 6)
+            step = max(len(xseries) // max(n_labels, 1), 1)
+            for i in range(0, len(xseries), step):
+                lbl = xseries[i][0]
+                if len(lbl) > 7:
+                    lbl = lbl[5:]
+                x = to_x(i, len(xseries))
+                painter.drawText(QRectF(x - 30, MARGIN_T + chart_h + 2, 60, 20),
+                                 Qt.AlignCenter, lbl)
+
     def mouseMoveEvent(self, event):
         if not self._points:
             return
@@ -243,6 +356,8 @@ class TradeCompanion(QWidget):
 
         self._curve = ProfitCurve()
         lo.addWidget(self._curve, 1)
+        # 后台计算组合纸面盘一次(慢), 完成后叠加到收益曲线
+        self._start_paper_worker()
 
         sep1 = QFrame()
         sep1.setFrameShape(QFrame.HLine)
@@ -352,6 +467,40 @@ class TradeCompanion(QWidget):
         btn_create.clicked.connect(self._on_create)
         create_row.addWidget(btn_create)
         lo.addLayout(create_row)
+
+    def _start_paper_worker(self):
+        """后台计算一次组合纸面盘(慢), 完成叠加到收益曲线; 已算过则跳过."""
+        if getattr(self, "_paper_done", False):
+            return
+        if getattr(self, "_paper_worker", None) is not None and self._paper_worker.isRunning():
+            return
+
+        def work():
+            try:
+                r = build_paper_only(hp=20)
+                return {"code": 0, "data": r}
+            except Exception as e:
+                return {"code": -1, "error": str(e)}
+
+        self._paper_worker = LocalWorker(work, "paper")
+        self._paper_worker.result.connect(self._on_paper)
+        self._paper_worker.start()
+
+    def _on_paper(self, tag, data):
+        if not isinstance(data, dict) or data.get("code") == -1:
+            self._paper_done = True
+            return
+        r = data.get("data") or {}
+        paper = r.get("paper") or {}
+        nav = paper.get("nav") or []
+        dates = paper.get("dates") or []
+        if not nav or not dates:
+            self._paper_done = True
+            return
+        # 转成 (date, value) 叠线; ProfitCurve 内部归一化成收益指数(起始=100)
+        pts = [(dates[i], nav[i]) for i in range(len(nav))]
+        self._curve.set_overlay(pts)
+        self._paper_done = True
 
     def set_account(self, account_id):
         self._account_id = account_id
