@@ -53,6 +53,9 @@ def _sync_pal():
 
 
 _sync_pal()
+# 让 premium.PAL 随主题切换自刷新(外壳 _on_theme_changed 并未同步 PAL —— 这里补上,
+# 否则所有用 PAL[*] 绘制的面板(卡片/曲线等)切主题后仍停留在默认 graphite)
+_th.signals.changed.connect(_sync_pal)
 
 
 def _tkey(key):

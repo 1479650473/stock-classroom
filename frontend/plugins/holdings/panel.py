@@ -18,6 +18,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.a
 PAPER_RUNS = os.path.join(ROOT, 'data', 'paper_runs.json')
 PAPER_JSON = os.path.join(ROOT, 'data', 'paper_run.json')
 KLINE_DB = os.path.join(ROOT, 'data', 'kline.db')
+HS300_JSON = os.path.join(ROOT, 'data', 'hs300.json')
 _INIT = 1_000_000.0
 
 
@@ -58,18 +59,60 @@ def _close_map(codes, date):
         return {}
 
 
+def _load_hs300(rebal_dates):
+    """读沪深300基线缓存 data/hs300.json → 采样到重平衡日网格, 返回 {dates, nav(绝对市值, ×INIT)}.
+
+    nav = (close/close[首重平衡日]) * _INIT —— 与策略同单位(增长倍数×INIT), 起点=1.0."""
+    import bisect
+    try:
+        d = json.load(open(HS300_JSON, encoding='utf-8'))
+        dates = d.get('dates', []) or []
+        closes = d.get('closes', []) or []
+        if not dates or not rebal_dates:
+            return None
+        cmap = {str(x)[:10]: float(c) for x, c in zip(dates, closes)}
+        keys = sorted(cmap)
+
+        def close_on(g):
+            idx = bisect.bisect_right(keys, str(g)[:10]) - 1
+            return cmap[keys[idx]] if idx >= 0 else None
+
+        base = None
+        for g in rebal_dates:
+            v = close_on(g)
+            if v:
+                base = v
+                break
+        if not base:
+            return None
+        out_d, out_n = [], []
+        for g in rebal_dates:
+            v = close_on(g)
+            if v is not None:
+                out_d.append(str(g)[:10])
+                out_n.append(v / base * _INIT)
+        return {'dates': out_d, 'nav': out_n} if out_n else None
+    except Exception:
+        return None
+
+
 class _EquityCurve(QWidget):
-    """多策略收益曲线: 各策略净值(选中加亮) vs 等权买持(虚线). 归一化为增长倍数."""
+    """多策略收益曲线(高级版): 各策略净值(选中加亮+面积填充) vs 买持/沪深300 基线.
+
+    归一化为增长倍数(y 轴=收益率). 主题 token 驱动, 无硬编码 hex; 选中=accent 粗线,
+    非选中=accent 阶梯透明度, 基线=中性灰不同线型(买持虚线 / 沪深300点线)."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumHeight(dp(212))
+        self.setMinimumHeight(dp(224))
         self._series = []   # [{name, dates, nav, selected}]
         self._bh = None     # {dates, nav}
+        self._hs300 = None  # {dates, nav}
 
-    def set_series(self, series, buyhold=None):
+    def set_series(self, series, buyhold=None, hs300=None):
         self._series = series or []
         self._bh = buyhold or None
+        self._hs300 = hs300 or None
         self.update()
 
     def _common_axis(self):
@@ -78,6 +121,8 @@ class _EquityCurve(QWidget):
             ds.update(s.get('dates', []))
         if self._bh:
             ds.update(self._bh.get('dates', []))
+        if self._hs300:
+            ds.update(self._hs300.get('dates', []))
         return sorted(ds)
 
     @staticmethod
@@ -94,18 +139,25 @@ class _EquityCurve(QWidget):
         vals = []
         for s in self._series:
             vals += [(v / _INIT) for v in s.get('nav', [])]
-        if self._bh:
-            vals += [(v / _INIT) for v in self._bh.get('nav', [])]
+        for src in (self._bh, self._hs300):
+            if src:
+                vals += [(v / _INIT) for v in src.get('nav', [])]
         vals = [v for v in vals if v is not None]
         if not vals:
             return 0.9, 1.1
         return min(vals), max(vals)
 
+    def _paint_bg(self, p, w, h):
+        # 极致克制的底部微亮(纯色极低alpha, 避免深色图上渐变硬崩风险)
+        c = QColor(PAL['c_mid']); c.setAlpha(14)
+        p.fillRect(0, 0, w, h, c)
+
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         w, h = self.width(), self.height()
-        pad_l, pad_r, pad_t, pad_b = dp(48), dp(10), dp(38), dp(30)
+        pad_l, pad_r, pad_t, pad_b = dp(50), dp(18), dp(44), dp(30)
+        self._paint_bg(p, w, h)
         if not self._series:
             self._empty(p, w, h); p.end(); return
         common = self._common_axis()
@@ -115,70 +167,137 @@ class _EquityCurve(QWidget):
         span = vmax - vmin
         if span < 1e-6:
             vmax += 0.02; span = vmax - vmin
-        vmin, vmax = vmin - span * 0.06, vmax + span * 0.06
+        vmin, vmax = vmin - span * 0.07, vmax + span * 0.07
 
         def X(i): return pad_l + (w - pad_l - pad_r) * (i / (len(common) - 1))
         def Y(v): return pad_t + (h - pad_t - pad_b) * (1 - (v - vmin) / (vmax - vmin))
 
         # 网格 + y 刻度
-        p.setPen(QPen(QColor(PAL['border_lo']), 1))
-        p.setFont(QFont("Microsoft YaHei", _pt(7)))
+        gridd = QColor(PAL['border_lo']); gridd.setAlpha(100)
+        p.setFont(QFont("Microsoft YaHei", _pt(8)))
         for i in range(5):
             gy = pad_t + (h - pad_t - pad_b) * (i / 4)
-            p.drawLine(QPointF(pad_l, gy), QPointF(w - pad_r, gy))
             v = vmax - (vmax - vmin) * (i / 4)
-            p.drawText(QPointF(2, gy + _pt(3)), f"{v - 1.0:+.0%}")
+            p.setPen(QPen(gridd, 1))
+            p.drawLine(QPointF(pad_l, gy), QPointF(w - pad_r, gy))
+            p.setPen(QColor(PAL['sub']))
+            p.drawText(QPointF(4, gy + _pt(3)), f"{v - 1.0:+.0%}")
+        # 零线(收益=0)
+        if vmin < 1.0 < vmax:
+            zc = QColor(PAL['faint']); zc.setAlpha(70)
+            p.setPen(QPen(zc, 1, Qt.DashLine))
+            p.drawLine(QPointF(pad_l, Y(1.0)), QPointF(w - pad_r, Y(1.0)))
 
-        # 绘制序列(买持底 → 非选中细 → 选中加亮在上层)
-        plotted = []
-        if self._bh:
-            bvals = self._align(common, self._bh.get('dates', []), self._bh.get('nav', []))
-            plotted.append((bvals, QColor(PAL['border_lo']), 1.0, Qt.DashLine, False))
+        def aligned(dates, values):
+            return self._align(common, dates, values)
+
+        acc = QColor(PAL['accent'])
+        alphas = [165, 128, 95, 62]
         sel_idx = next((i for i, s in enumerate(self._series) if s.get('selected')), -1)
-        muted = [PAL['sub'], PAL['faint'], PAL['down'], PAL['up'], PAL['text']]
+        # 先画基线(买持灰虚线, 沪深300点线)
+        baselines = []
+        if self._bh:
+            baselines.append(('买持', aligned(self._bh['dates'], self._bh['nav']),
+                              QColor(PAL['faint']), 1.3, Qt.DashLine))
+        if self._hs300:
+            baselines.append(('沪深300', aligned(self._hs300['dates'], self._hs300['nav']),
+                              QColor(PAL['sub']), 1.4, Qt.DashDotLine))
+        for name, vlist, color, width, dash in baselines:
+            poly = QPolygonF([QPointF(X(i), Y(v / _INIT)) for i, v in enumerate(vlist) if v is not None])
+            pen = QPen(color, width); pen.setStyle(dash)
+            p.setPen(pen); p.setBrush(Qt.NoBrush); p.drawPolyline(poly)
+        # 非选中策略(accent 阶梯透明度, 细)
         non_sel = [s for i, s in enumerate(self._series) if i != sel_idx]
         for k, s in enumerate(non_sel):
-            bvals = self._align(common, s.get('dates', []), s.get('nav', []))
-            plotted.append((bvals, QColor(muted[k % len(muted)]), 1.0, Qt.SolidLine, False))
+            c = QColor(acc); c.setAlpha(alphas[k % len(alphas)])
+            vlist = aligned(s['dates'], s['nav'])
+            poly = QPolygonF([QPointF(X(i), Y(v / _INIT)) for i, v in enumerate(vlist) if v is not None])
+            p.setPen(QPen(c, 1.2)); p.setBrush(Qt.NoBrush); p.drawPolyline(poly)
+        # 选中策略: 面积填充 + 粗线(最上层)
         if sel_idx >= 0:
             s = self._series[sel_idx]
-            bvals = self._align(common, s.get('dates', []), s.get('nav', []))
-            plotted.append((bvals, QColor(PAL['accent']), 2.5, Qt.SolidLine, True))
-        for vlist, color, width, dash, _sel in plotted:
-            poly = QPolygonF([QPointF(X(i), Y(v / _INIT)) for i, v in enumerate(vlist) if v is not None])
-            pen = QPen(color, width)
-            pen.setStyle(dash)
-            p.setPen(pen); p.setBrush(Qt.NoBrush); p.drawPolyline(poly)
-
+            vlist = aligned(s['dates'], s['nav'])
+            pts = [(X(i), Y(v / _INIT)) for i, v in enumerate(vlist) if v is not None]
+            if len(pts) >= 2:
+                band = QPolygonF([QPointF(x, y) for x, y in pts] +
+                                 [QPointF(pts[-1][0], h - pad_b), QPointF(pts[0][0], h - pad_b)])
+                # 纯色极低alpha填充(柔和不抢戏; 避免渐变画笔在部分Qt5上的稳定问题)
+                fillc = QColor(acc); fillc.setAlpha(22)
+                p.setPen(Qt.NoPen); p.setBrush(fillc); p.drawPolygon(band)
+                p.setPen(QPen(QColor(acc), 2.6)); p.setBrush(Qt.NoBrush)
+                p.drawPolyline(QPolygonF([QPointF(x, y) for x, y in pts]))
+            self._final_label(p, pts[-1], vlist, QColor(acc), pad_r, w, pad_l)
+        # 基线端收益标注
+        for name, vlist, color, width, dash in baselines:
+            bpts = [(X(i), Y(v / _INIT)) for i, v in enumerate(vlist) if v is not None]
+            if bpts:
+                self._final_label(p, bpts[-1], vlist, color, pad_r, w, pad_l)
         # 首末日期
         p.setPen(QColor(PAL['sub']))
         p.drawText(QPointF(pad_l, h - 6), str(common[0])[:10])
         last_label = str(common[-1])[:10]
         p.drawText(QPointF(w - pad_r - QFontMetricsF(p.font()).width(last_label), h - 6), last_label)
+        # 图例
+        self._legend(p, w, pad_l, pad_r, acc, alphas, sel_idx)
+        p.end()
 
-        # 图例(顶部, 自动换行)
+    def _final_label(self, p, pt, vlist, color, pad_r, w, pad_l):
+        """在序列末端标注最终收益率(右对齐). pt: 末端 (x,y); vlist: 对齐序列."""
+        last = None
+        for v in reversed(vlist):
+            if v is not None:
+                last = v / _INIT
+                break
+        if last is None or pt is None:
+            return
+        txt = f"{last - 1.0:+.1%}"
+        fm = p.fontMetrics()
+        tw = fm.width(txt)
+        x = pt[0] - tw - dp(8)
+        if x < pad_l:
+            x = pad_l
+        p.setPen(QColor(color))
+        p.drawText(QPointF(x, pt[1] + _pt(4)), txt)
+
+    def _legend(self, p, w, pad_l, pad_r, acc, alphas, sel_idx):
         items = []
         for i, s in enumerate(self._series):
             if s.get('selected'):
-                items.append((QColor(PAL['accent']), 2.5, "★ " + s.get('name', ''), True))
+                items.append((QColor(acc), 2.6, "★ " + s.get('name', '')))
             else:
-                items.append((QColor(muted[[j for j, x in enumerate(self._series) if x is not s][0] % len(muted)]),
-                              1.0, s.get('name', ''), False))
+                c = QColor(acc); c.setAlpha(alphas[[j for j, x in enumerate(self._series) if x is not s][0] % len(alphas)])
+                items.append((c, 1.2, s.get('name', '')))
         if self._bh:
-            items.append((QColor(PAL['border_lo']), 1.0, "买持", False))
-        x0, y = pad_l, dp(4)
+            items.append((QColor(PAL['faint']), 1.3, "买持"))
+        if self._hs300:
+            items.append((QColor(PAL['sub']), 1.4, "沪深300"))
+        # 图例底衬
+        n_rows = 1
         fm = p.fontMetrics()
-        for color, width, label, sel in items:
+        x0, y = pad_l, dp(6)
+        est_w = pad_l
+        for color, width, label in items:
+            lw = fm.width(label)
+            if est_w + dp(13) + dp(6) + lw + dp(14) > w - pad_r:
+                n_rows += 1
+                est_w = pad_l
+            est_w += dp(13) + dp(6) + lw + dp(14)
+        leg_h = dp(6) + n_rows * dp(16)
+        bg0 = QColor(PAL['c_mid']); bg0.setAlpha(120)
+        p.fillRect(0, 0, w, leg_h, bg0)
+        p.setPen(QPen(QColor(PAL['border_lo']), 1))
+        p.drawLine(QPointF(0, leg_h), QPointF(w, leg_h))
+        x0, y = pad_l, dp(6)
+        for color, width, label in items:
             sw = dp(13)
             lw = fm.width(label)
             if x0 + sw + dp(6) + lw > w - pad_r:
-                x0 = pad_l; y += dp(15)
+                x0 = pad_l; y += dp(16)
             pen = QPen(color, width); p.setPen(pen)
             p.drawLine(QPointF(x0, y + dp(7)), QPointF(x0 + sw, y + dp(7)))
-            p.setPen(QColor(PAL['text'] if sel else PAL['sub']))
+            p.setPen(QColor(PAL['text']))
             p.drawText(QPointF(x0 + sw + dp(5), y + dp(10)), label)
             x0 += sw + dp(6) + lw + dp(14)
-        p.end()
 
     def _empty(self, p, w, h):
         p.setPen(QColor(PAL['faint']))
@@ -296,7 +415,9 @@ class HoldingsPanel(QWidget):
                            'selected': name == self._strategy_combo.currentText()})
         bh = self._data.get('buyhold') or {}
         bh_abs = {'dates': bh.get('dates', []), 'nav': [(v * _INIT) for v in bh.get('nav', [])]}
-        self._curve.set_series(series, bh_abs)
+        grid = series[0]['dates'] if series else []
+        hs300 = _load_hs300(grid) if grid else None
+        self._curve.set_series(series, bh_abs, hs300)
         if not paper or paper.get('error'):
             for k in ("v0", "vend", "ret", "reb", "to", "asof"):
                 self._sum_labels[k].setText("—")
