@@ -31,7 +31,7 @@
 | — | 价值 regime 开关+价值tilt接决策门+补抓历史K线 | `8529196` | value_tilt_state + 决策门tilt + verify_value_regime + prefetch_kline_history | regime/gate |
 | — | 价值 regime 开关升级+value_tilt硬裁决+因子×景气周期框架 | `d579ea3` | 价值价差自指开关 + value_hard_rule + factor_cycle矩阵 | regime2/gate/facycle |
 | — | 组合级价值tilt+市场宽度第三路信号+多因子分层 | `7b2c333` | 价值升级为组合层(权重tilt) + 破年线宽度信号 + 分层而非独立回测 | pf/tilt_alloc |
-| — | 重平衡选股器+NET计成本+全局寻优+多窗口 | `pending` | portfolio_rebalance(接portfolio_value_alloc) + ResearchLoop.portfolio_paper 挂进主闭环 + NET分层保留/tilt不增价值(修正) + 训练/验证分离 + hp多窗口 + HP=5断点机制(纯成本) + 框架/优化脚本彻底对齐 | pfopt/paper/hp5/loop |
+| — | 重平衡选股器+NET计成本+全局寻优+多窗口 | `b6aa4c9` | portfolio_rebalance(接portfolio_value_alloc) + ResearchLoop.portfolio_paper 挂进主闭环 + NET分层保留/tilt不增价值(修正) + 训练/验证分离 + hp多窗口 + HP=5断点机制(纯成本) + 框架/优化脚本彻底对齐 | pfopt/paper/hp5/loop |
 
 ## 关键验证汇总(2026-08-24，工作区干净)
 
