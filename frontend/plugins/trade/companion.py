@@ -103,8 +103,8 @@ class ProfitCurve(QWidget):
 
     def _fill_chart_bg(self, p, w, h):
         g = QLinearGradient(0, 0, 0, h)
-        g.setColorAt(0.0, QColor("#181E29"))
-        g.setColorAt(1.0, QColor("#12161E"))
+        g.setColorAt(0.0, QColor(PAL["c_top"]))
+        g.setColorAt(1.0, QColor(PAL["c_bot"]))
         p.fillRect(0, 0, w, h, g)
 
     def _grid(self, p, w, h, pad_l, pad_t, iw, ih, v_min, v_max, font_val):

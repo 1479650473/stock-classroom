@@ -88,14 +88,7 @@ class MarketPanel(QWidget):
         for btn in [self._btn_ind, self._btn_cpt]:
             btn.setFixedHeight(dp(26))
             btn.setCursor(Qt.PointingHandCursor)
-            btn.setStyleSheet(
-                f"QPushButton{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-                f"stop:0 #1B222C,stop:1 #151A24);color:{C_SUBTEXT};"
-                f"border:1px solid #222A35;border-top:1px solid #2C3542;"
-                f"border-radius:{dps(6)};padding:{dps(3)} {dps(14)};font-size:{fs(11)};font-weight:500;}}"
-                f"QPushButton:hover{{color:{C_TEXT};border-top-color:{C_ACCENT};}}"
-                f"QPushButton:checked{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-                f"stop:0 #C99763,stop:1 #B07F4E);color:#1A1410;border-color:#C99763;font-weight:600;}}")
+            btn.setObjectName("indBtn")
             self._sector_tabs.addWidget(btn)
         self._sector_tabs.addStretch()
         lo.addLayout(self._sector_tabs)
@@ -285,7 +278,7 @@ class MarketPanel(QWidget):
         self.table.setHorizontalHeaderLabels(cols)
 
         for i, b in enumerate(sectors):
-            bg = QColor("#151A24") if i % 2 else QColor("#10141B")
+            bg = QColor(PAL["panel"]) if i % 2 else QColor(PAL["bg"])
             change = b.get("change_pct", 0)
             chg_color = C_RISE if change >= 0 else C_FALL
             ldr_chg = b.get("leader_chg", 0)

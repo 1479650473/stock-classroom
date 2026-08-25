@@ -21,6 +21,10 @@ if __name__ == "__main__":
     try:
         settings = load_settings()
         font_size = settings.get("font_size", 13)
+        theme_key = settings.get("theme", "graphite")
+
+        from frontend.platform import theme as _th
+        _th.set_theme(theme_key)
 
         app = QApplication(sys.argv)
         app.setStyle(QStyleFactory.create("fusion"))

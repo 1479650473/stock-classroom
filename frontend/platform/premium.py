@@ -1,64 +1,90 @@
 # -*- coding: utf-8 -*-
-"""Premium shared UI toolkit for stock-classroom.
+"""Premium shared UI toolkit for stock-classroom — THEME-AWARE.
 
-Single source for the '高级感' design language used across plugins:
-palette, gradient card QSS, gold-section-title, and the count-up label.
+Reads all colours/stops from the ACTIVE theme (frontend.platform.theme), so a
+theme switch re-styles every premium widget (gradient cards, section titles,
+count-up labels, gauges, split bars) without per-plugin edits.
 
-Mirrors the research panel's _PAL / _CARD_QSS / light-numbers look so the
-trade companion, datacenter, and any new panel can inherit it without each
-re-declaring colors or QSS (which previously drift apart).
+Public: PAL (synced to the active theme), ACCENT, card_qss(), value_ss(),
+label_ss(), pill_ss(), SectionTitle, CountUpLabel, BreadthGauge, SplitBar,
+_tilt_color().
 """
+
+import math
 
 from PyQt5.QtCore import Qt, QTimer, QRectF
 from PyQt5.QtWidgets import QLabel, QFrame, QWidget, QHBoxLayout
 from PyQt5.QtGui import QPainter, QColor, QPen, QFont, QLinearGradient
 
-import math
+from . import theme as _th
 
-from .theme import dp, dps, fs, C_ACCENT, C_BORDER_SOFT
-
-# ── Premium palette (deep grey-gold, restrained) ──────────────────
+# ── Palette, synced from the active theme ──────────────────────
 PAL = {
-    "bg": "#0D1117", "c_top": "#1D2431", "c_mid": "#161C27", "c_bot": "#121720",
-    "border_lo": "#10141B", "border_hi": "#333D4A", "accent": "#D4A574",
-    "text": "#E6EDF3", "sub": "#8B949E", "faint": "#6E7681",
-    "up": "#E5484D", "down": "#3FB950",
-    # brightened soft for charts/grids
-    "grid": "#1A2028", "axis": "#2A3340",
+    "bg": "#0B0D11", "c_top": "#15181D", "c_mid": "#12151A", "c_bot": "#0E1115",
+    "border_lo": "#232830", "border_hi": "#2E343C", "accent": "#7AA2F7",
+    "text": "#E8EAED", "sub": "#9AA3B0", "faint": "#5C6670",
+    "up": "#E5484D", "down": "#3FB950", "grid": "#1D222A", "axis": "#2E343C",
 }
 
-ACCENT = PAL["accent"]
+# maps premium key -> theme token path (callables so they re-read live)
+__MAP = {
+    "bg": lambda t: t["bg"],
+    "c_top": lambda t: t["card_stops"][0],
+    "c_mid": lambda t: t["card_stops"][1],
+    "c_bot": lambda t: t["card_stops"][2],
+    "border_lo": lambda t: t["card_border"],
+    "border_hi": lambda t: t["card_border_top"],
+    "accent": lambda t: t["accent"],
+    "text": lambda t: t["text"],
+    "sub": lambda t: t["sub"],
+    "faint": lambda t: t["faint"],
+    "up": lambda t: t["up"],
+    "down": lambda t: t["down"],
+    "grid": lambda t: t["border_soft"],
+    "axis": lambda t: t["border_top"],
+}
 
 
-def card_qss(name="card", radius=10) -> str:
-    """Vertical matte gradient card + top-highlight bevel (+ hover gold edge).
+def _sync_pal():
+    t = _th.current_theme()
+    for k, fn in __MAP.items():
+        PAL[k] = fn(t)
 
-    Use on a QFrame: `f.setObjectName(name); f.setStyleSheet(card_qss(name))`.
-    NOTE: QSS braces are built by string concatenation — never .format() here.
-    """
+
+_sync_pal()
+
+
+def _tkey(key):
+    return _th.current_theme()[key]
+
+
+def card_qss(name="card", radius: int = None) -> str:
+    """Vertical matte gradient card + top-highlight bevel (+ hover edge)."""
+    r = _tkey("radius_card") if radius is None else radius
+    s = _tkey("card_stops")
     return (
         f"QFrame#{name}{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-        f"stop:0 {PAL['c_top']},stop:0.55 {PAL['c_mid']},stop:1 {PAL['c_bot']});"
-        f"border:1px solid {PAL['border_lo']};border-top:1px solid {PAL['border_hi']};"
-        f"border-radius:{dps(radius)};}}"
-        f"QFrame#{name}:hover{{border-top:1px solid {PAL['accent']};border-color:#2B3441;}}"
+        f"stop:0 {s[0]},stop:0.55 {s[1]},stop:1 {s[2]});"
+        f"border:1px solid {_tkey('card_border')};border-top:1px solid {_tkey('card_border_top')};"
+        f"border-radius:{_th.dps(r)};}}"
+        f"QFrame#{name}:hover{{border-top:1px solid {_tkey('card_hover_border')};border-color:{_tkey('raised')};}}"
     )
 
 
 def value_ss(color=None, size=17) -> str:
     """Light-weight wide number style (Segoe UI Light, font-weight 300)."""
     return (
-        f"color:{color or PAL['text']};font-size:{fs(size)};font-weight:300;background:transparent;"
+        f"color:{color or _tkey('text')};font-size:{_th.fs(size)};font-weight:300;background:transparent;"
         f"font-family:'Segoe UI Light','Microsoft YaHei UI Light','Microsoft YaHei',sans-serif;"
-        f"letter-spacing:{dp(0.5)}px;"
+        f"letter-spacing:{_th.dp(0.5)}px;"
     )
 
 
 def label_ss(size=10, color=None) -> str:
     """Small unit label — widened letter-spacing for a refined look."""
     return (
-        f"color:{color or PAL['sub']};font-size:{fs(size)};font-weight:500;"
-        f"letter-spacing:{dp(1.5)}px;background:transparent;"
+        f"color:{color or _tkey('sub')};font-size:{_th.fs(size)};font-weight:500;"
+        f"letter-spacing:{_th.dp(1.5)}px;background:transparent;"
     )
 
 
@@ -71,7 +97,7 @@ def pill_ss(color, alpha=0.12, border_alpha=0.35) -> str:
     return (
         f"background:rgba({r},{g},{b},{alpha});color:{color};"
         f"border:1px solid rgba({r},{g},{b},{border_alpha});"
-        f"border-radius:{dps(5)};padding:{dps(2)} {dps(9)};"
+        f"border-radius:{_th.dps(5)};padding:{_th.dp(2)} {_th.dp(9)};"
     )
 
 
@@ -82,23 +108,32 @@ def _hex_rgb(c):
     return int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
 
 
+def _tilt_color(tilt):
+    t = _th.current_theme()
+    if tilt == "value_favorable" or tilt == "favorable":
+        return t["down"]
+    if tilt == "value_headwind" or tilt == "headwind":
+        return t["up"]
+    return t["accent"]
+
+
 class SectionTitle(QWidget):
-    """Gold short-bar + letter-spaced label section heading."""
+    """Accent short-bar + letter-spaced label section heading."""
 
     def __init__(self, text, parent=None, size=12):
         super().__init__(parent)
         lo = QHBoxLayout(self)
         lo.setContentsMargins(0, 0, 0, 0)
-        lo.setSpacing(dp(7))
+        lo.setSpacing(_th.dp(7))
         bar = QFrame()
-        bar.setFixedSize(dp(3), dp(15))
+        bar.setFixedSize(_th.dp(3), _th.dp(15))
         bar.setStyleSheet(
-            f"background:{PAL['accent']};border-radius:{dp(1)}px;border:none;")
+            f"background:{_tkey('accent')};border-radius:{_th.dp(1)}px;border:none;")
         lo.addWidget(bar)
         self._lbl = QLabel(text)
         self._lbl.setStyleSheet(
-            f"color:{PAL['text']};font-size:{fs(size)};font-weight:600;"
-            f"letter-spacing:{dp(2)}px;background:transparent;")
+            f"color:{_tkey('text')};font-size:{_th.fs(size)};font-weight:600;"
+            f"letter-spacing:{_th.dp(2)}px;background:transparent;")
         lo.addWidget(self._lbl)
         lo.addStretch()
 
@@ -107,21 +142,12 @@ class SectionTitle(QWidget):
 
 
 class CountUpLabel(QLabel):
-    """Animated count-up numeric label (ease-out cubic, ~0.8s).
-
-    `animate_to(value, fmt=None)` rides smoothly from the currently-displayed
-    value to the new target (first call counts up from 0). `fmt` is a callable
-    value -> str; default is thousands-separated integer. Repeated calls with
-    the same target are a no-op (no churn on refresh).
-    """
+    """Animated count-up numeric label (ease-out cubic, step-based)."""
 
     def __init__(self, parent=None, fmt=None, duration=800, max_chars=30):
         super().__init__(parent)
         self._fmt = fmt or (lambda v: f"{v:,.0f}")
         self._interval = 16
-        # step-based (not wall-clock): QTimer + time.monotonic resolution can be
-        # unreliable on some hosts (t never reached 1.0). Stepping by count
-        # guarantees convergence to the exact target.
         self._steps = max(int(duration / self._interval), 1)
         self._step = 0
         self._max_chars = max_chars
@@ -143,7 +169,6 @@ class CountUpLabel(QLabel):
             self._cur = self._target
             self.setText(self._fmt(self._target)[: self._max_chars])
             return
-        # ease-out cubic
         e = 1.0 - (1.0 - t) ** 3
         self._cur = self._from + (self._target - self._from) * e
         self.setText(self._fmt(self._cur)[: self._max_chars])
@@ -162,7 +187,6 @@ class CountUpLabel(QLabel):
         self._timer.start()
 
     def set_immediate(self, value, fmt=None):
-        """Set instantly (no animation) — for empty/placeholder states."""
         if fmt is not None:
             self._fmt = fmt
         self._cur = float(value)
@@ -171,26 +195,14 @@ class CountUpLabel(QLabel):
         self.setText(self._fmt(self._cur)[: self._max_chars])
 
 
-def _tilt_color(tilt):
-    if tilt == "value_favorable" or tilt == "favorable":
-        return PAL["down"]
-    if tilt == "value_headwind" or tilt == "headwind":
-        return PAL["up"]
-    return PAL["accent"]
-
-
 class BreadthGauge(QWidget):
-    """Semicircular gauge for a 0-1 fraction (e.g. 破年线占比 / 市场宽度).
-
-    Arc colored by value-tilt (favorable=green, headwind=red, ACID accent), ticks
-    at the 0.5 / 0.6 regime boundaries, + a needle and centered % readout.
-    """
+    """Semicircular gauge for a 0-1 fraction (破年线占比 / 市场宽度)."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._value = 0.5
         self._tilt = "value_neutral"
-        self.setMinimumHeight(dp(96))
+        self.setMinimumHeight(_th.dp(96))
 
     def set_value(self, value, tilt="value_neutral"):
         self._value = max(0.0, min(1.0, float(value or 0.0)))
@@ -204,22 +216,21 @@ class BreadthGauge(QWidget):
         if w < 30 or h < 30:
             p.end()
             return
+        t = _th.current_theme()
         cx = w / 2.0
         cy = h * 0.82
         radius = min(w * 0.42, h * 0.72)
         rect = QRectF(cx - radius, cy - radius, radius * 2, radius * 2)
         span = 180.0
-        thick = max(radius * 0.16, dp(3))
+        thick = max(radius * 0.16, _th.dp(3))
         arc = int(-span * 16)
 
-        # track (full semicircle)
-        p.setPen(QPen(QColor(PAL["axis"]), thick, Qt.SolidLine, Qt.RoundCap))
+        p.setPen(QPen(QColor(t["border_top"]), thick, Qt.SolidLine, Qt.RoundCap))
         p.drawArc(rect, 180 * 16, arc)
 
-        # regime tick marks at 0.5 and 0.6
-        tick = QPen(QColor(PAL["faint"]), max(1.0, radius * 0.02))
+        tick = QPen(QColor(t["faint"]), max(1.0, radius * 0.02))
         for frac in (0.5, 0.6):
-            a = math.pi - math.pi * frac  # 180deg -> 0deg (left->right)
+            a = math.pi - math.pi * frac
             x1 = cx + math.cos(a) * radius
             y1 = cy - math.sin(a) * radius
             x2 = cx + math.cos(a) * (radius - thick * 0.9)
@@ -227,40 +238,37 @@ class BreadthGauge(QWidget):
             p.setPen(tick)
             p.drawLine(int(x1), int(y1), int(x2), int(y2))
 
-        # value arc (colored by tilt)
         color = QColor(_tilt_color(self._tilt))
         p.setPen(QPen(color, thick, Qt.SolidLine, Qt.RoundCap))
         p.drawArc(rect, 180 * 16, int(-span * self._value * 16))
 
-        # needle
         a = math.pi - math.pi * self._value
         nx = cx + math.cos(a) * (radius - thick)
         ny = cy - math.sin(a) * (radius - thick)
-        p.setPen(QPen(QColor(PAL["text"]), max(1.5, radius * 0.03), Qt.SolidLine, Qt.RoundCap))
+        p.setPen(QPen(QColor(t["text"]), max(1.5, radius * 0.03), Qt.SolidLine, Qt.RoundCap))
         p.drawLine(int(cx), int(cy - radius * 0.10), int(nx), int(ny))
-        p.setBrush(QColor(PAL["accent"]))
+        p.setBrush(QColor(t["accent"]))
         p.setPen(Qt.NoPen)
         p.drawEllipse(QRectF(nx - 3, ny - 3, 6, 6))
 
-        # center % readout
         p.setFont(QFont("Segoe UI Light", int(max(radius * 0.24, 12))))
-        p.setPen(QColor(PAL["text"]))
+        p.setPen(QColor(t["text"]))
         p.drawText(QRectF(0, cy - radius * 0.5, w, radius * 0.5),
                    Qt.AlignCenter, "{:.0%}".format(self._value))
         p.setFont(QFont("Segoe UI", 8))
-        p.setPen(QColor(PAL["faint"]))
+        p.setPen(QColor(t["faint"]))
         p.drawText(QRectF(0, cy + radius * 0.15, w, 16), Qt.AlignCenter,
                    "← {:.0f}%  突破年线 {:.0f}% →".format(self._value * 100, (1 - self._value) * 100))
         p.end()
 
 
 class SplitBar(QWidget):
-    """Horizontal stacked composition bar — up / down / flat share (今日涨跌分布)."""
+    """Horizontal stacked composition bar — up / down / flat share."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._up = self._dn = self._flat = 0
-        self.setMinimumHeight(dp(24))
+        self.setMinimumHeight(_th.dp(24))
 
     def set_data(self, up, dn, flat):
         self._up, self._dn, self._flat = int(up or 0), int(dn or 0), int(flat or 0)
@@ -273,42 +281,37 @@ class SplitBar(QWidget):
         if w < 40 or h < 10:
             p.end()
             return
+        t = _th.current_theme()
         total = self._up + self._dn + self._flat
-        seg_h = min(h - 6, dp(12))
+        seg_h = min(h - 6, _th.dp(12))
         y = (h - seg_h) / 2.0
         x = 0.0
-        r = min(seg_h / 2, dp(5))
+        r = min(seg_h / 2, _th.dp(5))
         if total <= 0:
-            p.setBrush(QColor(PAL["axis"]))
+            p.setBrush(QColor(t["border_top"]))
             p.setPen(Qt.NoPen)
             p.drawRoundedRect(QRectF(x, y, w, seg_h), r, r)
             p.end()
             return
-        for value, color in ((self._up, PAL["up"]), (self._dn, PAL["down"]), (self._flat, PAL["faint"])):
+        for value, ck in ((self._up, "up"), (self._dn, "down"), (self._flat, "faint")):
             if value <= 0:
                 continue
             seg_w = w * value / total
-            p.setBrush(QColor(color))
+            p.setBrush(QColor(t[ck]))
             p.setPen(Qt.NoPen)
             p.drawRoundedRect(QRectF(x, y, seg_w, seg_h), r, r)
             x += seg_w
-        # labels
         p.setFont(QFont("Segoe UI", 8))
         if self._up:
-            p.setPen(QColor(PAL["up"]))
+            p.setPen(QColor(t["up"]))
             p.drawText(QRectF(0, y, w * self._up / total, seg_h),
-                       Qt.AlignLeft | Qt.AlignVCenter,
-                       "涨 {:.0%}".format(self._up / total))
+                       Qt.AlignLeft | Qt.AlignVCenter, "涨 {:.0%}".format(self._up / total))
         if self._dn:
-            p.setPen(QColor(PAL["down"]))
-            p.drawText(
-                QRectF(w * self._up / total, y, w * self._dn / total, seg_h),
-                Qt.AlignCenter | Qt.AlignVCenter,
-                "跌 {:.0%}".format(self._dn / total))
+            p.setPen(QColor(t["down"]))
+            p.drawText(QRectF(w * self._up / total, y, w * self._dn / total, seg_h),
+                       Qt.AlignCenter | Qt.AlignVCenter, "跌 {:.0%}".format(self._dn / total))
         if self._flat:
-            p.setPen(QColor(PAL["faint"]))
-            p.drawText(
-                QRectF(w * (self._up + self._dn) / total, y, w * self._flat / total, seg_h),
-                Qt.AlignRight | Qt.AlignVCenter,
-                "{:.0%}".format(self._flat / total))
+            p.setPen(QColor(t["faint"]))
+            p.drawText(QRectF(w * (self._up + self._dn) / total, y, w * self._flat / total, seg_h),
+                       Qt.AlignRight | Qt.AlignVCenter, "{:.0%}".format(self._flat / total))
         p.end()

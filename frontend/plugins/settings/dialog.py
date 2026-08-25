@@ -14,6 +14,7 @@ from frontend.platform.theme import (
     build_style, fs, dp, dps,
     C_BG, C_PANEL, C_BORDER_SOFT as C_BORDER, C_TEXT, C_SUBTEXT, C_ACCENT,
 )
+import frontend.platform.theme as _th
 
 C_GREEN = "#3FB950"
 C_RED = "#E5484D"
@@ -255,6 +256,37 @@ class SettingsWindow(QWidget):
         win_row.addStretch()
         lo.addLayout(win_row)
 
+        # Appearance theme
+        th_row = QHBoxLayout()
+        th_row.setSpacing(12)
+        th_label = QLabel("外观主题")
+        th_label.setStyleSheet(LABEL_STYLE)
+        th_row.addWidget(th_label)
+
+        self._theme_combo = QComboBox()
+        self._theme_combo.setFixedWidth(dp(220))
+        cur_theme = self._settings.get("theme", "graphite")
+        for i, (key, meta) in enumerate(_th.THEMES.items()):
+            self._theme_combo.addItem(meta["name"], key)
+            if key == cur_theme:
+                self._theme_combo.setCurrentIndex(i)
+        self._theme_combo.currentIndexChanged.connect(self._on_theme_change)
+        self._theme_combo.setStyleSheet(
+            f"QComboBox{{background:{C_BG};color:{C_TEXT};border:1px solid {C_BORDER};"
+            f"border-radius:4px;padding:5px 10px;font-size:{fs(12)}}}"
+            f"QComboBox:hover{{border-color:#484F58}}"
+            f"QComboBox QAbstractItemView{{background:{C_PANEL};color:{C_TEXT};"
+            f"selection-background:{C_ACCENT};selection-color:#0D1117;border:1px solid {C_BORDER}}}"
+        )
+        th_row.addWidget(self._theme_combo)
+        th_row.addStretch()
+        lo.addLayout(th_row)
+
+        desc = QLabel("切换整套配色/景深/排版，应用后即时生效（部分面板下次刷新数据时同步）。")
+        desc.setStyleSheet(f"color:{C_SUBTEXT};font-size:{fs(10)};background:transparent")
+        desc.setWordWrap(True)
+        lo.addWidget(desc)
+
         preview_frame = QFrame()
         preview_frame.setObjectName("preview")
         preview_frame.setStyleSheet(
@@ -455,6 +487,16 @@ class SettingsWindow(QWidget):
 
     # ──────────────────── Apply / Cancel ────────────────────
 
+    def _on_theme_change(self, idx):
+        key = self._theme_combo.currentData()
+        if not key:
+            return
+        self._settings["theme"] = key
+        _th.set_theme(key)
+        # 应用全局样式(重绘 chrome); 各面板下次刷新数据时同步局部样式
+        if self._app:
+            self._app.setStyleSheet(build_style(self._settings.get("font_size", 13)))
+
     def _on_apply(self):
         idx = self._font_combo.currentIndex()
         new_font_size = FONT_OPTIONS[idx][0]
@@ -463,6 +505,11 @@ class SettingsWindow(QWidget):
         ws = self._win_combo.currentData()
         if ws:
             self._settings["window_size"] = ws
+
+        tk = self._theme_combo.currentData()
+        if tk:
+            self._settings["theme"] = tk
+            _th.set_theme(tk)
 
         self._settings["agent"] = {
             "api_base": self._ai_url.text().strip(),

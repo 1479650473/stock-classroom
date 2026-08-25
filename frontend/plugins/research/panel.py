@@ -25,7 +25,8 @@ from frontend.platform.theme import (
     style_caption, style_num,
 )
 from frontend.platform.local_worker import LocalWorker
-from frontend.platform.premium import BreadthGauge
+from frontend.platform.premium import BreadthGauge, card_qss as _card_qss, PAL as _PAL
+from frontend.platform.premium import value_ss as _value_ss, label_ss as _label_ss, pill_ss as _pill_ss
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton, QFrame,
@@ -35,25 +36,9 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtGui import QColor, QFont
 
-# ── 高质感调色板(克制: 深灰金, 无彩虹) ────────────────────────────
-_PAL = {
-    "bg": "#0D1117",
-    "c_top": "#1D2431", "c_mid": "#161C27", "c_bot": "#121720",   # 卡片竖向渐变(哑光)
-    "border_lo": "#10141b",
-    "border_hi": "#333D4A",                                     # 顶部高光斜面
-    "accent": "#D4A574",
-    "text": "#E6EDF3", "sub": "#8B949E", "faint": "#6E7681",
-    "up": "#E5484D", "down": "#3FB950",
-}
-
 # 高级卡片 QSS: 竖向哑光渐变 + 顶部高光斜面 + 圆角 (字符串拼接, 避免 QSS 大括号与 format 冲突)
-_CARD_QSS = (
-    "QFrame#rstat{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-    "stop:0 " + _PAL["c_top"] + ",stop:0.55 " + _PAL["c_mid"] + ",stop:1 " + _PAL["c_bot"] + ");"
-    "border:1px solid " + _PAL["border_lo"] + ";border-top:1px solid " + _PAL["border_hi"]
-    + ";border-radius:10px;}"
-    "QFrame#rstat:hover{border-top:1px solid " + _PAL["accent"] + ";}"
-)
+def _CARD_QSS():
+    return _card_qss("rstat")
 
 
 def _sec_title(text: str, hint: str = "") -> QWidget:
@@ -103,7 +88,7 @@ class _StatCard(QFrame):
     def __init__(self, title: str, parent=None):
         super().__init__(parent)
         self.setObjectName("rstat")
-        self.setStyleSheet(_CARD_QSS)
+        self.setStyleSheet(_CARD_QSS())
         lo = QVBoxLayout(self)
         lo.setContentsMargins(dp(12), dp(10), dp(12), dp(10))
         lo.setSpacing(dp(6))
@@ -150,7 +135,7 @@ class _SecCard(QFrame):
     def __init__(self, title: str, parent=None):
         super().__init__(parent)
         self.setObjectName("rstat")
-        self.setStyleSheet(_CARD_QSS)
+        self.setStyleSheet(_CARD_QSS())
         lo = QVBoxLayout(self)
         lo.setContentsMargins(dp(12), dp(10), dp(12), dp(10))
         lo.setSpacing(dp(6))
@@ -272,7 +257,7 @@ class ResearchPanel(QWidget):
         # 市场宽度仪表 (研究信号可视化: 破年线占比 + 弱市/强市分区)
         self._gauge_card = QFrame()
         self._gauge_card.setObjectName("rstat")
-        self._gauge_card.setStyleSheet(_CARD_QSS)
+        self._gauge_card.setStyleSheet(_CARD_QSS())
         gl = QVBoxLayout(self._gauge_card)
         gl.setContentsMargins(dp(12), dp(10), dp(12), dp(8))
         gl.setSpacing(0)

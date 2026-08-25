@@ -3,7 +3,7 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QCheckBox, QPushButton)
 from PyQt5.QtCore import Qt
 from frontend.platform.theme import (
-    dp, dps, fs, C_ACCENT, C_UP as C_RISE, C_DOWN as C_FALL,
+    dp, dps, fs, C_ACCENT, C_BG, C_UP as C_RISE, C_DOWN as C_FALL,
     qss_table, qss_btn_accent_outline, style_h2,
 )
 from PyQt5.QtGui import QColor, QFont
@@ -26,7 +26,7 @@ class PicksPanel(QWidget):
         self._filters = dict(DEFAULT_FILTERS)
         self._last_results = []
 
-        self.setStyleSheet("background:#0D1117")
+        self.setStyleSheet("background:%s" % C_BG)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)

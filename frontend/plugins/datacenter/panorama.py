@@ -7,12 +7,7 @@ from PyQt5.QtWidgets import QWidget, QToolTip
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QRectF
 from PyQt5.QtGui import QPainter, QColor, QFont, QPen
 
-C_BG = "#0D1117"
-C_PANEL = "#161B22"
-C_BORDER = "#21262D"
-C_TEXT = "#E6EDF3"
-C_SUBTEXT = "#8B949E"
-C_ACCENT = "#D4A574"
+from frontend.platform.theme import C_BG, C_PANEL, C_TEXT, C_SUBTEXT, C_ACCENT
 
 DATE_CANDIDATES = ["date", "trade_date", "week_start", "update_date", "last_date"]
 

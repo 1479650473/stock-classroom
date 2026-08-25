@@ -7,7 +7,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QFont
 from frontend.platform.local_worker import LocalWorker
 from frontend.platform.theme import (
-    dp, dps, fs, C_ACCENT, C_TEXT, C_SUBTEXT, C_FAINT, C_PANEL, C_BORDER_SOFT,
+    dp, dps, fs, C_ACCENT, C_BG, C_TEXT, C_SUBTEXT, C_FAINT, C_PANEL, C_BORDER_SOFT,
     qss_table, qss_list, qss_input,
 )
 from frontend.platform.premium import PAL, card_qss, value_ss, label_ss, CountUpLabel
@@ -77,7 +77,7 @@ class DCPanel(QWidget):
             btn.setCheckable(True)
             btn.setChecked(i == 0)
             btn.setFixedHeight(dp(26))
-            btn.setStyleSheet(_SEG_QSS)
+            btn.setObjectName("indBtn")
             btn.clicked.connect(lambda checked, idx=i: self._switch_mode(idx))
             mode_bar.addWidget(btn)
             self._mode_btns.append(btn)
@@ -110,11 +110,11 @@ class DCPanel(QWidget):
         self.tree.setHeaderLabel("数据表")
         self.tree.itemClicked.connect(self._on_tree_select)
         self.tree.setStyleSheet(
-            "QTreeWidget{background:#10141B;color:#C9D1D9;border:1px solid #1E2530;"
-            "border-radius:8px;outline:none;}"
-            "QTreeWidget::item{padding:3px 6px;border-radius:4px;}"
-            "QTreeWidget::item:selected{background:rgba(212,165,116,0.13);color:#E8C9A0;}"
-            "QTreeWidget::item:hover:!selected{background:#1A212B;}")
+            f"QTreeWidget{{background:{C_BG};color:{C_TEXT};border:1px solid {C_BORDER_SOFT};"
+            f"border-radius:8px;outline:none;}}"
+            f"QTreeWidget::item{{padding:3px 6px;border-radius:4px;}}"
+            f"QTreeWidget::item:selected{{background:{C_ACCENT};color:{C_PANEL};}}"
+            f"QTreeWidget::item:hover:!selected{{background:{C_PANEL};}}")
         body.addWidget(self.tree)
 
         right = QVBoxLayout()
@@ -365,7 +365,7 @@ class DCPanel(QWidget):
         cols_cn = [CN.get(c, c) for c in cols]
         table.setHorizontalHeaderLabels(["#"] + cols_cn)
         for r, row in enumerate(rows):
-            bg = BG_ODD if r % 2 else BG_EVEN
+            bg = QColor(PAL["panel"]) if r % 2 else QColor(PAL["bg"])
             rn = QTableWidgetItem(str(r + 1))
             rn.setForeground(QColor("#484F58"))
             rn.setBackground(bg)
