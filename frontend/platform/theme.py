@@ -559,6 +559,20 @@ QPushButton#refreshBtn {{ background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:
 QPushButton#indBtn {{ background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {t['panel']}, stop:0.6 {t['bg']}, stop:1 {t['panel']}); color: {t['sub']}; border: 1px solid #050607; border-top: 1px solid #000; border-bottom: 1px solid {t['btn_border_top']}; border-radius: $dp4; padding: $dp3 $dp12; font-size: $fs11; }}
 QPushButton#indBtn:hover {{ color: {t['text']}; border-top-color: {t['accent']}; }}
 QPushButton#indBtn:checked {{ background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {t['accent_grad'][0]}, stop:1 {t['accent_grad'][1]}); color: {t['on_accent']}; border-color: {t['accent_border']}; font-weight:600; }}
+/* obsidian: micro-recessed table header rail + selected-row grooves */
+QHeaderView::section {{
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {t['panel']}, stop:0.62 {t['bg']}, stop:1 {t['panel']});
+    color: {t['sub']}; border: none;
+    border-bottom: 1px solid #000;
+    border-right: 1px solid #050607;
+    padding: $dp5 $dp9; font-weight: 600; font-size: $fs10; letter-spacing: 0.5px;
+}}
+QHeaderView::section:hover {{ color: {t['text']}; border-bottom-color: {t['accent']}; }}
+QTableCornerButton::section {{ background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {t['panel']}, stop:1 {t['bg']}); border: none; border-bottom: 1px solid #000; }}
+QTableWidget::item:selected, QListWidget::item:selected, QTreeWidget::item:selected {{
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {t['sel_bg']}, stop:1 rgba(0,0,0,0.35));
+    color: {t['sel_fg']};
+}}
 """
     return _shared_parts(t) + extra
 
