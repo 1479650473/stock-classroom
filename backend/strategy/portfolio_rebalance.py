@@ -281,6 +281,8 @@ def forward_paper_run(frames: dict, contract: SelectionContract, start: str, end
     dates, nav_g, nav_n = [], [], []
     turnovers, cost_total = [], 0.0
     rebalances = 0
+    daily_holdings = []   # 每调仓日持仓快照 {date, holdings, cash, nav}
+    rebalance_log = []    # 每调仓日买卖明细 {date, trades:[{code,side,qty,price}]}
     prev_set = set()
 
     def _mark(date):
@@ -320,6 +322,12 @@ def forward_paper_run(frames: dict, contract: SelectionContract, start: str, end
         cost_total += turn * len(cur) * 0.0  # 换手成本已在 fee 内
         rebalances += 1
         prev_set = cur
+        # 记录每调仓日持仓快照 + 买卖明细(供持仓面板/收益曲线)
+        daily_holdings.append({"date": str(dt), "holdings": dict(holdings), "cash": cash, "nav": nv})
+        rebalance_log.append({"date": str(dt), "trades": [
+            {"code": t["code"], "side": t["side"], "qty": int(t["qty"]), "price": float(t["price"])}
+            for t in trades]})
     return {"dates": dates, "nav_n": nav_n, "final_holdings": holdings, "final_cash": cash,
             "turnover_avg": (sum(turnovers) / len(turnovers)) if turnovers else 0.0,
-            "cost_total": cost_total, "rebalances": rebalances}
+            "cost_total": cost_total, "rebalances": rebalances,
+            "daily_holdings": daily_holdings, "rebalance_log": rebalance_log}

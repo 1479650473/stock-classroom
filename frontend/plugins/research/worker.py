@@ -149,9 +149,29 @@ def build_paper_only(hp: int = 20, top_k_pct: float = 0.2,
         paper = {"dates": fw["dates"], "nav": fw["nav_n"], "final_holdings": fw["final_holdings"],
                  "final_cash": fw["final_cash"], "turnover_avg": fw["turnover_avg"],
                  "cost_total": fw["cost_total"], "rebalances": fw["rebalances"],
-                 "buyhold_dates": bh_dates, "buyhold_nav": bh_nav, "w_value": 1.0}
+                 "buyhold_dates": bh_dates, "buyhold_nav": bh_nav, "w_value": 1.0,
+                 "daily_holdings": fw.get("daily_holdings", []),
+                 "rebalance_log": fw.get("rebalance_log", [])}
     except Exception as e:  # noqa: BLE001
         paper = {"error": str(e)}
+    # 持久化完整 paper(含每日持仓/每笔调仓), 供持仓面板读取
+    try:
+        import json as _json
+        import numpy as _np
+        def _conv(o):
+            if isinstance(o, _np.integer):
+                return int(o)
+            if isinstance(o, _np.floating):
+                return float(o)
+            if isinstance(o, _np.bool_):
+                return bool(o)
+            return str(o)
+        with open(os.path.join(os.path.dirname(_ROOT), 'data', 'paper_run.json'), 'w', encoding='utf-8') as _f:
+            _json.dump({"paper": paper, "as_of": str(pd.Timestamp(as_of).date()),
+                        "pool_size": len(frames), "hp": hp}, _f,
+                       ensure_ascii=False, indent=1, default=_conv)
+    except Exception as e:
+        import logging; logging.getLogger('research').warning('paper 持久化失败: %s', repr(e)[:80])
     return {"paper": paper, "as_of": str(pd.Timestamp(as_of).date()), "pool_size": len(frames),
             "hp": hp}
 
