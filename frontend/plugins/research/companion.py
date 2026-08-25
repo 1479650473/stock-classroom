@@ -20,22 +20,42 @@ from PyQt5.QtWidgets import (
     QHeaderView, QAbstractItemView, QSizePolicy,
 )
 from PyQt5.QtCore import Qt, QPointF, QRectF
-from PyQt5.QtGui import QPainter, QPen, QColor, QPainterPath, QFont
+from PyQt5.QtGui import QPainter, QPen, QColor, QPainterPath, QFont, QLinearGradient, QBrush
+
+
+# 高质感调色板(与 panel 一致: 深灰金, 克制)
+_PAL = {
+    "bg": "#0D1117", "c_top": "#1D2431", "c_mid": "#161C27", "c_bot": "#121720",
+    "border_lo": "#10141b", "border_hi": "#333D4A", "accent": "#D4A574",
+    "text": "#E6EDF3", "sub": "#8B949E", "faint": "#6E7681",
+    "up": "#E5484D", "down": "#3FB950",
+}
+_CARD_QSS = (
+    "QFrame#rstat{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+    "stop:0 " + _PAL["c_top"] + ",stop:0.55 " + _PAL["c_mid"] + ",stop:1 " + _PAL["c_bot"] + ");"
+    "border:1px solid " + _PAL["border_lo"] + ";border-top:1px solid " + _PAL["border_hi"]
+    + ";border-radius:10px;}"
+    "QFrame#rstat:hover{border-top:1px solid " + _PAL["accent"] + ";}"
+)
 
 
 def _card(title: str) -> "_Stat":
     c = QFrame()
-    c.setObjectName("card")
-    c.setStyleSheet(qss_card(8))
+    c.setObjectName("rstat")
+    c.setStyleSheet(_CARD_QSS)
     lo = QVBoxLayout(c)
-    lo.setContentsMargins(dp(10), dp(8), dp(10), dp(8))
-    lo.setSpacing(dp(2))
+    lo.setContentsMargins(dp(12), dp(9), dp(12), dp(9))
+    lo.setSpacing(dp(1))
     t = QLabel(title)
-    t.setStyleSheet(style_caption())
+    t.setStyleSheet(
+        f"color:{_PAL['sub']};font-size:{fs(10)};font-weight:500;"
+        f"letter-spacing:{dp(1.5)}px;background:transparent;")
     lo.addWidget(t)
     v = QLabel("--")
-    v.setStyleSheet(f"color:{C_TEXT};font-size:{fs(16)};font-weight:700;background:transparent;"
-                    f"font-family:'Consolas','Segoe UI','Microsoft YaHei';")
+    v.setStyleSheet(
+        f"color:{_PAL['text']};font-size:{fs(17)};font-weight:300;background:transparent;"
+        f"font-family:'Segoe UI Light','Microsoft YaHei UI Light','Microsoft YaHei',sans-serif;"
+        f"letter-spacing:{dp(0.5)}px;")
     lo.addWidget(v)
     lo.addStretch()
     return _Stat(c, v)
@@ -50,8 +70,9 @@ class _Stat:
         self.value.setText(text)
         if color:
             self.value.setStyleSheet(
-                f"color:{color};font-size:{fs(16)};font-weight:700;background:transparent;"
-                f"font-family:'Consolas','Segoe UI','Microsoft YaHei';")
+                f"color:{color};font-size:{fs(17)};font-weight:300;background:transparent;"
+                f"font-family:'Segoe UI Light','Microsoft YaHei UI Light','Microsoft YaHei',sans-serif;"
+                f"letter-spacing:{dp(0.5)}px;")
 
 
 class _NavCurve(QWidget):
@@ -124,14 +145,26 @@ class _NavCurve(QWidget):
             p.setPen(QPen(QColor(C_SUBTEXT), 2))
             p.setBrush(Qt.NoBrush)
             p.drawPath(path)
-        # rebalancer (accent gold)
+        # rebalancer (accent gold) — 渐变面积 + 金线
         if len(self._nav) >= 2:
-            path = QPainterPath(QPointF(_x(0, len(self._nav)), _y(self._nav[0])))
+            fill = QPainterPath(QPointF(_x(0, len(self._nav)), _y(self._nav[0])))
             for i in range(1, len(self._nav)):
-                path.lineTo(QPointF(_x(i, len(self._nav)), _y(self._nav[i])))
+                fill.lineTo(QPointF(_x(i, len(self._nav)), _y(self._nav[i])))
+            fill.lineTo(QPointF(_x(len(self._nav) - 1, len(self._nav)), pad_t + ih))
+            fill.lineTo(QPointF(_x(0, len(self._nav)), pad_t + ih))
+            fill.closeSubpath()
+            grad = QLinearGradient(0, pad_t, 0, pad_t + ih)
+            grad.setColorAt(0.0, QColor(212, 165, 116, 64))
+            grad.setColorAt(1.0, QColor(212, 165, 116, 0))
+            p.setPen(Qt.NoPen)
+            p.setBrush(grad)
+            p.drawPath(fill)
+            line = QPainterPath(QPointF(_x(0, len(self._nav)), _y(self._nav[0])))
+            for i in range(1, len(self._nav)):
+                line.lineTo(QPointF(_x(i, len(self._nav)), _y(self._nav[i])))
             p.setPen(QPen(QColor(C_ACCENT), 2))
             p.setBrush(Qt.NoBrush)
-            p.drawPath(path)
+            p.drawPath(line)
             # end dot
             last = QPointF(pad_l + iw, _y(self._nav[-1]))
             p.setBrush(QColor(C_ACCENT))

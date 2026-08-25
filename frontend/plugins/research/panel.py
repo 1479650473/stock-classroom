@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """研究/策略面板 —— 后端研究能力的前端呈现(诊断+因子研究+多因子排名).
 
-布局(暗色金调, 经 theme 缩放):
+布局(暗色高质感, 克制配色, 真实景深斜面, 精致排版):
   ① 控制条: 持有期分段(5/10/20/40) + 运行研究按钮
-  ② 市场环境: value_tilt / market_breadth / portfolio_value_alloc / 决策门 4 卡
-  ③ 价值因子研究: BP/EP/ROE 截面 IC·ICIR·单调性·多空 3 卡
+  ② 市场环境: value_tilt / market_breadth / portfolio_value_alloc / 决策门 2x2 高级卡
+  ③ 价值因子研究: BP/EP/ROE 截面 IC·ICIR·单调·多空 (纵向堆叠高级卡)
   ④ 多因子选股: composite z(BP)+z(REV20)-z(VOL20) 排名表(点行开K线)
 右侧 companion 展示组合纸面盘净值曲线.
 """
@@ -31,69 +31,133 @@ from PyQt5.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QScrollArea,
     QButtonGroup, QSizePolicy,
 )
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtGui import QColor, QFont
 
+# ── 高质感调色板(克制: 深灰金, 无彩虹) ────────────────────────────
+_PAL = {
+    "bg": "#0D1117",
+    "c_top": "#1D2431", "c_mid": "#161C27", "c_bot": "#121720",   # 卡片竖向渐变(哑光)
+    "border_lo": "#10141b",
+    "border_hi": "#333D4A",                                     # 顶部高光斜面
+    "accent": "#D4A574",
+    "text": "#E6EDF3", "sub": "#8B949E", "faint": "#6E7681",
+    "up": "#E5484D", "down": "#3FB950",
+}
 
-def _sec_title(text: str, hint: str = "") -> QLabel:
+# 高级卡片 QSS: 竖向哑光渐变 + 顶部高光斜面 + 圆角 (字符串拼接, 避免 QSS 大括号与 format 冲突)
+_CARD_QSS = (
+    "QFrame#rstat{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+    "stop:0 " + _PAL["c_top"] + ",stop:0.55 " + _PAL["c_mid"] + ",stop:1 " + _PAL["c_bot"] + ");"
+    "border:1px solid " + _PAL["border_lo"] + ";border-top:1px solid " + _PAL["border_hi"]
+    + ";border-radius:10px;}"
+    "QFrame#rstat:hover{border-top:1px solid " + _PAL["accent"] + ";}"
+)
+
+
+def _sec_title(text: str, hint: str = "") -> QWidget:
+    """信字体小节标题: 字距拉开小号 + 金色短杆(克制)."""
+    w = QWidget()
+    lo = QHBoxLayout(w)
+    lo.setContentsMargins(0, 0, 0, 0)
+    lo.setSpacing(dp(6))
+    bar = QFrame()
+    bar.setFixedSize(dp(3), dp(14))
+    bar.setStyleSheet(f"background:{_PAL['accent']};border-radius:1px;")
+    lo.addWidget(bar)
     lbl = QLabel(text)
-    lbl.setStyleSheet(style_h2())
+    lbl.setStyleSheet(
+        f"color:{_PAL['text']};font-size:{fs(11)};font-weight:600;"
+        f"letter-spacing:{dp(1)}px;background:transparent;")
+    lo.addWidget(lbl)
+    lo.addStretch()
     if hint:
-        lbl.setToolTip(hint)
-    return lbl
+        w.setToolTip(hint)
+    return w
 
 
 def _sec_caption(text: str) -> QLabel:
     lbl = QLabel(text)
-    lbl.setStyleSheet(style_caption())
+    lbl.setStyleSheet(
+        f"color:{_PAL['faint']};font-size:{fs(10)};letter-spacing:{dp(0.5)}px;"
+        f"background:transparent;")
+    return lbl
+
+
+def _pill(text: str, color: str) -> QLabel:
+    """状态药丸(tinted bg + border), 用于 value_headwind / 决策门 等状态值."""
+    lbl = QLabel(text)
+    lbl.setStyleSheet(
+        f"background:rgba({color},0.13);color:{color};"
+        f"border:1px solid rgba({color},0.42);border-radius:{dps(5)};"
+        f"padding:{dps(2)} {dps(8)};font-size:{fs(12)};font-weight:600;"
+        f"letter-spacing:{dp(0.5)}px;background:transparent;")
+    lbl.setWordWrap(True)
     return lbl
 
 
 class _StatCard(QFrame):
-    """诊断卡: 标题(caption) + 主值(num) + 次值(caption)."""
+    """高级诊断卡: 字距标题 + 主值(药丸状态/轻量数字) + 副注."""
 
     def __init__(self, title: str, parent=None):
         super().__init__(parent)
-        self.setObjectName("card")
-        self.setStyleSheet(qss_card(8))
+        self.setObjectName("rstat")
+        self.setStyleSheet(_CARD_QSS)
         lo = QVBoxLayout(self)
-        lo.setContentsMargins(dp(10), dp(8), dp(10), dp(8))
-        lo.setSpacing(dp(2))
+        lo.setContentsMargins(dp(12), dp(10), dp(12), dp(10))
+        lo.setSpacing(dp(6))
         t = QLabel(title)
-        t.setStyleSheet(style_caption())
+        t.setStyleSheet(
+            f"color:{_PAL['sub']};font-size:{fs(10)};font-weight:500;"
+            f"letter-spacing:{dp(2)}px;background:transparent;")
         lo.addWidget(t)
         self._value = QLabel("--")
-        self._value.setStyleSheet(f"color:{C_TEXT};font-size:{fs(16)};font-weight:700;background:transparent;"
-                                  f"font-family:'Consolas','Segoe UI','Microsoft YaHei';")
+        self._value.setStyleSheet(
+            f"color:{_PAL['text']};font-size:{fs(17)};font-weight:300;background:transparent;"
+            f"font-family:'Segoe UI Light','Microsoft YaHei UI Light','Microsoft YaHei',sans-serif;"
+            f"letter-spacing:{dp(0.5)}px;")
         lo.addWidget(self._value)
         self._sub = QLabel("")
-        self._sub.setStyleSheet(style_caption())
+        self._sub.setStyleSheet(
+            f"color:{_PAL['faint']};font-size:{fs(10)};background:transparent;")
         self._sub.setWordWrap(True)
         lo.addWidget(self._sub)
         lo.addStretch()
 
-    def set(self, value: str, sub: str = "", color: str = None, value_size: int = 16):
-        self._value.setText(value)
-        self._value.setStyleSheet(
-            f"color:{color or C_TEXT};font-size:{fs(value_size)};font-weight:700;background:transparent;"
-            f"font-family:'Consolas','Segoe UI','Microsoft YaHei';")
+    def set(self, value, sub: str = "", color: str = None, value_size: int = 17, pill: bool = False):
         self._sub.setText(sub)
+        if pill:
+            # 状态 → 药丸
+            self._value.setStyleSheet(
+                f"background:rgba({color},0.12);color:{color};"
+                f"border:1px solid rgba({color},0.35);border-radius:{dps(5)};"
+                f"padding:{dps(2)} {dps(9)};font-size:{fs(value_size)};font-weight:600;"
+                f"letter-spacing:{dp(0.5)}px;background:transparent;"
+                f"font-family:'Segoe UI','Microsoft YaHei';")
+            self._value.setText(value)
+        else:
+            self._value.setStyleSheet(
+                f"color:{color or _PAL['text']};font-size:{fs(value_size)};font-weight:300;"
+                f"background:transparent;letter-spacing:{dp(0.5)}px;"
+                f"font-family:'Segoe UI Light','Microsoft YaHei UI Light','Microsoft YaHei',sans-serif;")
+            self._value.setText(str(value))
 
 
 class _SecCard(QFrame):
-    """因子研究卡: 标题 + IC/ICIR/单调/多空 网格."""
+    """高级因子研究卡: 标题 + 指标网格(轻量数字 + 字距标签)."""
 
     def __init__(self, title: str, parent=None):
         super().__init__(parent)
-        self.setObjectName("card")
-        self.setStyleSheet(qss_card(8))
+        self.setObjectName("rstat")
+        self.setStyleSheet(_CARD_QSS)
         lo = QVBoxLayout(self)
-        lo.setContentsMargins(dp(10), dp(8), dp(10), dp(8))
-        lo.setSpacing(dp(4))
+        lo.setContentsMargins(dp(12), dp(10), dp(12), dp(10))
+        lo.setSpacing(dp(6))
         head = QHBoxLayout()
         t = QLabel(title)
-        t.setStyleSheet(f"color:{C_ACCENT};font-size:{fs(13)};font-weight:700;background:transparent;"
-                        f"font-family:'Consolas','Segoe UI','Microsoft YaHei';")
+        t.setStyleSheet(
+            f"color:{_PAL['accent']};font-size:{fs(12)};font-weight:600;background:transparent;"
+            f"letter-spacing:{dp(0.5)}px;font-family:'Segoe UI','Microsoft YaHei';")
         head.addWidget(t)
         head.addStretch()
         self._conf = QLabel("")
@@ -101,8 +165,9 @@ class _SecCard(QFrame):
         head.addWidget(self._conf)
         lo.addLayout(head)
         self._grid = QLabel("--")
-        self._grid.setStyleSheet(f"color:{C_SUBTEXT};font-size:{fs(11)};background:transparent;"
-                                 f"font-family:'Consolas','Microsoft YaHei';")
+        self._grid.setStyleSheet(
+            f"color:{_PAL['sub']};font-size:{fs(11)};background:transparent;"
+            f"font-family:'Consolas','Segoe UI','Microsoft YaHei';")
         lo.addWidget(self._grid)
         lo.addStretch()
 
@@ -111,9 +176,10 @@ class _SecCard(QFrame):
             self._conf.setText("数据不可用")
             self._grid.setText(str(v.get("error", "")) if v else "")
             return
+        self._conf.setText("")   # 数据到位后清掉加载态残留
         self._grid.setText(
-            f"IC  {v.get('ic', 0):+.4f}\nICIR {v.get('icir', 0):+.3f}\n"
-            f"IC正率 {v.get('ic_positive', 0):.0%}   单调 {v.get('monotonicity', 0):+.2f}\n"
+            f"IC   {v.get('ic', 0):+.4f}\nICIR {v.get('icir', 0):+.3f}\n"
+            f"IC正率 {v.get('ic_positive', 0):.0%}    单调 {v.get('monotonicity', 0):+.2f}\n"
             f"多空(净) {v.get('long_short_net', 0):+.2%}   覆盖 {v.get('coverage', 0):.0%}")
 
 
@@ -146,20 +212,27 @@ class ResearchPanel(QWidget):
         body = QWidget()
         body.setStyleSheet(f"background:{C_BG}")
         lo = QVBoxLayout(body)
-        lo.setContentsMargins(dp(12), dp(12), dp(12), dp(12))
-        lo.setSpacing(dp(10))
+        lo.setContentsMargins(dp(14), dp(14), dp(14), dp(14))
+        lo.setSpacing(dp(12))
 
-        # 标题 + 控制条
+        # 标题(金色字距) + 说明
         title = QLabel("量化研究")
-        title.setStyleSheet(style_h1())
+        title.setStyleSheet(
+            f"color:{_PAL['text']};font-size:{fs(17)};font-weight:600;background:transparent;"
+            f"letter-spacing:{dp(2)}px;")
         lo.addWidget(title)
-        cap = QLabel("LLM-in-the-loop · 价值因子 · 多因子分层 · 组合纸面盘")
-        cap.setStyleSheet(style_caption())
+        cap = QLabel("LLM-IN-THE-LOOP · 价值因子 · 多因子分层 · 组合纸面盘")
+        cap.setStyleSheet(
+            f"color:{_PAL['faint']};font-size:{fs(9)};letter-spacing:{dp(1)}px;background:transparent;")
         lo.addWidget(cap)
 
+        # 控制条
         ctrl = QHBoxLayout()
         ctrl.setSpacing(8)
-        ctrl.addWidget(QLabel("持有期"))
+        lbl = QLabel("持有期")
+        lbl.setStyleSheet(
+            f"color:{_PAL['sub']};font-size:{fs(10)};letter-spacing:{dp(1)}px;background:transparent;")
+        ctrl.addWidget(lbl)
         self._segs = {}
         group = QButtonGroup(self)
         for hp in (5, 10, 20, 40):
@@ -181,7 +254,7 @@ class ResearchPanel(QWidget):
         ctrl.addWidget(self._btn_run)
         lo.addLayout(ctrl)
 
-        # 研究代理 · 市场环境 (2x2 网格, 适配窄栏)
+        # 研究代理 · 市场环境 (2x2 高级卡)
         lo.addWidget(_sec_title("市场环境  ·  研究代理信号"))
         env_grid = QGridLayout()
         env_grid.setSpacing(dp(8))
@@ -195,7 +268,7 @@ class ResearchPanel(QWidget):
             env_grid.addWidget(card, i // 2, i % 2)
         lo.addLayout(env_grid)
 
-        # 价值因子研究 (1 列纵向堆叠, 窄栏更稳)
+        # 价值因子研究 (纵向堆叠高级卡)
         lo.addWidget(_sec_title("价值因子研究  ·  截面 IC / ICIR"))
         self._card_bp = _SecCard("BP  账面市值比")
         self._card_ep = _SecCard("EP  盈利收益率")
@@ -207,13 +280,13 @@ class ResearchPanel(QWidget):
         # 多因子选股
         lo.addWidget(_sec_title("多因子选股  ·  z(BP)+z(REV20)−z(VOL20) 综合分"))
         self._rank_table = QTableWidget()
-        self._rank_table.setStyleSheet(qss_table())
+        self._rank_table.setStyleSheet(self._table_qss())
         self._rank_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._rank_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._rank_table.verticalHeader().setVisible(False)
         self._rank_table.horizontalHeader().setStretchLastSection(True)
         self._rank_table.cellClicked.connect(self._on_row_click)
-        self._rank_table.setMinimumHeight(dp(300))
+        self._rank_table.setMinimumHeight(dp(320))
         lo.addWidget(self._rank_table)
 
         lo.addWidget(_sec_caption("研究池 = 跨板块均衡池(≈287只, 板块中性化)。权威口径(全市场/2500池)见 backend verify_*.py。"))
@@ -225,10 +298,23 @@ class ResearchPanel(QWidget):
         self._set_loading()
 
     def _seg_style(self) -> str:
-        return (f"QPushButton{{background:{C_PANEL};color:{C_ACCENT};border:1px solid {C_BORDER};"
-                f"font-size:{fs(12)};font-weight:600;padding:{dps(3)} {dps(12)};}}"
-                f"QPushButton:hover{{border-color:{C_ACCENT};}}"
-                f"QPushButton:checked{{background:{C_ACCENT};color:{C_ON_ACCENT};border-color:{C_ACCENT};}}")
+        return (
+            f"QPushButton{{background:{_PAL['c_mid']};color:{_PAL['sub']};"
+            f"border:1px solid {_PAL['border_lo']};border-top:1px solid {_PAL['border_hi']};"
+            f"border-radius:{dps(6)};font-size:{fs(11)};font-weight:600;padding:{dps(3)} {dps(11)};}}"
+            f"QPushButton:hover{{border-color:{_PAL['accent']};color:{_PAL['text']};}}"
+            f"QPushButton:checked{{background:{_PAL['accent']};color:{C_ON_ACCENT};border-color:{_PAL['accent']};}}")
+
+    def _table_qss(self) -> str:
+        return (
+            f"QTableWidget{{background:{C_BG};color:{_PAL['text']};border:1px solid {_PAL['border_lo']};"
+            f"border-radius:{dps(8)};gridline-color:{_PAL['border_lo']};font-size:{fs(11)};}}"
+            f"QTableWidget::item{{padding:{dps(4)} {dps(9)};border-bottom:1px solid #12161d;}}"
+            f"QTableWidget::item:selected{{background:{_PAL['accent']};color:{C_ON_ACCENT};}}"
+            f"QTableWidget::item:hover:!selected{{background:{_PAL['c_mid']};}}"
+            f"QHeaderView::section{{background:{_PAL['c_mid']};color:{_PAL['sub']};border:none;"
+            f"border-bottom:1px solid {_PAL['border_lo']};padding:{dps(5)} {dps(9)};font-size:{fs(10)};"
+            f"font-weight:600;letter-spacing:{dp(0.5)}px;}}")
 
     def _on_hp(self, btn):
         for hp, b in self._segs.items():
@@ -262,7 +348,6 @@ class ResearchPanel(QWidget):
         return build_snapshot(hp=hp)
 
     def _on_data(self, tag, data):
-        # LocalWorker emits {"code":0,"data":snap} or {"code":-1,"error":...}
         if not isinstance(data, dict):
             return
         if data.get("code") == -1:
@@ -287,32 +372,31 @@ class ResearchPanel(QWidget):
         al = sig.get("alloc", {}) or {}
         hr = sig.get("hard_rule")
 
-        # 市场状态卡
+        # 市场状态(药丸)
         vt_tilt = vt.get("value_tilt", "neutral")
-        vt_color = {"value_favorable": C_DOWN, "value_headwind": C_UP}.get(vt_tilt, C_SUBTEXT)
-        self._card_mkt.set(
-            {"state": "weak", "value_tilt": "value_favorable"}.get(vt_tilt, vt_tilt.replace("value_", "value_")),
-            sub=f"{vt.get('state', '')} · 回撤 {vt.get('drawdown', 0):.1%}" if isinstance(vt.get('drawdown'), float)
-                else str(vt.get("reason", ""))[:60],
-            color=vt_color, value_size=14)
+        vt_color = _PAL["down"] if vt_tilt == "value_favorable" else (_PAL["up"] if vt_tilt == "value_headwind" else _PAL["sub"])
+        self._card_mkt.set("value_headwind" if vt_tilt == "value_headwind" else vt_tilt,
+                           sub=f"{vt.get('state', '')} · 回撤 {vt.get('drawdown', 0):.1%}" if isinstance(vt.get('drawdown'), float)
+                           else str(vt.get("reason", ""))[:60],
+                           color=vt_color, value_size=12, pill=True)
 
-        # 市场宽度卡
+        # 市场宽度(轻量数字)
         b = br.get("breadth", 0.5)
         b_tilt = br.get("tilt", "value_neutral")
-        b_color = {"value_favorable": C_DOWN, "value_headwind": C_UP}.get(b_tilt, C_SUBTEXT)
+        b_color = _PAL["down"] if b_tilt == "value_favorable" else (_PAL["up"] if b_tilt == "value_headwind" else _PAL["sub"])
         self._card_breadth.set(f"{b:.0%}", sub=f"破年线占比 · {b_tilt.replace('value_','')}", color=b_color)
 
-        # 组合价值权重卡
+        # 组合价值权重
         wv = al.get("w_value", 1.0)
         wlabel = al.get("tilt_label", "")
-        wcolor = {"value_favorable": C_DOWN, "value_headwind": C_UP}.get(wlabel, C_SUBTEXT)
+        wcolor = _PAL["down"] if wlabel == "value_favorable" else (_PAL["up"] if wlabel == "value_headwind" else _PAL["sub"])
         self._card_wvalue.set(f"×{wv:.1f}", sub=f"{wlabel.replace('value_','')} · 三路信号多数决", color=wcolor)
 
-        # 决策门卡
+        # 决策门(药丸)
         if hr and isinstance(hr, dict) and "error" not in hr:
             act = hr.get("action", "hold")
-            gate_color = C_UP if act == "hold" else C_DOWN
-            self._card_gate.set(act.upper(), sub=str(hr.get("reason", ""))[:70], color=gate_color)
+            gcolor = _PAL["up"] if act == "hold" else _PAL["down"]
+            self._card_gate.set(act.upper(), sub=str(hr.get("reason", ""))[:70], color=gcolor, pill=True)
         else:
             self._card_gate.set("--", "无价值硬裁决" if not (hr and hr.get("error")) else "判断不可用")
 
@@ -330,10 +414,10 @@ class ResearchPanel(QWidget):
         self._rank_table.setHorizontalHeaderLabels(cols)
         for i, r in enumerate(rk):
             items = [
-                (str(r.get("code", "")), C_TEXT),
-                ("{:.2f}".format(r.get("price", 0)), C_SUBTEXT),
-                (("{:+.2f}".format(r.get("chg", 0))), C_DOWN if r.get("chg", 0) < 0 else C_UP),
-                ("{:.3f}".format(r.get("comp", 0)), C_ACCENT),
+                (str(r.get("code", "")), _PAL["text"]),
+                ("{:.2f}".format(r.get("price", 0)), _PAL["sub"]),
+                (("{:+.2f}".format(r.get("chg", 0))), _PAL["down"] if r.get("chg", 0) < 0 else _PAL["up"]),
+                ("{:.3f}".format(r.get("comp", 0)), _PAL["accent"]),
             ]
             for j, (text, color) in enumerate(items):
                 it = QTableWidgetItem(text)
