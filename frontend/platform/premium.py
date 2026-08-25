@@ -14,7 +14,8 @@ import math
 
 from PyQt5.QtCore import Qt, QTimer, QRectF, QPointF
 from PyQt5.QtWidgets import QLabel, QFrame, QWidget, QHBoxLayout
-from PyQt5.QtGui import QPainter, QColor, QPen, QFont, QLinearGradient, QPainterPath
+from PyQt5.QtGui import (QPainter, QColor, QPen, QFont, QLinearGradient,
+                         QPainterPath, QRadialGradient, QBrush)
 
 from . import theme as _th
 
@@ -364,7 +365,29 @@ class MachinedWell(QFrame):
             p.drawPath(top)
 
         if _th.theme_key() == "obsidian":
-            # machined metal: vertical sheen (top light -> bottom shadow)
+            # ── brushed-metal grain: subtle horizontal streaks (deterministic, no flicker) ──
+            if h > 20:
+                p.save()
+                p.setClipPath(path)
+                step = max(2.0, min(3.2, h / 70.0))
+                y = r.top() + 4.0
+                row = 0
+                while y < r.bottom() - 3.0:
+                    # deterministic per-row pseudo-noise -> stable brushed streaks
+                    n = math.sin(row * 12.9898) * 43758.5453
+                    f = abs(n - int(n))
+                    if f > 0.78:                        # sparse dark etching lines
+                        a = int(8 + 10 * (f - 0.78) / 0.22)
+                        p.setPen(QPen(QColor(0, 0, 0, a), 1))
+                    else:                                # light hair-pull grain
+                        a = int(10 + 10 * f)
+                        p.setPen(QPen(QColor(255, 255, 255, a), 1))
+                    p.drawLine(int(r.left() + 2), int(y), int(r.right() - 2), int(y))
+                    y += step
+                    row += 1
+                p.restore()
+
+            # vertical sheen (top light -> bottom shadow)
             sheen = QLinearGradient(0, 0, 0, h)
             sheen.setColorAt(0.0, QColor(255, 255, 255, 20))
             sheen.setColorAt(0.35, QColor(255, 255, 255, 0))
@@ -384,9 +407,31 @@ class MachinedWell(QFrame):
                                   max(radius - 2.5, 0), max(radius - 2.5, 0))
             p.setPen(QPen(QColor(0, 0, 0, 110), 1))
             p.drawPath(groove)
+            # ── corner screws (only on large-enough cards, to stay restrained) ──
+            if w >= 120 and h >= 80:
+                pad = radius + 9
+                for cx, cy in ((r.left() + pad, r.top() + pad),
+                               (r.right() - pad, r.top() + pad),
+                               (r.left() + pad, r.bottom() - pad),
+                               (r.right() - pad, r.bottom() - pad)):
+                    self._paint_screw(p, cx, cy)
         p.end()
 
         super().paintEvent(ev)
+
+    def _paint_screw(self, p, cx, cy, rad=3.6):
+        """Small machined screw head — radial-dome + slotted cut (flathead)."""
+        g = QRadialGradient(cx - rad * 0.35, cy - rad * 0.35, rad * 2.6)
+        g.setColorAt(0.0, QColor(206, 200, 190, 220))
+        g.setColorAt(0.55, QColor(120, 116, 110, 220))
+        g.setColorAt(1.0, QColor(46, 44, 42, 240))
+        p.setBrush(QBrush(g))
+        p.setPen(QPen(QColor(0, 0, 0, 130), 1))
+        p.drawEllipse(QPointF(cx, cy), rad, rad)
+        # slanted flathead slot
+        p.setPen(QPen(QColor(12, 12, 12, 190), 1.2))
+        p.drawLine(int(cx - rad * 0.62), int(cy + rad * 0.24),
+                   int(cx + rad * 0.62), int(cy - rad * 0.24))
 
 
 def well(name="card", radius=None, parent=None) -> QFrame:

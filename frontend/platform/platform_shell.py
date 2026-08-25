@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 """Platform Shell — thin QMainWindow skeleton for stock-classroom."""
 
-import sys, os, traceback, json
+import sys, os, traceback, json, math
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QSplitter, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QStatusBar, QStackedWidget, QFrame, QStyleFactory
 )
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, QRectF
+from PyQt5.QtGui import QPainter, QColor, QLinearGradient
 
 from .theme import (
     STYLE, dp, dps, fs,
@@ -30,6 +31,76 @@ KLINE_DB = os.path.join(PROJECT_DIR, "data", "kline.db")
 CACHE_DB = os.path.join(PROJECT_DIR, "data", "stock_cache.db")
 PLUGINS_DIR = os.path.join(_APP_DIR, "frontend", "plugins")
 CONFIG_PATH = os.path.join(PLUGINS_DIR, "plugins.json")
+
+
+class _ThemeWipe(QWidget):
+    """Brief soft light sweep across the window when the theme changes.
+
+    Transparent to mouse clicks (WA_TransparentForMouseEvents), so it never
+    blocks input. A diagonal band ramps in, sweeps left→right, and fades out
+    over ~300ms — a quiet '扫过/淡入' transition so the theme change reads as
+    an intentional reveal rather than an instant hard swap.
+    """
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._active = False
+        self._t = 0.0
+        self._duration = 300.0
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)
+        self._timer.timeout.connect(self._tick)
+        self.hide()
+
+    def trigger(self):
+        self._t = 0.0
+        self._active = True
+        parent = self.parentWidget()
+        if parent:
+            self.setGeometry(parent.rect())
+        self.raise_()
+        self.show()
+        self._timer.start()
+
+    def _tick(self):
+        self._t += 16.0 / self._duration
+        if self._t >= 1.0:
+            self._t = 1.0
+            self._active = False
+            self._timer.stop()
+            self.hide()
+        self.update()
+
+    def paintEvent(self, _ev):
+        if not self._active:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        if w < 4 or h < 4:
+            p.end()
+            return
+        t = self._t
+        env = math.sin(t * math.pi)           # 0 → 1 → 0 envelope
+        from frontend.platform import theme as _th
+        is_dark = _th.current_theme().get("dark", True)
+        alpha = int((34 if is_dark else 30) * env)
+        p.save()
+        p.translate(w / 2.0, h / 2.0)
+        p.rotate(-16)
+        p.translate(-w / 2.0, -h / 2.0)
+        band_w = max(w, h) * 0.30
+        x0 = -band_w * 2 + t * (w + band_w * 4)
+        g = QLinearGradient(x0, 0, x0 + band_w, 0)
+        g.setColorAt(0.0, QColor(255, 255, 255, 0))
+        g.setColorAt(0.22, QColor(255, 255, 255, int(alpha * 0.55)))
+        g.setColorAt(0.5, QColor(255, 255, 255, alpha))
+        g.setColorAt(0.78, QColor(255, 255, 255, int(alpha * 0.55)))
+        g.setColorAt(1.0, QColor(255, 255, 255, 0))
+        p.fillRect(QRectF(x0, -h, band_w, h * 3), g)
+        p.restore()
+        p.end()
 
 
 class PlatformShell(QMainWindow):
@@ -140,6 +211,11 @@ class PlatformShell(QMainWindow):
                     pass
             else:
                 w.update()
+        # 主题切换过渡动效: 一笔柔光扫过(透明, 不拦鼠标)
+        try:
+            self._theme_wipe.trigger()
+        except Exception:
+            pass
 
     def _build_ui(self):
         central = QWidget()
@@ -182,6 +258,10 @@ class PlatformShell(QMainWindow):
         self._watermark.setStyleSheet(
             f"color:rgba(139,148,158,60);font-size:{fs(9)};background:transparent;border:none;")
         self._watermark.adjustSize()
+
+        # ── Theme-transition wipe overlay (transparent to mouse) ──
+        self._theme_wipe = _ThemeWipe(central)
+        self._theme_wipe.setGeometry(central.rect())
 
         # ── Status Bar ──
         self.status = QStatusBar()
@@ -344,6 +424,10 @@ class PlatformShell(QMainWindow):
                 self.width() - self._watermark.width() - 14,
                 self.height() - self._watermark.height() - 36
             )
+        if hasattr(self, '_theme_wipe'):
+            parent = self._theme_wipe.parentWidget()
+            if parent:
+                self._theme_wipe.setGeometry(parent.rect())
 
     def closeEvent(self, event):
         self._plugin_mgr.shutdown_all()
