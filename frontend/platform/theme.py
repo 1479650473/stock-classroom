@@ -194,6 +194,10 @@ def qss_card(radius: int = None) -> str:
 def qss_btn() -> str:
     if _current_key == "obsidian":
         return _obsidian_btn()
+    if _current_key == "graphite":
+        return _graphite_btn()
+    if _current_key == "ivory":
+        return _ivory_btn()
     g, gh = _t("btn_grad"), _t("btn_grad_hover")
     return (f"QPushButton{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
             f"stop:0 {g[0]},stop:1 {g[1]});color:{_t('btn_text')};"
@@ -209,6 +213,10 @@ def qss_btn() -> str:
 def qss_btn_accent() -> str:
     if _current_key == "obsidian":
         return _obsidian_btn_accent()
+    if _current_key == "graphite":
+        return _graphite_btn_accent()
+    if _current_key == "ivory":
+        return _ivory_btn_accent()
     a, ah = _t("accent_grad"), _t("accent_grad_hover")
     return (f"QPushButton{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
             f"stop:0 {a[0]},stop:1 {a[1]});color:{_t('on_accent')};border:none;"
@@ -235,6 +243,10 @@ def qss_btn_accent_outline() -> str:
 def qss_input() -> str:
     if _current_key == "obsidian":
         return _obsidian_input()
+    if _current_key == "graphite":
+        return _graphite_input()
+    if _current_key == "ivory":
+        return _ivory_input()
     return (f"QLineEdit{{background:{_t('panel')};color:{_t('text')};"
             f"border:1px solid {_t('border')};border-top:1px solid {_t('border_top')};"
             f"border-radius:{dps(_t('radius_input'))};padding:{dps(5)} {dps(10)};font-size:{fs(12)};}}"
@@ -245,6 +257,10 @@ def qss_input() -> str:
 def qss_combo() -> str:
     if _current_key == "obsidian":
         return _obsidian_combo()
+    if _current_key == "graphite":
+        return _graphite_combo()
+    if _current_key == "ivory":
+        return _ivory_combo()
     return (f"QComboBox{{background:{_t('panel')};color:{_t('text')};"
             f"border:1px solid {_t('border')};border-top:1px solid {_t('border_top')};"
             f"border-radius:{dps(_t('radius_input'))};padding:{dps(4)} {dps(10)};font-size:{fs(12)};}}"
@@ -258,6 +274,10 @@ def qss_combo() -> str:
 def qss_spinbox() -> str:
     if _current_key == "obsidian":
         return _obsidian_spinbox()
+    if _current_key == "graphite":
+        return _graphite_spinbox()
+    if _current_key == "ivory":
+        return _ivory_spinbox()
     return (f"QSpinBox,QDoubleSpinBox{{background:{_t('panel')};color:{_t('text')};"
             f"border:1px solid {_t('border')};border-radius:{dps(_t('radius_input'))};"
             f"padding:{dps(4)} {dps(8)};font-size:{fs(12)};}}"
@@ -347,6 +367,150 @@ def _obsidian_spinbox() -> str:
         f"QSpinBox,QDoubleSpinBox{{{_mach_recess(g, bt, t('radius_input'), 4, 8, 12)}color:{t('text')};}}"
         f"QSpinBox:focus,QDoubleSpinBox:focus{{border-color:{t('accent')};border-bottom-color:{t('accent_hover')};}}"
     )
+
+
+# ── Graphite cold-steel controls (plate edge + faint recess) ──────────────
+def _graphite_btn() -> str:
+    t = _t
+    g, gh = t("btn_grad"), t("btn_grad_hover")
+    return (
+        f"QPushButton{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+        f"stop:0 {g[0]},stop:1 {g[1]});color:{t('btn_text')};"
+        f"border:1px solid {t('border')};border-top:1px solid {t('border_top')};"
+        f"border-bottom:1px solid {t('border_top')};"
+        f"border-radius:{dps(t('radius_btn'))};padding:{dps(4)} {dps(12)};font-size:{fs(12)};font-weight:500;}}"
+        f"QPushButton:hover{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+        f"stop:0 {gh[0]},stop:1 {gh[1]});border-top-color:{t('accent')};color:{t('btn_text_hover')};}}"
+        f"QPushButton:pressed{{background:{t('bg')};border-top-color:{t('border')};}}"
+        f"QPushButton:disabled{{color:{t('faint')};border-color:{t('border_soft')};}}"
+    )
+
+
+def _graphite_btn_accent() -> str:
+    t = _t
+    a, ah = t("accent_grad"), t("accent_grad_hover")
+    return (
+        f"QPushButton{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+        f"stop:0 {a[0]},stop:1 {a[1]});color:{t('on_accent')};"
+        f"border:1px solid {t('accent_border')};border-top:1px solid {t('accent_hover')};"
+        f"border-bottom:1px solid {t('border')};"
+        f"border-radius:{dps(t('radius_btn'))};padding:{dps(5)} {dps(14)};font-size:{fs(12)};font-weight:600;}}"
+        f"QPushButton:hover{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+        f"stop:0 {ah[0]},stop:1 {ah[1]});border-top-color:{t('accent_hover')};}}"
+        f"QPushButton:disabled{{background:{t('overlay')};color:{t('faint')};}}"
+    )
+
+
+def _graphite_input() -> str:
+    t = _t
+    return (
+        f"QLineEdit{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+        f"stop:0 {t('raised')},stop:0.6 {t('panel')},stop:1 {t('raised')});color:{t('text')};"
+        f"border:1px solid {t('border_soft')};border-top:1px solid {t('border')};"
+        f"border-bottom:1px solid {t('border_top')};"
+        f"border-radius:{dps(t('radius_input'))};padding:{dps(5)} {dps(10)};font-size:{fs(12)};}}"
+        f"QLineEdit:focus{{border-color:{t('accent')};border-bottom-color:{t('accent_hover')};}}"
+        f"QLineEdit:disabled{{color:{t('faint')};}}"
+    )
+
+
+def _graphite_combo() -> str:
+    t = _t
+    body = (f"background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+            f"stop:0 {t('raised')},stop:0.6 {t('panel')},stop:1 {t('raised')});color:{t('text')};"
+            f"border:1px solid {t('border_soft')};border-top:1px solid {t('border')};"
+            f"border-bottom:1px solid {t('border_top')};"
+            f"border-radius:{dps(t('radius_input'))};padding:{dps(4)} {dps(10)};font-size:{fs(12)};")
+    return (f"QComboBox{{{body}}}"
+            f"QComboBox:hover{{border-top-color:{t('accent')};}}"
+            f"QComboBox::drop-down{{border:none;width:{dps(24)};}}"
+            f"QComboBox QAbstractItemView{{background:{t('panel')};color:{t('text')};"
+            f"border:1px solid {t('border')};border-radius:{dps(5)};"
+            f"selection-background-color:{t('sel_bg')};selection-color:{t('sel_fg')};outline:none;}}"
+            )
+
+
+def _graphite_spinbox() -> str:
+    t = _t
+    body = (f"background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+            f"stop:0 {t('raised')},stop:0.6 {t('panel')},stop:1 {t('raised')});color:{t('text')};"
+            f"border:1px solid {t('border_soft')};border-top:1px solid {t('border')};"
+            f"border-bottom:1px solid {t('border_top')};"
+            f"border-radius:{dps(t('radius_input'))};padding:{dps(4)} {dps(8)};font-size:{fs(12)};")
+    return (f"QSpinBox,QDoubleSpinBox{{{body}}}"
+            f"QSpinBox:focus,QDoubleSpinBox:focus{{border-color:{t('accent')};border-bottom-color:{t('accent_hover')};}}"
+            )
+
+
+# ── Ivory paper controls (debossed into paper + ink chips) ────────────────
+def _ivory_btn() -> str:
+    t = _t
+    g, gh = t("btn_grad"), t("btn_grad_hover")
+    return (
+        f"QPushButton{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+        f"stop:0 {g[0]},stop:1 {g[1]});color:{t('btn_text')};"
+        f"border:1px solid {t('border_top')};border-top:1px solid #FFFFFF;"
+        f"border-bottom:1px solid {t('border_top')};"
+        f"border-radius:{dps(t('radius_btn'))};padding:{dps(4)} {dps(12)};font-size:{fs(12)};font-weight:500;}}"
+        f"QPushButton:hover{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+        f"stop:0 {gh[0]},stop:1 {gh[1]});border-top-color:{t('accent')};color:{t('btn_text_hover')};}}"
+        f"QPushButton:pressed{{background:{g[1]};border-top-color:{t('border_top')};}}"
+        f"QPushButton:disabled{{color:{t('faint')};border-color:{t('border_soft')};}}"
+    )
+
+
+def _ivory_btn_accent() -> str:
+    t = _t
+    a, ah = t("accent_grad"), t("accent_grad_hover")
+    return (
+        f"QPushButton{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+        f"stop:0 {a[0]},stop:1 {a[1]});color:{t('on_accent')};"
+        f"border:1px solid {t('accent_border')};border-top:1px solid #FFFFFF;"
+        f"border-bottom:1px solid {t('border_top')};"
+        f"border-radius:{dps(t('radius_btn'))};padding:{dps(5)} {dps(14)};font-size:{fs(12)};font-weight:600;}}"
+        f"QPushButton:hover{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+        f"stop:0 {ah[0]},stop:1 {ah[1]});border-top-color:{t('accent_hover')};}}"
+        f"QPushButton:disabled{{background:{t('overlay')};color:{t('faint')};}}"
+    )
+
+
+def _ivory_input() -> str:
+    t = _t
+    return (
+        f"QLineEdit{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+        f"stop:0 {t('panel')},stop:0.6 {t('overlay')},stop:1 {t('panel')});color:{t('text')};"
+        f"border:1px solid {t('border')};border-top:1px solid {t('border_top')};"
+        f"border-bottom:1px solid #FFFFFF;"
+        f"border-radius:{dps(t('radius_input'))};padding:{dps(5)} {dps(10)};font-size:{fs(12)};}}"
+        f"QLineEdit:focus{{border-color:{t('accent')};border-bottom-color:{t('accent_hover')};}}"
+        f"QLineEdit:disabled{{color:{t('faint')};}}"
+    )
+
+
+def _ivory_combo() -> str:
+    t = _t
+    body = (f"background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+            f"stop:0 {t('panel')},stop:0.6 {t('overlay')},stop:1 {t('panel')});color:{t('text')};"
+            f"border:1px solid {t('border')};border-top:1px solid {t('border_top')};border-bottom:1px solid #FFFFFF;"
+            f"border-radius:{dps(t('radius_input'))};padding:{dps(4)} {dps(10)};font-size:{fs(12)};")
+    return (f"QComboBox{{{body}}}"
+            f"QComboBox:hover{{border-top-color:{t('accent')};}}"
+            f"QComboBox::drop-down{{border:none;width:{dps(24)};}}"
+            f"QComboBox QAbstractItemView{{background:{t('panel')};color:{t('text')};"
+            f"border:1px solid {t('border')};border-radius:{dps(5)};"
+            f"selection-background-color:{t('sel_bg')};selection-color:{t('sel_fg')};outline:none;}}"
+            )
+
+
+def _ivory_spinbox() -> str:
+    t = _t
+    body = (f"background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+            f"stop:0 {t('panel')},stop:0.6 {t('overlay')},stop:1 {t('panel')});color:{t('text')};"
+            f"border:1px solid {t('border')};border-top:1px solid {t('border_top')};border-bottom:1px solid #FFFFFF;"
+            f"border-radius:{dps(t('radius_input'))};padding:{dps(4)} {dps(8)};font-size:{fs(12)};")
+    return (f"QSpinBox,QDoubleSpinBox{{{body}}}"
+            f"QSpinBox:focus,QDoubleSpinBox:focus{{border-color:{t('accent')};border-bottom-color:{t('accent_hover')};}}"
+            )
 
 
 def qss_table() -> str:
@@ -517,7 +681,35 @@ QPushButton#indBtn:checked {{ background: qlineargradient(x1:0,y1:0,x2:0,y2:1, s
 
 
 def _graphite_template(t: dict) -> str:
-    return _shared_parts(t)
+    extra = f"""
+/* graphite: cold-steel plate controls + recessed inputs + header rail */
+QPushButton {{
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {t['btn_grad'][0]}, stop:1 {t['btn_grad'][1]});
+    color: {t['btn_text']}; border: 1px solid {t['border']}; border-top: 1px solid {t['border_top']};
+    border-bottom: 1px solid {t['border_top']}; border-radius: $dp{t['radius_btn']};
+    padding: $dp4 $dp12; font-size: $fs12; font-weight: 500;
+}}
+QPushButton:hover {{ background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {t['btn_grad_hover'][0]}, stop:1 {t['btn_grad_hover'][1]}); border-top-color: {t['accent']}; color: {t['btn_text_hover']}; }}
+QPushButton:pressed {{ background: {t['bg']}; border-top-color: {t['border']}; }}
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {{
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {t['raised']}, stop:0.6 {t['panel']}, stop:1 {t['raised']});
+    color: {t['text']}; border: 1px solid {t['border_soft']}; border-top: 1px solid {t['border']};
+    border-bottom: 1px solid {t['border_top']}; border-radius: $dp6; padding: $dp5 $dp10; font-size: $fs12;
+}}
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {{ border-color: {t['accent']}; }}
+QHeaderView::section {{
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {t['raised']}, stop:0.6 {t['panel']}, stop:1 {t['raised']});
+    color: {t['sub']}; border: none; border-bottom: 1px solid {t['border']};
+    border-right: 1px solid {t['border_soft']}; padding: $dp5 $dp9; font-weight:600; font-size:$fs10; letter-spacing:0.5px;
+}}
+QHeaderView::section:hover {{ color: {t['text']}; border-bottom-color: {t['accent']}; }}
+QTableCornerButton::section {{ background: {t['panel']}; border:none; border-bottom:1px solid {t['border']}; }}
+QTableWidget::item:selected, QListWidget::item:selected, QTreeWidget::item:selected {{
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {t['sel_bg']}, stop:1 rgba(0,0,0,0.18));
+    color: {t['sel_fg']};
+}}
+"""
+    return _shared_parts(t) + extra
 
 
 def _obsidian_template(t: dict) -> str:
@@ -578,7 +770,35 @@ QTableWidget::item:selected, QListWidget::item:selected, QTreeWidget::item:selec
 
 
 def _ivory_template(t: dict) -> str:
-    return _shared_parts(t)
+    extra = f"""
+/* ivory: paper deboss — ink-chip buttons, debossed inputs, embossed header rail */
+QPushButton {{
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {t['btn_grad'][0]}, stop:1 {t['btn_grad'][1]});
+    color: {t['btn_text']}; border: 1px solid {t['border_top']}; border-top: 1px solid #FFFFFF;
+    border-bottom: 1px solid {t['border_top']}; border-radius: $dp{t['radius_btn']};
+    padding: $dp4 $dp12; font-size: $fs12; font-weight: 500;
+}}
+QPushButton:hover {{ background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {t['btn_grad_hover'][0]}, stop:1 {t['btn_grad_hover'][1]}); border-top-color: {t['accent']}; color: {t['btn_text_hover']}; }}
+QPushButton:pressed {{ background: {t['btn_grad'][1]}; border-top-color: {t['border_top']}; }}
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {{
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {t['panel']}, stop:0.6 {t['overlay']}, stop:1 {t['panel']});
+    color: {t['text']}; border: 1px solid {t['border']}; border-top: 1px solid {t['border_top']};
+    border-bottom: 1px solid #FFFFFF; border-radius: $dp6; padding: $dp5 $dp10; font-size: $fs12;
+}}
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {{ border-color: {t['accent']}; border-bottom-color: {t['accent_hover']}; }}
+QHeaderView::section {{
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #FFFFFF, stop:0.6 {t['raised']}, stop:1 #FFFFFF);
+    color: {t['sub']}; border: none; border-bottom: 1px solid {t['border_top']};
+    border-right: 1px solid {t['border_soft']}; padding: $dp5 $dp9; font-weight:600; font-size:$fs10; letter-spacing:0.5px;
+}}
+QHeaderView::section:hover {{ color: {t['text']}; border-bottom-color: {t['accent']}; }}
+QTableCornerButton::section {{ background: {t['panel']}; border:none; border-bottom:1px solid {t['border_top']}; }}
+QTableWidget::item:selected, QListWidget::item:selected, QTreeWidget::item:selected {{
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {t['sel_bg']}, stop:1 rgba(0,0,0,0.05));
+    color: {t['sel_fg']};
+}}
+"""
+    return _shared_parts(t) + extra
 
 
 # Backwards-compat: pre-built default global stylesheet (kept in sync by build_style)

@@ -415,6 +415,48 @@ class MachinedWell(QFrame):
                                (r.left() + pad, r.bottom() - pad),
                                (r.right() - pad, r.bottom() - pad)):
                     self._paint_screw(p, cx, cy)
+        elif _th.theme_key() == "graphite":
+            # cold-steel hairline grain (very faint, cool-tinted) + hairline plate recess
+            if h > 26:
+                p.save()
+                p.setClipPath(path)
+                step = max(3.0, min(4.5, h / 60.0))
+                y = r.top() + 5.0
+                row = 0
+                while y < r.bottom() - 4.0:
+                    n = math.sin(row * 12.9898) * 43758.5453
+                    f = abs(n - int(n))
+                    a = int(3 + 4 * f)                 # cool steel, very faint
+                    p.setPen(QPen(QColor(160, 184, 210, a), 1))
+                    p.drawLine(int(r.left() + 3), int(y), int(r.right() - 3), int(y))
+                    y += step
+                    row += 1
+                p.restore()
+            # hairline plate recess (cool 1px inner seam)
+            p.setPen(QPen(QColor(0, 0, 0, 66), 1))
+            p.setBrush(Qt.NoBrush)
+            hp = QPainterPath()
+            hp.addRoundedRect(QRectF(r.x() + 1.5, r.y() + 1.5, r.width() - 3, r.height() - 3),
+                              max(radius - 1.5, 0), max(radius - 1.5, 0))
+            p.drawPath(hp)
+        elif _th.theme_key() == "ivory":
+            # paper deboss: warm inner top shadow + light bottom catch (pressed into paper)
+            p.save()
+            p.setClipPath(path)
+            deb = QLinearGradient(0, 0, 0, h)
+            deb.setColorAt(0.0, QColor(90, 60, 30, 26))
+            deb.setColorAt(0.12, QColor(90, 60, 30, 0))
+            deb.setColorAt(0.88, QColor(255, 255, 255, 0))
+            deb.setColorAt(1.0, QColor(255, 255, 250, 66))
+            p.fillPath(path, deb)
+            # debossed seam
+            p.setPen(QPen(QColor(0, 0, 0, 20), 1))
+            p.setBrush(Qt.NoBrush)
+            hp = QPainterPath()
+            hp.addRoundedRect(QRectF(r.x() + 1.5, r.y() + 1.5, r.width() - 3, r.height() - 3),
+                              max(radius - 1.5, 0), max(radius - 1.5, 0))
+            p.drawPath(hp)
+            p.restore()
         p.end()
 
         super().paintEvent(ev)
