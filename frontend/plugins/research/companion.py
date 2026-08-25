@@ -16,8 +16,8 @@ from frontend.platform.theme import (
 )
 
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QTableWidget, QTableWidgetItem,
-    QHeaderView, QAbstractItemView,
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QFrame, QTableWidget, QTableWidgetItem,
+    QHeaderView, QAbstractItemView, QSizePolicy,
 )
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import QPainter, QPen, QColor, QPainterPath, QFont
@@ -66,10 +66,15 @@ class _NavCurve(QWidget):
         self.setMinimumHeight(dp(220))
 
     def set_data(self, dates, nav, bh_dates, bh_nav):
+        # 归一化成"倍数"(各序列自身起点=1.0) → 净值(绝对值~1M)与买持(价格比~1.0)同轴可比
+        def _idx(vals):
+            vals = [float(x) for x in vals or []]
+            base = vals[0] if vals else 1.0
+            return [v / base for v in vals] if base else vals
         self._dates = dates or []
-        self._nav = nav or []
+        self._nav = _idx(nav)
         self._bh_dates = bh_dates or []
-        self._bh = bh_nav or []
+        self._bh = _idx(bh_nav)
         self.update()
 
     def paintEvent(self, _ev):
@@ -155,17 +160,17 @@ class ResearchCompanion(QWidget):
         cap.setStyleSheet(style_caption())
         lo.addWidget(cap)
 
-        # 摘要卡
-        sum_row = QHBoxLayout()
-        sum_row.setSpacing(dp(8))
+        # 摘要卡 (2x2 网格, 适配窄栏)
+        sum_grid = QGridLayout()
+        sum_grid.setSpacing(dp(8))
         self._c_nav = _card("期末净值")
         self._c_ret = _card("组合收益")
         self._c_reb = _card("调仓次数")
         self._c_turn = _card("平均换手")
-        for c in (self._c_nav, self._c_ret, self._c_reb, self._c_turn):
-            c.frame.setMinimumWidth(dp(110))
-            sum_row.addWidget(c.frame)
-        lo.addLayout(sum_row)
+        for i, c in enumerate((self._c_nav, self._c_ret, self._c_reb, self._c_turn)):
+            c.frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            sum_grid.addWidget(c.frame, i // 2, i % 2)
+        lo.addLayout(sum_grid)
 
         self._curve = _NavCurve()
         lo.addWidget(self._curve, 1)

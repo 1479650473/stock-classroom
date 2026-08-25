@@ -181,32 +181,28 @@ class ResearchPanel(QWidget):
         ctrl.addWidget(self._btn_run)
         lo.addLayout(ctrl)
 
-        # 研究代理 · 市场环境
+        # 研究代理 · 市场环境 (2x2 网格, 适配窄栏)
         lo.addWidget(_sec_title("市场环境  ·  研究代理信号"))
-        env_row = QHBoxLayout()
-        env_row.setSpacing(dp(8))
+        env_grid = QGridLayout()
+        env_grid.setSpacing(dp(8))
         self._card_mkt = _StatCard("市场状态")
         self._card_breadth = _StatCard("市场宽度")
         self._card_wvalue = _StatCard("组合价值权重")
         self._card_gate = _StatCard("决策门")
-        for c in (self._card_mkt, self._card_breadth, self._card_wvalue, self._card_gate):
-            c.setMinimumWidth(dp(140))
-            c.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-            env_row.addWidget(c)
-        lo.addLayout(env_row)
+        env_cards = [self._card_mkt, self._card_breadth, self._card_wvalue, self._card_gate]
+        for i, card in enumerate(env_cards):
+            card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            env_grid.addWidget(card, i // 2, i % 2)
+        lo.addLayout(env_grid)
 
-        # 价值因子研究
+        # 价值因子研究 (1 列纵向堆叠, 窄栏更稳)
         lo.addWidget(_sec_title("价值因子研究  ·  截面 IC / ICIR"))
-        study_row = QHBoxLayout()
-        study_row.setSpacing(dp(8))
         self._card_bp = _SecCard("BP  账面市值比")
         self._card_ep = _SecCard("EP  盈利收益率")
         self._card_roe = _SecCard("ROE  净资产收益率")
         for c in (self._card_bp, self._card_ep, self._card_roe):
-            c.setMinimumWidth(dp(170))
             c.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-            study_row.addWidget(c)
-        lo.addLayout(study_row)
+            lo.addWidget(c)
 
         # 多因子选股
         lo.addWidget(_sec_title("多因子选股  ·  z(BP)+z(REV20)−z(VOL20) 综合分"))
@@ -347,6 +343,8 @@ class ResearchPanel(QWidget):
                     it.setFont(QFont("", -1, QFont.Bold))
                 self._rank_table.setItem(i, j, it)
         self._rank_table.resizeColumnsToContents()
+        self._rank_table.setColumnWidth(0, dp(84))
+        self._rank_table.setColumnWidth(3, dp(96))
 
     def _on_row_click(self, row, col):
         if not self._snap or row >= len(self._snap.get("ranking", [])):
