@@ -66,7 +66,8 @@ def _max_drawdown(nav: pd.Series) -> float:
 
 def _xs_z(panel: pd.DataFrame, date: pd.Timestamp):
     """date 时点的截面 z-score(standardize); 返回 Series 或 None(有效样本过少)."""
-    x = panel.loc[date].replace([math.inf, -math.inf], pd.NA).dropna()
+    x = pd.to_numeric(panel.loc[date], errors="coerce")
+    x = x.replace([math.inf, -math.inf], pd.NA).dropna()
     if len(x) < 5:
         return None
     sd = float(x.std())

@@ -30,7 +30,8 @@
 | — | 价值叠加层+跨周期稳健性+三分离方法论 | `9215315` | 价值作过滤/择时叠加层(证伪) + 2023-2026 逐年稳健性 + RESEARCH_AGENT 三分离 | overlay/cycle |
 | — | 价值 regime 开关+价值tilt接决策门+补抓历史K线 | `8529196` | value_tilt_state + 决策门tilt + verify_value_regime + prefetch_kline_history | regime/gate |
 | — | 价值 regime 开关升级+value_tilt硬裁决+因子×景气周期框架 | `d579ea3` | 价值价差自指开关 + value_hard_rule + factor_cycle矩阵 | regime2/gate/facycle |
-| — | 组合级价值tilt+市场宽度第三路信号+多因子分层 | `pending` | 价值升级为组合层(权重tilt) + 破年线宽度信号 + 分层而非独立回测 | pf/tilt_alloc |
+| — | 组合级价值tilt+市场宽度第三路信号+多因子分层 | `7b2c333` | 价值升级为组合层(权重tilt) + 破年线宽度信号 + 分层而非独立回测 | pf/tilt_alloc |
+| — | 重平衡选股器+NET计成本+全局寻优+多窗口 | `pending` | portfolio_rebalance(接portfolio_value_alloc) + NET分层保留/tilt不增价值(修正) + 训练/验证分离 + hp多窗口 | pfopt/paper |
 
 ## 关键验证汇总(2026-08-24，工作区干净)
 
@@ -47,8 +48,7 @@
 | 价值 regime 开关升级 | verify_value_regime2 · 价值价差自指开关=纯价值+46%(29/44期持价值) 跑赢SH指数开关+44.8% |
 | value_tilt 硬裁决 | value_hard_rule · 策略引用价值因子+headwind → 强制hold(即使signal=True); 动量策略不强制; 实测通过 |
 | 因子×景气周期矩阵 | verify_factor_cycle_2018 · BP IC 四期皆正(唯一); MOMENTUM/MOMENTUM_20=反转(负IC); VOLATILITY=低波动异象 |
-| 组合级价值tilt+分层回测 | verify_portfolio_framework(2500幸存池, GROSS) · 多因子分层 2.823>最佳单因子2.729>买持1.986; tilt后 价值价差2.987>指数2.950>宽度2.923>无tilt2.823; 详见 RESEARCH_AGENT 组合层小节 |
-| 市场宽度第三路信号 | verify_portfolio_framework/verify_portfolio_tilt_alloc · 破250日年线占比<50%→弱市; 与价值价差交叉验证40/11/37; 真实宽度28.4%→弱市/价值顺风(与指数regime分歧) |
+| 组合级价值tilt+分层回测 | verify_portfolio_framework/optimize(2500幸存池) · 分层 D 2.823>最佳单因子 C 2.719>买持 1.986(净 2.520>2.389>1.985); tilt尽(GROSS F 2.818≈D)/NET F 2.505<D 2.520 → 不再推崇; 详见 RESEARCH_AGENT 组合层小节 |
 | 组合值tilt分配器(生产) | portfolio_value_alloc(三路多数决→w_value) + market_breadth · verify_portfolio_tilt_alloc 确定性全过 |
 | 价值 tilt 接进决策门 | value_tilt_state 感知 → risk_on 时 value_headwind, 决策门 hold 并引"价值短期跑输" |
 | 补抓 2018-2022 历史K线 | prefetch_kline_history 三轮已全部完成(5191只, kline_2018 1→3338) · 真熊市跨周期已解锁 |
