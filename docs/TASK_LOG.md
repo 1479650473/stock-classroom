@@ -32,7 +32,7 @@
 | — | 价值 regime 开关升级+value_tilt硬裁决+因子×景气周期框架 | `d579ea3` | 价值价差自指开关 + value_hard_rule + factor_cycle矩阵 | regime2/gate/facycle |
 | — | 组合级价值tilt+市场宽度第三路信号+多因子分层 | `7b2c333` | 价值升级为组合层(权重tilt) + 破年线宽度信号 + 分层而非独立回测 | pf/tilt_alloc |
 | — | 重平衡选股器+NET计成本+全局寻优+多窗口 | `b6aa4c9` | portfolio_rebalance(接portfolio_value_alloc) + ResearchLoop.portfolio_paper 挂进主闭环 + NET分层保留/tilt不增价值(修正) + 训练/验证分离 + hp多窗口 + HP=5断点机制(纯成本) + 框架/优化脚本彻底对齐 | pfopt/paper/hp5/loop |
-| — | 按持有期自适应配置器+多期forward+降频结论 | `pending` | adaptive_config_for_hp(HP_LAYER_MIN=20, 规则化) + forward_paper_run(多期调仓循环) + 分层HP20>HP5>价值HP5→保持分层+慢调仓 | aft/fwd |
+| — | 按持有期自适应配置器+多期forward+降频结论 | `9d09f29` | adaptive_config_for_hp(HP_LAYER_MIN=20, 规则化) + forward_paper_run(多期调仓循环) + 分层HP20>HP5>价值HP5→保持分层+慢调仓 | aft/fwd |
 
 ## 关键验证汇总(2026-08-24，工作区干净)
 
