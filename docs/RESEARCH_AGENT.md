@@ -188,6 +188,11 @@ value_tilt=value_headwind(减配/决策门强制hold)。动量在 A 股是**反�
 确定性验证 `verify_portfolio_paper.py`(小池 tilt 接线✓、产出真实调仓计划、组合 paper GROSS+46.6%/NET+41.2%)。诚实发现：**tilt 对综合名次是"三阶效应"**
 (BP主导截面, 高BP组百分位偏移~0.001)——价值层权重tilt改变的是"价值 vs 非价值"整体权重, 而非价值股彼此排序。
 **口径注意**：组合级数字**必须**用含 `pd.to_numeric(...errors="coerce")` 清洗+不含"跳过稀疏截面"的版本；否则数据杂质/稀疏跳过会虚增收益(2.82→2.99)。
+**已达完全一致**：`verify_portfolio_framework` 与 `verify_portfolio_optimize` 同口径(清理+不跳稀疏)后 D 都=2.823、F 都=2.818；E=2.784/G=2.758 均≤D → **GROSS 层面 tilt(指数/价差/宽度三路)都不增价值**，与 NET 结论吻合。
+
+**HP=5 断点机制(verify_hp5_mechanism)——纯成本 vs 模型本身**：HP=5 时 分层D GROSS 3.065 > 最佳单 GROSS 2.649(**模型仍占优**)，但 NET 分层 2.381 < 最佳单 2.466(**被成本击穿**)；分层平均换手 0.302 vs 价值 0.086，成本拖累 +33.13%。HP=20 时 GROSS+NET 都分层优(成本拖累仅16.6%)。**判定：短持有断点是"纯换手成本"击穿、非模型本身**——价值(BP)rank自相关≈0.99→5日几乎不换手(0.086)，故短持有下低换手价值反成最优。**落地：多因子分层用 HP≥20；HP=5 降为低换手价值层或减慢频率**。
+
+**组合重平衡器接进主闭环**：`ResearchLoop.portfolio_paper()` 已把 `RebalancePlanner`(接 portfolio_value_alloc)挂进主循环——读 paper 账户现金+持仓→算目标组合(价值层权重随三路信号多数决)→reconcile 出调仓→逐笔 gw.paper_order（`verify_portfolio_paper_loop.py` 验证：tilt 接线✓、调仓交易生成✓→真实下单）。
 
 ---
 

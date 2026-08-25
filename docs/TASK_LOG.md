@@ -31,7 +31,7 @@
 | — | 价值 regime 开关+价值tilt接决策门+补抓历史K线 | `8529196` | value_tilt_state + 决策门tilt + verify_value_regime + prefetch_kline_history | regime/gate |
 | — | 价值 regime 开关升级+value_tilt硬裁决+因子×景气周期框架 | `d579ea3` | 价值价差自指开关 + value_hard_rule + factor_cycle矩阵 | regime2/gate/facycle |
 | — | 组合级价值tilt+市场宽度第三路信号+多因子分层 | `7b2c333` | 价值升级为组合层(权重tilt) + 破年线宽度信号 + 分层而非独立回测 | pf/tilt_alloc |
-| — | 重平衡选股器+NET计成本+全局寻优+多窗口 | `pending` | portfolio_rebalance(接portfolio_value_alloc) + NET分层保留/tilt不增价值(修正) + 训练/验证分离 + hp多窗口 | pfopt/paper |
+| — | 重平衡选股器+NET计成本+全局寻优+多窗口 | `pending` | portfolio_rebalance(接portfolio_value_alloc) + ResearchLoop.portfolio_paper 挂进主闭环 + NET分层保留/tilt不增价值(修正) + 训练/验证分离 + hp多窗口 + HP=5断点机制(纯成本) + 框架/优化脚本彻底对齐 | pfopt/paper/hp5/loop |
 
 ## 关键验证汇总(2026-08-24，工作区干净)
 
@@ -48,7 +48,10 @@
 | 价值 regime 开关升级 | verify_value_regime2 · 价值价差自指开关=纯价值+46%(29/44期持价值) 跑赢SH指数开关+44.8% |
 | value_tilt 硬裁决 | value_hard_rule · 策略引用价值因子+headwind → 强制hold(即使signal=True); 动量策略不强制; 实测通过 |
 | 因子×景气周期矩阵 | verify_factor_cycle_2018 · BP IC 四期皆正(唯一); MOMENTUM/MOMENTUM_20=反转(负IC); VOLATILITY=低波动异象 |
-| 组合级价值tilt+分层回测 | verify_portfolio_framework/optimize(2500幸存池) · 分层 D 2.823>最佳单因子 C 2.719>买持 1.986(净 2.520>2.389>1.985); tilt尽(GROSS F 2.818≈D)/NET F 2.505<D 2.520 → 不再推崇; 详见 RESEARCH_AGENT 组合层小节 |
+| 组合级价值tilt+分层回测 | verify_portfolio_framework/optimize(2500幸存池) · 分层 D 2.823>最佳单 C 2.719>买持 1.986(净 2.520>2.389>1.985); tilt(GROSS F 2.818≤D/E 2.784/G 2.758, NET F 2.505<D) → 不再推崇; 两脚本已彻底一致(D/F 同值) |
+| HP=5 断点机制 | verify_hp5_mechanism · HP=5 分层 GROSS 3.065>最佳单 2.649(模型仍占优) 但 NET 2.381<2.466(被成本击穿, 成本拖累+33.13%, 换手0.302 vs 价值0.086) → 断点是'纯换手成本'非模型; HP=20 成本拖累仅16.6% 净仍优 → 分层用HP≥20 |
+| 组合重平衡器接进主闭环 | ResearchLoop.portfolio_paper · RebalancePlanner(接portfolio_value_alloc) 读账户现金/持仓→目标组合→reconcile→逐笔paper_order(7只全部成交, 持仓7/现金4583) ; verify_portfolio_paper_loop |
+| 权重寻优(训练→验证) | verify_portfolio_optimize · 训练最优OOS 1.411>等权1.345(略优) 但<简单tilt 1.439, 上界1.473 → 样本内~4.4%, 寻优价值有限 |
 | 组合值tilt分配器(生产) | portfolio_value_alloc(三路多数决→w_value) + market_breadth · verify_portfolio_tilt_alloc 确定性全过 |
 | 价值 tilt 接进决策门 | value_tilt_state 感知 → risk_on 时 value_headwind, 决策门 hold 并引"价值短期跑输" |
 | 补抓 2018-2022 历史K线 | prefetch_kline_history 三轮已全部完成(5191只, kline_2018 1→3338) · 真熊市跨周期已解锁 |

@@ -213,10 +213,16 @@ def main() -> int:
         z_low = -zl if zl is not None else None
         for k, fn in VARS.items():
             score = fn(zb, zr, z_low, s_idx, s_vsp, s_br)
-            if score is None or len(score) < n:
+            if score is None:
                 # 至少一因子缺失 → 该期略过(诚实不参与组合)
                 continue
-            top = score.nlargest(n).index
+            # 不用 "len(score)<n 则跳过稀疏截面"(交集小/覆盖面稀疏的调仓日会跳过→躲过坏截面虚增).
+            # 与 verify_portfolio_optimize 修正版一致: kk=min(n,len(score)) 取全部可用, 不偷看.
+            score = pd.to_numeric(score, errors="coerce").dropna()
+            kk = min(n, len(score))
+            if kk < 2:
+                continue
+            top = score.nlargest(kk).index
             rets = frow.reindex(top).dropna()
             if rets.empty:
                 continue

@@ -405,6 +405,133 @@ class ResearchLoop:
                 result.paper["decision"] = decision.to_dict()
         return result
 
+    def portfolio_paper(self, gw=None, pool=None, contract=None, account_id=None,
+                        as_of=None, max_pool: int = 300) -> dict:
+        """组合级 paper 盘 —— 把组合重平衡选股器(接 portfolio_value_alloc)挂进主闭环。
+
+        与 run() 的"单票 paper"(一次一票)不同: 这里在账户**当前现金/持仓**上, 用 RebalancePlanner
+        算出目标组合(价值层权重 w_value 随 portfolio_value_alloc 三路信号多数决), reconcile 出
+        调仓交易, 逐笔走 gw.paper_order 真实下到 paper 账户。即"研究→组合纸面"的一步。
+        幂等/保守: 不新建账户(用 account_id 或活跃账户), 不强制买入空信号, 由目标组合决定。
+        """
+        from ..strategy.portfolio_rebalance import SelectionContract, RebalancePlanner, _xs_z
+        from ..strategy.factor_data import load_universe_frames
+        from ..strategy.factor_research import FactorResearchEngine
+        from ..strategy.factor_selector import build_wide_pool
+        from ..strategy.data import load_klines
+        from ..trade_engine.engine import TradeEngine
+        import math
+        import pandas as pd
+
+        gw = gw or self.gw
+        contract = contract or SelectionContract()
+        # ① 池 + 帧(带 warmup, 让 reversal/vol 预热)
+        pool = (pool or build_wide_pool())[:max_pool]
+        end = datetime.now().strftime("%Y%m%d")
+        frames = load_universe_frames(pool, start="2023-06-01", end=end,
+                                      with_fundamentals=True, fetch_missing=False)
+        if not frames:
+            return {"error": "无池数据", "code": "empty_pool"}
+
+        # ② 面板 + 三路信号源
+        eng = FactorResearchEngine()
+        close = eng._panel(frames, "close")
+        open_ = eng._panel(frames, "open")
+        bp = eng._factor_panel(frames, "bp", close)
+        rev = eng._factor_panel(frames, "reversal_20", close)
+        vol = eng._factor_panel(frames, "volatility_20", close)
+        ma = close.rolling(250, min_periods=120).mean()
+        breadth_ser = (close > ma).mean(axis=1)
+
+        idx, _ = load_klines("sh000001", limit=4500)
+        idx_close = pd.Series([float(k["close"]) for k in idx],
+                              index=pd.to_datetime([str(k["date"]) for k in idx],
+                                                   format="%Y%m%d", errors="coerce"))
+        idx_close = idx_close[idx_close.index.notna()].sort_index()
+
+        def _index_tilt(dt):
+            hist = idx_close.loc[idx_close.index <= dt]
+            if hist.empty or len(hist) < 30:
+                return "value_neutral"
+            last = float(hist.iloc[-1]); ma120 = float(hist.rolling(120, min_periods=30).mean().iloc[-1])
+            dd = last / max(hist.tail(60)) - 1.0
+            if last < ma120 or dd < -0.08:
+                return "value_favorable"
+            if last > ma120 and dd > -0.05:
+                return "value_headwind"
+            return "value_neutral"
+
+        def _breadth_tilt(dt):
+            b = breadth_ser.get(dt, pd.NA)
+            if pd.isna(b) or not math.isfinite(float(b)):
+                return "value_neutral"
+            if float(b) < 0.5:
+                return "value_favorable"
+            if float(b) > 0.6:
+                return "value_headwind"
+            return "value_neutral"
+
+        rb = contract.rebalance_bars
+        r = eng.run(frames=frames, factor_id="BP", start_date="2023-01-01", end_date=end,
+                    groups=5, holding_period=rb, compute_correlation=False)
+        ls_map = {pd.Timestamp(p["time"]): float(p["net"]) for p in r.get("longShortCurve", [])}
+        ls_dates = [pd.Timestamp(p["time"]) for p in r.get("longShortCurve", [])]
+
+        def _value_spread(dt):
+            hist = [d for d in ls_dates if d <= dt]
+            if len(hist) < 4:
+                return None
+            c, p = ls_map[hist[-1]], ls_map[hist[-4]]
+            if c is None or p is None or p <= 0:
+                return None
+            return 1.0 if c / p - 1.0 > 0 else 0.0
+
+        def signal_fn(date):
+            return {"index_tilt": {"value_tilt": _index_tilt(date)},
+                    "breadth": {"tilt": _breadth_tilt(date)},
+                    "value_spread": _value_spread(date)}
+
+        # ③ 账户现金 + 持仓
+        engine = TradeEngine()
+        if account_id is None or account_id == 0:
+            act = [a for a in engine.list_accounts() if a.get("is_active")]
+            account_id = act[0]["id"] if act else engine.create_account("paper-portfolio", contract.initial_balance)
+        acc = engine.get_account(account_id)
+        cash = float(acc["balance"]) if acc else contract.initial_balance
+        holdings = {}
+        if acc:
+            for p in engine.get_positions(account_id):
+                holdings[p["code"]] = int(p["qty"])
+
+        # ④ 重平衡目标(选一个基本面覆盖足够的最新日期, 避免落在最新日覆盖稀薄→退化单只)
+        # 找一个 BP 截面有效数 >= max(30, 池10%) 的最近日期
+        need = max(30, int(len(pool) * 0.1))
+        as_of = None
+        for d in reversed(list(close.index)):
+            zb = _xs_z(bp, d)
+            if zb is not None and len(zb) >= need:
+                as_of = d
+                break
+        if as_of is None:
+            as_of = frames[next(iter(frames))].index[-1]
+        planner = RebalancePlanner(contract, signal_fn=signal_fn)
+        plan = planner.plan_at(pd.Timestamp(as_of), frames, holdings, cash)
+
+        # ⑤ 逐笔下 paper 单
+        orders = []
+        for t in plan.get("trades", []):
+            try:
+                o = gw.paper_order({"code": t["code"], "side": t["side"], "order_type": "market",
+                                    "qty": t["qty"], "current_price": t["price"],
+                                    "account_id": account_id})
+                orders.append({"trade": t, "order": o})
+            except Exception as ex:
+                orders.append({"trade": t, "error": f"{type(ex).__name__}: {str(ex)[:60]}"})
+        return {"account_id": account_id, "as_of": str(plan["date"]), "cash": cash,
+                "holdings": holdings, "tilt": plan.get("tilt"), "w_value": plan.get("w_value"),
+                "target": plan.get("target"), "n_trades": len(plan.get("trades", [])),
+                "trades": plan.get("trades", []), "orders": orders}
+
     def _recommend_factor(self, universe, macro) -> Optional[dict]:
         """在标的域所属板块的股票池上跑截面 IC/ICIR, 选出被研究支撑的因子。"""
         from ..strategy.factor_selector import recommend as _recommend
