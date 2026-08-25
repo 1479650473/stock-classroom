@@ -9,8 +9,11 @@ trade companion, datacenter, and any new panel can inherit it without each
 re-declaring colors or QSS (which previously drift apart).
 """
 
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, QRectF
 from PyQt5.QtWidgets import QLabel, QFrame, QWidget, QHBoxLayout
+from PyQt5.QtGui import QPainter, QColor, QPen, QFont, QLinearGradient
+
+import math
 
 from .theme import dp, dps, fs, C_ACCENT, C_BORDER_SOFT
 
@@ -166,3 +169,146 @@ class CountUpLabel(QLabel):
         self._last = float(value)
         self._timer.stop()
         self.setText(self._fmt(self._cur)[: self._max_chars])
+
+
+def _tilt_color(tilt):
+    if tilt == "value_favorable" or tilt == "favorable":
+        return PAL["down"]
+    if tilt == "value_headwind" or tilt == "headwind":
+        return PAL["up"]
+    return PAL["accent"]
+
+
+class BreadthGauge(QWidget):
+    """Semicircular gauge for a 0-1 fraction (e.g. 破年线占比 / 市场宽度).
+
+    Arc colored by value-tilt (favorable=green, headwind=red, ACID accent), ticks
+    at the 0.5 / 0.6 regime boundaries, + a needle and centered % readout.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._value = 0.5
+        self._tilt = "value_neutral"
+        self.setMinimumHeight(dp(96))
+
+    def set_value(self, value, tilt="value_neutral"):
+        self._value = max(0.0, min(1.0, float(value or 0.0)))
+        self._tilt = tilt or "value_neutral"
+        self.update()
+
+    def paintEvent(self, _ev):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        if w < 30 or h < 30:
+            p.end()
+            return
+        cx = w / 2.0
+        cy = h * 0.82
+        radius = min(w * 0.42, h * 0.72)
+        rect = QRectF(cx - radius, cy - radius, radius * 2, radius * 2)
+        span = 180.0
+        thick = max(radius * 0.16, dp(3))
+        arc = int(-span * 16)
+
+        # track (full semicircle)
+        p.setPen(QPen(QColor(PAL["axis"]), thick, Qt.SolidLine, Qt.RoundCap))
+        p.drawArc(rect, 180 * 16, arc)
+
+        # regime tick marks at 0.5 and 0.6
+        tick = QPen(QColor(PAL["faint"]), max(1.0, radius * 0.02))
+        for frac in (0.5, 0.6):
+            a = math.pi - math.pi * frac  # 180deg -> 0deg (left->right)
+            x1 = cx + math.cos(a) * radius
+            y1 = cy - math.sin(a) * radius
+            x2 = cx + math.cos(a) * (radius - thick * 0.9)
+            y2 = cy - math.sin(a) * (radius - thick * 0.9)
+            p.setPen(tick)
+            p.drawLine(int(x1), int(y1), int(x2), int(y2))
+
+        # value arc (colored by tilt)
+        color = QColor(_tilt_color(self._tilt))
+        p.setPen(QPen(color, thick, Qt.SolidLine, Qt.RoundCap))
+        p.drawArc(rect, 180 * 16, int(-span * self._value * 16))
+
+        # needle
+        a = math.pi - math.pi * self._value
+        nx = cx + math.cos(a) * (radius - thick)
+        ny = cy - math.sin(a) * (radius - thick)
+        p.setPen(QPen(QColor(PAL["text"]), max(1.5, radius * 0.03), Qt.SolidLine, Qt.RoundCap))
+        p.drawLine(int(cx), int(cy - radius * 0.10), int(nx), int(ny))
+        p.setBrush(QColor(PAL["accent"]))
+        p.setPen(Qt.NoPen)
+        p.drawEllipse(QRectF(nx - 3, ny - 3, 6, 6))
+
+        # center % readout
+        p.setFont(QFont("Segoe UI Light", int(max(radius * 0.24, 12))))
+        p.setPen(QColor(PAL["text"]))
+        p.drawText(QRectF(0, cy - radius * 0.5, w, radius * 0.5),
+                   Qt.AlignCenter, "{:.0%}".format(self._value))
+        p.setFont(QFont("Segoe UI", 8))
+        p.setPen(QColor(PAL["faint"]))
+        p.drawText(QRectF(0, cy + radius * 0.15, w, 16), Qt.AlignCenter,
+                   "← {:.0f}%  突破年线 {:.0f}% →".format(self._value * 100, (1 - self._value) * 100))
+        p.end()
+
+
+class SplitBar(QWidget):
+    """Horizontal stacked composition bar — up / down / flat share (今日涨跌分布)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._up = self._dn = self._flat = 0
+        self.setMinimumHeight(dp(24))
+
+    def set_data(self, up, dn, flat):
+        self._up, self._dn, self._flat = int(up or 0), int(dn or 0), int(flat or 0)
+        self.update()
+
+    def paintEvent(self, _ev):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        if w < 40 or h < 10:
+            p.end()
+            return
+        total = self._up + self._dn + self._flat
+        seg_h = min(h - 6, dp(12))
+        y = (h - seg_h) / 2.0
+        x = 0.0
+        r = min(seg_h / 2, dp(5))
+        if total <= 0:
+            p.setBrush(QColor(PAL["axis"]))
+            p.setPen(Qt.NoPen)
+            p.drawRoundedRect(QRectF(x, y, w, seg_h), r, r)
+            p.end()
+            return
+        for value, color in ((self._up, PAL["up"]), (self._dn, PAL["down"]), (self._flat, PAL["faint"])):
+            if value <= 0:
+                continue
+            seg_w = w * value / total
+            p.setBrush(QColor(color))
+            p.setPen(Qt.NoPen)
+            p.drawRoundedRect(QRectF(x, y, seg_w, seg_h), r, r)
+            x += seg_w
+        # labels
+        p.setFont(QFont("Segoe UI", 8))
+        if self._up:
+            p.setPen(QColor(PAL["up"]))
+            p.drawText(QRectF(0, y, w * self._up / total, seg_h),
+                       Qt.AlignLeft | Qt.AlignVCenter,
+                       "涨 {:.0%}".format(self._up / total))
+        if self._dn:
+            p.setPen(QColor(PAL["down"]))
+            p.drawText(
+                QRectF(w * self._up / total, y, w * self._dn / total, seg_h),
+                Qt.AlignCenter | Qt.AlignVCenter,
+                "跌 {:.0%}".format(self._dn / total))
+        if self._flat:
+            p.setPen(QColor(PAL["faint"]))
+            p.drawText(
+                QRectF(w * (self._up + self._dn) / total, y, w * self._flat / total, seg_h),
+                Qt.AlignRight | Qt.AlignVCenter,
+                "{:.0%}".format(self._flat / total))
+        p.end()

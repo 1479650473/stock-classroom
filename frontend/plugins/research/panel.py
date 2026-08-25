@@ -25,6 +25,7 @@ from frontend.platform.theme import (
     style_caption, style_num,
 )
 from frontend.platform.local_worker import LocalWorker
+from frontend.platform.premium import BreadthGauge
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton, QFrame,
@@ -268,6 +269,24 @@ class ResearchPanel(QWidget):
             env_grid.addWidget(card, i // 2, i % 2)
         lo.addLayout(env_grid)
 
+        # 市场宽度仪表 (研究信号可视化: 破年线占比 + 弱市/强市分区)
+        self._gauge_card = QFrame()
+        self._gauge_card.setObjectName("rstat")
+        self._gauge_card.setStyleSheet(_CARD_QSS)
+        gl = QVBoxLayout(self._gauge_card)
+        gl.setContentsMargins(dp(12), dp(10), dp(12), dp(8))
+        gl.setSpacing(0)
+        self._breadth_gauge = BreadthGauge()
+        self._breadth_gauge.setFixedHeight(dp(110))
+        gl.addWidget(self._breadth_gauge)
+        self._gauge_cap = QLabel("市场宽度 · 破年线占比 (研究中...)" )
+        self._gauge_cap.setStyleSheet(
+            f"color:{_PAL['faint']};font-size:{fs(9)};background:transparent;")
+        self._gauge_cap.setAlignment(Qt.AlignCenter)
+        self._gauge_cap.setWordWrap(True)
+        gl.addWidget(self._gauge_cap)
+        lo.addWidget(self._gauge_card)
+
         # 价值因子研究 (纵向堆叠高级卡)
         lo.addWidget(_sec_title("价值因子研究  ·  截面 IC / ICIR"))
         self._card_bp = _SecCard("BP  账面市值比")
@@ -385,6 +404,9 @@ class ResearchPanel(QWidget):
         b_tilt = br.get("tilt", "value_neutral")
         b_color = _PAL["down"] if b_tilt == "value_favorable" else (_PAL["up"] if b_tilt == "value_headwind" else _PAL["sub"])
         self._card_breadth.set(f"{b:.0%}", sub=f"破年线占比 · {b_tilt.replace('value_','')}", color=b_color)
+        self._breadth_gauge.set_value(b, b_tilt)
+        self._gauge_cap.setText(
+            "市场宽度 · 破年线占比 — " + str(br.get("reason", "")).split("→")[0].strip()[:48])
 
         # 组合价值权重
         wv = al.get("w_value", 1.0)

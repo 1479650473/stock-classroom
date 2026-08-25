@@ -98,7 +98,10 @@ class DCCompanion(QWidget):
         self._col_table.setShowGrid(False)
         self._col_table.horizontalHeader().setStretchLastSection(True)
         self._col_table.setStyleSheet(qss_table())
-        self._col_table.setColumnWidth(0, dp(140))
+        self._col_table.setColumnWidth(0, dp(150))
+        self._col_table.setColumnWidth(1, dp(64))
+        self._col_table.verticalHeader().setDefaultSectionSize(dp(26))
+        self._col_table.horizontalHeader().setFixedHeight(dp(28))
         lo.addWidget(self._col_table)
 
         # ── Range ──

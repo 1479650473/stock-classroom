@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
 from PyQt5.QtCore import Qt
 from frontend.platform.theme import (
     dp, dps, fs, C_ACCENT, C_UP as C_RISE, C_DOWN as C_FALL,
-    qss_table, style_h2,
+    qss_table, qss_btn_accent_outline, style_h2,
 )
 from PyQt5.QtGui import QColor, QFont
 from frontend.platform.local_worker import LocalWorker
@@ -54,11 +54,7 @@ class PicksPanel(QWidget):
         self._btn_apply.setObjectName("refreshBtn")
         self._btn_apply.setCursor(Qt.PointingHandCursor)
         self._btn_apply.setFixedHeight(dp(28))
-        self._btn_apply.setStyleSheet(
-            f"QPushButton{{background:rgba(212,165,116,0.10);color:{C_ACCENT};"
-            f"border:1px solid {C_ACCENT};border-radius:{dps(6)};padding:{dps(4)} {dps(16)};"
-            f"font-size:{fs(12)};font-weight:500}}"
-            f"QPushButton:hover{{background:rgba(212,165,116,0.18)}}")
+        self._btn_apply.setStyleSheet(qss_btn_accent_outline())
         self._btn_apply.clicked.connect(self.load)
         filter_bar.addWidget(self._btn_apply)
 

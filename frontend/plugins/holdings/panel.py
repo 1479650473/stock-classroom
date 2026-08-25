@@ -25,6 +25,9 @@ from frontend.platform.theme import (
     C_BG, C_PANEL, C_BORDER_SOFT, C_TEXT, C_SUBTEXT, C_ACCENT, C_UP, C_DOWN,
     qss_combo, qss_table, style_h1, style_label, style_caption,
 )
+from frontend.platform.premium import (
+    PAL, card_qss, value_ss, label_ss, CountUpLabel,
+)
 
 
 class HoldingsPanel(QWidget):
@@ -146,13 +149,13 @@ class HoldingsPanel(QWidget):
         total_pnl = summary.get("total_profit", 0)
         pnl_color = C_UP if total_pnl > 0 else (C_DOWN if total_pnl < 0 else C_TEXT)
         card_specs = [
-            ("总资产", "{:,.0f}".format(summary.get("total_assets", 0)), C_TEXT),
-            ("持仓市值", "{:,.0f}".format(summary.get("market_value", 0)), C_TEXT),
-            ("累计盈亏", "{:+,.0f}".format(total_pnl), pnl_color),
-            ("持仓数", "%d 只" % len(positions), C_ACCENT),
+            ("总资产", summary.get("total_assets", 0), lambda v: "{:,.0f}".format(v), C_TEXT),
+            ("持仓市值", summary.get("market_value", 0), lambda v: "{:,.0f}".format(v), C_TEXT),
+            ("累计盈亏", total_pnl, lambda v: "{:+,.0f}".format(v), pnl_color),
+            ("持仓数", "%d 只" % len(positions), None, C_ACCENT),
         ]
-        for label, value, color in card_specs:
-            self.card_row.addWidget(self._make_card(label, value, color))
+        for label, value, fmt, color in card_specs:
+            self.card_row.addWidget(self._make_card(label, value, color, fmt))
 
         self._hint.setVisible(len(positions) == 0)
 
@@ -189,24 +192,25 @@ class HoldingsPanel(QWidget):
                               "{:,.0f}".format(summary.get("market_value", 0)),
                               total_pnl))
 
-    def _make_card(self, label, value, color):
+    def _make_card(self, label, value, color, fmt=None):
         card = QFrame()
         card.setObjectName("card")
         card.setFixedHeight(dp(64))
-        card.setStyleSheet(
-            f"QFrame#card{{background:{C_PANEL};border:1px solid {C_BORDER_SOFT};"
-            f"border-radius:{dps(8)};}}"
-        )
+        card.setStyleSheet(card_qss("card"))
         cl = QVBoxLayout(card)
         cl.setContentsMargins(dp(12), dp(8), dp(12), dp(8))
         cl.setSpacing(dp(2))
         l = QLabel(label)
-        l.setStyleSheet(style_caption())
+        l.setStyleSheet(label_ss(size=9))
         cl.addWidget(l)
-        v = QLabel(value)
-        v.setStyleSheet(
-            f"color:{color};font-size:{fs(14)};font-weight:700;background:transparent;"
-            f"font-family:'Consolas','Segoe UI','Microsoft YaHei';")
+        if fmt is not None:
+            v = CountUpLabel(fmt=fmt, duration=800)
+            v.setStyleSheet(value_ss(color=color, size=15))
+            v.animate_to(value, fmt)
+        else:
+            v = QLabel(str(value))
+            v.setStyleSheet(value_ss(color=color, size=15))
+            v.setText(value if isinstance(value, str) else str(value))
         cl.addWidget(v)
         return card
 

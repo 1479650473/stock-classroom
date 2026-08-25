@@ -9,6 +9,9 @@ from frontend.platform.theme import (
     C_ACCENT, C_UP as C_RISE, C_DOWN as C_FALL, C_RAISED as C_HOVER,
     qss_table, style_h1, style_label, style_caption,
 )
+from frontend.platform.premium import (
+    PAL, card_qss, value_ss, label_ss, SectionTitle, SplitBar,
+)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QFont
 from frontend.platform.local_worker import LocalWorker
@@ -41,21 +44,33 @@ class MarketPanel(QWidget):
         self.bar_widgets = {}
         bar = QFrame()
         bar.setObjectName("card")
-        bar.setStyleSheet(f"QFrame#card{{background:{C_PANEL};border:1px solid {C_BORDER};border-radius:8px;padding:4px}}")
-        bl = QHBoxLayout(bar)
-        bl.setContentsMargins(16, 6, 16, 6)
+        bar.setStyleSheet(card_qss("card"))
+        bl = QVBoxLayout(bar)
+        bl.setContentsMargins(dp(14), dp(10), dp(14), dp(10))
+        bl.setSpacing(dp(8))
+
+        stats_row = QHBoxLayout()
+        stats_row.setSpacing(dp(8))
         for key, text in [("date", "日期"), ("up", "上涨"), ("dn", "下跌"),
                           ("cnt", "总数"), ("vol", "成交额")]:
-            w = QLabel("--")
-            w.setStyleSheet(f"color:{C_SUBTEXT};font-size:{fs(12)};font-weight:500;background:transparent")
-            w._key = key
+            col = QVBoxLayout()
+            col.setSpacing(0)
             lbl = QLabel(text)
-            lbl.setStyleSheet(f"color:#484F58;font-size:{fs(11)};background:transparent")
-            bl.addWidget(lbl)
-            bl.addWidget(w)
-            bl.addSpacing(16)
+            lbl.setStyleSheet(label_ss(size=8))
+            col.addWidget(lbl)
+            w = QLabel("--")
+            w.setStyleSheet(value_ss(color=C_SUBTEXT, size=13))
+            col.addWidget(w)
+            stats_row.addLayout(col, 1)
             self.bar_widgets[key] = w
-        bl.addStretch()
+        bl.addLayout(stats_row)
+
+        # 今日涨跌分布 (市场宽度图表)
+        self._split = SplitBar()
+        bl.addWidget(self._split)
+        cap = QLabel("今日涨跌分布 · 上涨/下跌/平盘 家数占比")
+        cap.setStyleSheet(label_ss(size=8) + "padding:0 2px;")
+        bl.addWidget(cap)
         lo.addWidget(bar)
 
         self._sector_type = "industry"
@@ -74,15 +89,19 @@ class MarketPanel(QWidget):
             btn.setFixedHeight(dp(26))
             btn.setCursor(Qt.PointingHandCursor)
             btn.setStyleSheet(
-                f"QPushButton{{background:{C_PANEL};color:{C_SUBTEXT};border:1px solid {C_BORDER_SOFT};"
-                f"border-radius:{dps(6)};padding:{dps(3)} {dps(14)};font-size:{fs(12)};}}"
-                f"QPushButton:hover{{color:{C_TEXT};border-color:{C_BORDER};}}"
-                f"QPushButton:checked{{background:rgba(212,165,116,0.10);color:{C_ACCENT};border-color:{C_ACCENT}}}")
+                f"QPushButton{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+                f"stop:0 #1B222C,stop:1 #151A24);color:{C_SUBTEXT};"
+                f"border:1px solid #222A35;border-top:1px solid #2C3542;"
+                f"border-radius:{dps(6)};padding:{dps(3)} {dps(14)};font-size:{fs(11)};font-weight:500;}}"
+                f"QPushButton:hover{{color:{C_TEXT};border-top-color:{C_ACCENT};}}"
+                f"QPushButton:checked{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+                f"stop:0 #C99763,stop:1 #B07F4E);color:#1A1410;border-color:#C99763;font-weight:600;}}")
             self._sector_tabs.addWidget(btn)
         self._sector_tabs.addStretch()
         lo.addLayout(self._sector_tabs)
 
         self.table = QTableWidget()
+        self.table.setStyleSheet(qss_table())
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.horizontalHeader().setStretchLastSection(True)
@@ -206,12 +225,9 @@ class MarketPanel(QWidget):
         for d in indices:
             card = QFrame()
             card.setObjectName("card")
-            card.setFixedSize(dp(172), dp(72))
+            card.setFixedSize(dp(172), dp(76))
             card.setCursor(Qt.PointingHandCursor)
-            card.setStyleSheet(
-                "QFrame#card{background:#161B22;border:1px solid #21262D;border-radius:8px}"
-                "QFrame#card:hover{border-color:#30363D}"
-            )
+            card.setStyleSheet(card_qss("card"))
             card._code = d.get("code", "")
             card._name = d.get("name", "")
             orig_mpe = card.mousePressEvent
@@ -225,15 +241,15 @@ class MarketPanel(QWidget):
             card.mousePressEvent = _make_click(card._code, card._name)
 
             cl = QVBoxLayout(card)
-            cl.setContentsMargins(12, 6, 12, 6)
-            cl.setSpacing(2)
+            cl.setContentsMargins(dp(12), dp(8), dp(12), dp(8))
+            cl.setSpacing(0)
 
             nm = QLabel(d.get("name", ""))
-            nm.setStyleSheet(f"color:{C_SUBTEXT};font-size:{fs(11)};background:transparent")
+            nm.setStyleSheet(label_ss(size=9))
             cl.addWidget(nm)
 
             p = QLabel("{:.2f}".format(d.get("price", 0)))
-            p.setStyleSheet(f"color:{C_TEXT};font-size:{fs(14)};font-weight:700;background:transparent")
+            p.setStyleSheet(value_ss(color=C_TEXT, size=15))
             cl.addWidget(p)
 
             chg = d.get("change_pct", 0)
@@ -246,13 +262,17 @@ class MarketPanel(QWidget):
 
         fmt_vol = lambda v: "{:.0f}亿".format(v / 1e8) if v else "--"
         self.bar_widgets["date"].setText(stats.get("date", "--"))
+        self.bar_widgets["date"].setStyleSheet(value_ss(color=C_TEXT, size=13))
         self.bar_widgets["up"].setText(str(stats.get("up", 0)))
-        self.bar_widgets["up"].setStyleSheet(f"color:{C_RISE};font-size:{fs(11)};font-weight:600;background:transparent")
+        self.bar_widgets["up"].setStyleSheet(value_ss(color=C_RISE, size=14))
         self.bar_widgets["dn"].setText(str(stats.get("dn", 0)))
-        self.bar_widgets["dn"].setStyleSheet(f"color:{C_FALL};font-size:{fs(11)};font-weight:600;background:transparent")
+        self.bar_widgets["dn"].setStyleSheet(value_ss(color=C_FALL, size=14))
         self.bar_widgets["cnt"].setText(str(stats.get("count", 0)))
-        self.bar_widgets["cnt"].setStyleSheet(f"color:{C_TEXT};font-size:{fs(11)};font-weight:500;background:transparent")
+        self.bar_widgets["cnt"].setStyleSheet(value_ss(color=C_TEXT, size=14))
         self.bar_widgets["vol"].setText(fmt_vol(stats.get("volume", 0)))
+        self.bar_widgets["vol"].setStyleSheet(value_ss(color=C_SUBTEXT, size=13))
+        # 今日涨跌分布图
+        self._split.set_data(stats.get("up", 0), stats.get("dn", 0), stats.get("flat", 0))
 
         if self.on_status:
             self.on_status(f"市场数据已加载 - {stats.get('date', '')}")
@@ -265,7 +285,7 @@ class MarketPanel(QWidget):
         self.table.setHorizontalHeaderLabels(cols)
 
         for i, b in enumerate(sectors):
-            bg = QColor("#161B22") if i % 2 else QColor("#0D1117")
+            bg = QColor("#151A24") if i % 2 else QColor("#10141B")
             change = b.get("change_pct", 0)
             chg_color = C_RISE if change >= 0 else C_FALL
             ldr_chg = b.get("leader_chg", 0)

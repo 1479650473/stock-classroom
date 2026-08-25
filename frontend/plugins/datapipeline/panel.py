@@ -5,6 +5,10 @@ import sqlite3, os
 from frontend.platform.theme import (
     dp, dps, fs,
     C_BG, C_PANEL, C_BORDER, C_TEXT, C_SUBTEXT, C_ACCENT,
+    qss_table, qss_btn_accent, qss_btn_accent_outline, style_caption,
+)
+from frontend.platform.premium import (
+    PAL, card_qss, value_ss, label_ss, SectionTitle,
 )
 from datetime import datetime, time as dtime
 from PyQt5.QtWidgets import (
@@ -42,36 +46,33 @@ class PipelinePanel(QWidget):
         lo.setSpacing(10)
 
         # ── Header ──
-        hdr = QHBoxLayout()
-        icon = QLabel("\U0001f4e6")
-        icon.setStyleSheet("font-size:23px;background:transparent")
-        hdr.addWidget(icon)
-
-        title = QLabel("\u6570\u636e\u7ba1\u9053")
-        title.setStyleSheet(f"color:{C_TEXT};font-size:23px;font-weight:700;background:transparent")
+        hdr = QVBoxLayout()
+        hdr.setSpacing(0)
+        title = QLabel("数据管道")
+        title.setStyleSheet(
+            f"color:{C_TEXT};font-size:{fs(17)};font-weight:600;letter-spacing:{dp(2)}px;background:transparent")
         hdr.addWidget(title)
-        hdr.addStretch()
-
         self._auto_hint = QLabel("")
-        self._auto_hint.setStyleSheet(f"color:{C_GREEN};font-size:19px;background:transparent")
+        self._auto_hint.setStyleSheet(
+            f"color:{C_SUBTEXT};font-size:{fs(11)};background:transparent")
         hdr.addWidget(self._auto_hint)
         lo.addLayout(hdr)
 
         # ── Last update status card ──
         self._status_card = QFrame()
         self._status_card.setObjectName("card")
-        self._status_card.setStyleSheet(
-            f"QFrame#card{{background:{C_PANEL};border:1px solid {C_BORDER};border-radius:8px;padding:4px}}")
+        self._status_card.setStyleSheet(card_qss("card"))
         cl = QVBoxLayout(self._status_card)
-        cl.setContentsMargins(16, 10, 16, 10)
-        cl.setSpacing(4)
+        cl.setContentsMargins(dp(16), dp(12), dp(16), dp(12))
+        cl.setSpacing(dp(4))
 
-        self._last_date = QLabel("\u4e0a\u6b21\u66f4\u65b0: --")
-        self._last_date.setStyleSheet(f"color:{C_TEXT};font-size:22px;font-weight:600;background:transparent")
+        self._last_date = QLabel("上次更新: --")
+        self._last_date.setStyleSheet(value_ss(color=C_TEXT, size=15))
         cl.addWidget(self._last_date)
 
-        self._last_status = QLabel("\u72b6\u6001: \u672a\u77e5")
-        self._last_status.setStyleSheet(f"color:{C_SUBTEXT};font-size:23px;background:transparent")
+        self._last_status = QLabel("状态: 未知")
+        self._last_status.setStyleSheet(
+            f"color:{C_SUBTEXT};font-size:{fs(12)};background:transparent")
         cl.addWidget(self._last_status)
         lo.addWidget(self._status_card)
 
@@ -83,37 +84,34 @@ class PipelinePanel(QWidget):
         self._step_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._step_table.verticalHeader().setVisible(False)
         self._step_table.setShowGrid(False)
-        self._step_table.setFixedHeight(dp(340))
+        self._step_table.setFixedHeight(dp(300))
         self._step_table.horizontalHeader().setStretchLastSection(True)
-        self._step_table.setStyleSheet(
-            "QTableWidget{background:#0D1117;color:#E6EDF3;gridline-color:#1A1F28}"
-            "QHeaderView::section{background:#161B22;color:#8B949E;border:1px solid #21262D;padding:3px;font-size:19px}")
+        self._step_table.setStyleSheet(qss_table())
         self._step_table.setRowCount(len(STEP_NAMES))
         for i, name in enumerate(STEP_NAMES):
+            bg = QColor("#151A24") if i % 2 == 0 else QColor("#10141B")
             nm = QTableWidgetItem(name)
             nm.setForeground(QColor(C_SUBTEXT))
-            nm.setBackground(QColor(C_PANEL) if i % 2 == 0 else QColor(C_BG))
+            nm.setBackground(bg)
             nm.setFlags(Qt.ItemIsEnabled)
             self._step_table.setItem(i, 0, nm)
 
             cnt = QTableWidgetItem("--")
             cnt.setForeground(QColor(C_TEXT))
-            cnt.setBackground(QColor(C_PANEL) if i % 2 == 0 else QColor(C_BG))
+            cnt.setBackground(bg)
             cnt.setFlags(Qt.ItemIsEnabled)
             cnt.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self._step_table.setItem(i, 1, cnt)
 
             st = QTableWidgetItem("\u25cb")
             st.setForeground(QColor("#484F58"))
-            st.setBackground(QColor(C_PANEL) if i % 2 == 0 else QColor(C_BG))
+            st.setBackground(bg)
             st.setFlags(Qt.ItemIsEnabled)
             st.setTextAlignment(Qt.AlignCenter)
             self._step_table.setItem(i, 2, st)
 
             self._step_table.setCellWidget(i, 3, QWidget())
         self._step_table.setColumnWidth(0, dp(130))
-        self._step_table.setColumnWidth(1, dp(80))
-        self._step_table.setColumnWidth(2, dp(50))
         self._step_table.setColumnWidth(1, dp(80))
         self._step_table.setColumnWidth(2, dp(50))
         lo.addWidget(self._step_table)
@@ -125,21 +123,17 @@ class PipelinePanel(QWidget):
         self._progress.setTextVisible(False)
         self._progress.setFixedHeight(dp(6))
         self._progress.setStyleSheet(
-            "QProgressBar{background:#161B22;border:none;border-radius:3px}"
-            "QProgressBar::chunk{background:#D4A574;border-radius:3px}")
+            "QProgressBar{background:#141A23;border:1px solid #1E2530;border-radius:3px}"
+            "QProgressBar::chunk{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #D4A574,stop:1 #E0BE96);border-radius:3px}")
         lo.addWidget(self._progress)
 
         # ── Button ──
         btn_row = QHBoxLayout()
         btn_row.addStretch()
-        self._btn_fetch = QPushButton("\U0001f504 \u4e00\u952e\u62c9\u53d6\u5168\u90e8\u6570\u636e")
+        self._btn_fetch = QPushButton("一键拉取全部数据")
         self._btn_fetch.setFixedSize(dp(200), dp(38))
         self._btn_fetch.setCursor(Qt.PointingHandCursor)
-        self._btn_fetch.setStyleSheet(
-            "QPushButton{background:#D4A574;color:#0D1117;border:none;"
-            "border-radius:8px;font-size:21px;font-weight:700}"
-            "QPushButton:hover{background:#E0B888}"
-            "QPushButton:disabled{background:#30363D;color:#484F58}")
+        self._btn_fetch.setStyleSheet(qss_btn_accent())
         self._btn_fetch.clicked.connect(self._on_fetch)
         btn_row.addWidget(self._btn_fetch)
         btn_row.addStretch()
@@ -167,13 +161,13 @@ class PipelinePanel(QWidget):
                 detail = f"\u72b6\u6001: {status_text}  \u00b7  \u65b0\u589e {row[3] or 0} \u884c  \u00b7  \u8017\u65f6 {row[5]}s"
                 self._last_status.setText(detail)
                 if row[1] == "ok":
-                    self._last_status.setStyleSheet(f"color:{C_GREEN};font-size:23px;background:transparent")
+                    self._last_status.setStyleSheet(f"color:{C_GREEN};font-size:{fs(12)};background:transparent")
                 else:
-                    self._last_status.setStyleSheet(f"color:{C_RED};font-size:23px;background:transparent")
+                    self._last_status.setStyleSheet(f"color:{C_RED};font-size:{fs(12)};background:transparent")
             else:
-                self._last_date.setText("\u4e0a\u6b21\u66f4\u65b0: \u65e0\u8bb0\u5f55")
-                self._last_status.setText("\u72b6\u6001: \u5c1a\u672a\u6267\u884c\u8fc7\u66f4\u65b0")
-                self._last_status.setStyleSheet(f"color:{C_SUBTEXT};font-size:23px;background:transparent")
+                self._last_date.setText("上次更新: 无记录")
+                self._last_status.setText("状态: 尚未执行过更新")
+                self._last_status.setStyleSheet(f"color:{C_SUBTEXT};font-size:{fs(12)};background:transparent")
         except Exception:
             pass
 
@@ -188,25 +182,22 @@ class PipelinePanel(QWidget):
             now = datetime.now().time()
             market_close = dtime(15, 30)
             if not row and now > market_close:
-                self._auto_hint.setText("\u4eca\u65e5\u6570\u636e\u672a\u66f4\u65b0, \u53ef\u70b9\u51fb\u4e00\u952e\u62c9\u53d6")
-                self._auto_hint.setStyleSheet(f"color:#FFE0C2;font-size:19px;background:transparent")
+                self._auto_hint.setText("今日数据未更新, 可点击一键拉取")
+                self._auto_hint.setStyleSheet(f"color:#E8C9A0;font-size:{fs(11)};background:transparent")
             elif not row:
-                self._auto_hint.setText("\u76d8\u4e2d, \u6570\u636e\u5f85\u66f4\u65b0")
-                self._auto_hint.setStyleSheet(f"color:{C_SUBTEXT};font-size:19px;background:transparent")
+                self._auto_hint.setText("盘中, 数据待更新")
+                self._auto_hint.setStyleSheet(f"color:{C_SUBTEXT};font-size:{fs(11)};background:transparent")
             else:
-                self._auto_hint.setText("\u2714 \u4eca\u65e5\u5df2\u66f4\u65b0")
-                self._auto_hint.setStyleSheet(f"color:{C_GREEN};font-size:19px;background:transparent")
+                self._auto_hint.setText("\u2714 今日已更新")
+                self._auto_hint.setStyleSheet(f"color:{C_GREEN};font-size:{fs(11)};background:transparent")
         except Exception:
             pass
 
     def _build_retry_btn(self, step_idx):
-        btn = QPushButton("\u91cd\u8bd5")
+        btn = QPushButton("重试")
         btn.setFixedSize(dp(48), dp(24))
         btn.setCursor(Qt.PointingHandCursor)
-        btn.setStyleSheet(
-            "QPushButton{background:transparent;color:#D4A574;border:1px solid rgba(212,165,116,0.3);"
-            "border-radius:4px;font-size:19px}"
-            "QPushButton:hover{background:rgba(212,165,116,0.10);border-color:#D4A574}")
+        btn.setStyleSheet(qss_btn_accent_outline())
         btn.clicked.connect(lambda: self._on_retry(step_idx))
         return btn
 
@@ -273,12 +264,12 @@ class PipelinePanel(QWidget):
             if data.get("ok"):
                 self.on_status(f"\u2713 {STEP_NAMES[idx]}: +{data.get('rows', 0)} \u884c")
             else:
-                self.on_status(f"\u2717 {STEP_NAMES[idx]}: {data.get('error', '\u5931\u8d25')}")
+                self.on_status(f"\u2717 {STEP_NAMES[idx]}: {data.get('error', '失败')}")
 
     def _on_done(self, result):
         self._running = False
         self._btn_fetch.setEnabled(True)
-        self._btn_fetch.setText("\U0001f504 \u4e00\u952e\u62c9\u53d6\u5168\u90e8\u6570\u636e")
+        self._btn_fetch.setText("一键拉取全部数据")
         self._progress.setValue(100)
 
         if result.get("ok"):
@@ -288,10 +279,10 @@ class PipelinePanel(QWidget):
                 self.on_status(f"\u66f4\u65b0\u5b8c\u6210: +{total} \u884c, \u8017\u65f6 {elapsed}s")
             self._load_last_status()
             self._auto_hint.setText("\u2714 \u4eca\u65e5\u5df2\u66f4\u65b0")
-            self._auto_hint.setStyleSheet(f"color:{C_GREEN};font-size:19px;background:transparent")
+            self._auto_hint.setStyleSheet(f"color:{C_GREEN};font-size:{fs(11)};background:transparent")
         else:
             if self.on_status:
-                self.on_status(f"\u66f4\u65b0\u5931\u8d25: {result.get('error', '\u672a\u77e5\u9519\u8bef')}")
+                self.on_status(f"更新失败: {result.get('error', '未知错误')}")
 
         if self.on_update_done:
             try:
