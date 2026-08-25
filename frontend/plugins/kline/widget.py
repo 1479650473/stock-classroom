@@ -2,13 +2,25 @@
 from PyQt5.QtWidgets import QWidget
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QFont
-from frontend.platform.theme import dp, fsi
+from frontend.platform.theme import (
+    dp, fsi, C_BG, C_PANEL, C_BORDER_SOFT, C_TEXT, C_SUBTEXT, C_ACCENT, C_UP, C_DOWN,
+    current_theme as _ct,
+)
 
-_BG=QColor('#0D1117'); _PANEL=QColor('#161B22'); _BORDER=QColor('#21262D')
-_TEXT=QColor('#E6EDF3'); _TEXTS=QColor('#8B949E'); _ACCENT=QColor('#D4A574')
-_UP=QColor('#EF5350'); _DOWN=QColor('#4CAF50'); _GRID=QColor('#1A1F28')
+_BG=QColor(C_BG); _PANEL=QColor(C_PANEL); _BORDER=QColor(C_BORDER_SOFT)
+_TEXT=QColor(C_TEXT); _TEXTS=QColor(C_SUBTEXT); _ACCENT=QColor(C_ACCENT)
+_UP=QColor(C_UP); _DOWN=QColor(C_DOWN); _GRID=QColor(C_BORDER_SOFT)
 _MA5=QColor('#F0A56A'); _MA10=QColor('#5DADE2'); _MA20=QColor('#AF7AC5')
 _MA60=QColor('#F7DC6F'); _MVOL=QColor('#6C757D')
+
+
+def resync_theme():
+    """Re-read the chart colours from the ACTIVE theme (for live theme switch)."""
+    global _BG, _PANEL, _BORDER, _TEXT, _TEXTS, _ACCENT, _UP, _DOWN, _GRID
+    t = _ct()
+    _BG = QColor(t["bg"]); _PANEL = QColor(t["panel"]); _BORDER = QColor(t["border_soft"])
+    _TEXT = QColor(t["text"]); _TEXTS = QColor(t["sub"]); _ACCENT = QColor(t["accent"])
+    _UP = QColor(t["up"]); _DOWN = QColor(t["down"]); _GRID = QColor(t["border_soft"])
 
 class KlineWidget(QWidget):
     def __init__(s):

@@ -10,7 +10,7 @@ from frontend.platform.theme import (
     dp, dps, fs, C_ACCENT, C_BG, C_TEXT, C_SUBTEXT, C_FAINT, C_PANEL, C_BORDER_SOFT,
     qss_table, qss_list, qss_input,
 )
-from frontend.platform.premium import PAL, card_qss, value_ss, label_ss, CountUpLabel
+from frontend.platform.premium import PAL, card_qss, value_ss, label_ss, CountUpLabel, well
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "data")
 
@@ -93,6 +93,21 @@ class DCPanel(QWidget):
         self._status_bar.setStyleSheet(
             f"color:{C_FAINT};font-size:{fs(11)};padding:{dps(2)} {dps(4)};background:transparent")
         lo.addWidget(self._status_bar)
+
+    def on_theme_changed(self):
+        self.tree.setStyleSheet(
+            f"QTreeWidget{{background:{PAL['bg']};color:{PAL['text']};border:1px solid {PAL['border_lo']};"
+            f"border-radius:8px;outline:none;}}"
+            f"QTreeWidget::item{{padding:3px 6px;border-radius:4px;}}"
+            f"QTreeWidget::item:selected{{background:{PAL['accent']};color:{PAL['bg']};}}"
+            f"QTreeWidget::item:hover:!selected{{background:{PAL['panel']};}}")
+        self.table.setStyleSheet(qss_table())
+        self.stock_table.setStyleSheet(qss_table())
+        self.search.setStyleSheet(qss_input())
+        self.stock_search.setStyleSheet(qss_input())
+        self.stock_list.setStyleSheet(qss_list())
+        self.table.viewport().update()
+        self.update()
 
     def _switch_mode(self, idx):
         for i, btn in enumerate(self._mode_btns):
@@ -235,9 +250,7 @@ class DCPanel(QWidget):
             if w: w.deleteLater()
 
         for info in db_infos:
-            card = QFrame()
-            card.setObjectName("procard")
-            card.setStyleSheet(card_qss("procard"))
+            card = well("procard")
             card.setFixedSize(dp(214), dp(96))
             cl = QVBoxLayout(card)
             cl.setContentsMargins(dp(12), dp(9), dp(12), dp(9))

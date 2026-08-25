@@ -76,6 +76,12 @@ class PicksPanel(QWidget):
         self._filters["exclude_kcb"] = self._cb_kcb.isChecked()
         self._filters["exclude_cyb"] = self._cb_cyb.isChecked()
 
+    def on_theme_changed(self):
+        self.table.setStyleSheet(qss_table())
+        self._btn_apply.setStyleSheet(qss_btn_accent_outline())
+        self.table.viewport().update()
+        self.update()
+
     def load(self):
         if not self.db_path:
             return

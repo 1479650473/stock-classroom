@@ -40,9 +40,12 @@ class PlatformShell(QMainWindow):
         self.setWindowTitle("stock-classroom")
 
         ws = "large"
+        self._font_size = 13
         try:
             from frontend.plugins.settings.config import load_settings
-            ws = load_settings().get("window_size", "large")
+            _s = load_settings()
+            ws = _s.get("window_size", "large")
+            self._font_size = _s.get("font_size", 13)
         except Exception:
             pass
         sizes = {"small": (1400, 850), "medium": (1550, 950), "large": (1980, 1280)}
@@ -98,6 +101,10 @@ class PlatformShell(QMainWindow):
         self._build_ui()
         self.status.showMessage("就绪 — 点击左侧导航加载数据")
 
+        # 主题切换即时重绘: 重建全局样式 + 通知各面板/图表
+        from frontend.platform import theme as th
+        th.signals.changed.connect(self._on_theme_changed)
+
         QTimer.singleShot(100, self._activate_defaults)
 
     def _activate_defaults(self):
@@ -110,6 +117,29 @@ class PlatformShell(QMainWindow):
     # ──────────────────────────────────────────────────────────
     #  UI
     # ──────────────────────────────────────────────────────────
+
+    def _on_theme_changed(self):
+        """主题切换即时重绘：重建全局样式 + 通知各面板/图表重上色."""
+        from PyQt5.QtWidgets import QApplication, QWidget
+        from frontend.platform.theme import build_style
+        app = QApplication.instance()
+        if app:
+            app.setStyleSheet(build_style(self._font_size))
+        try:
+            from frontend.plugins.kline.widget import resync_theme
+            resync_theme()
+        except Exception:
+            pass
+        # 通知每个控件：有 on_theme_changed 的调用之(MachinedWell 卡片/表格等会上新主题色)
+        for w in self.findChildren(QWidget):
+            h = getattr(w, "on_theme_changed", None)
+            if callable(h):
+                try:
+                    h()
+                except Exception:
+                    pass
+            else:
+                w.update()
 
     def _build_ui(self):
         central = QWidget()
@@ -131,7 +161,6 @@ class PlatformShell(QMainWindow):
         left_lo.addWidget(self._build_nav_rail())
 
         self._left_stack = QStackedWidget()
-        self._left_stack.setStyleSheet(f"background:{C_BG};")
         left_lo.addWidget(self._left_stack, 1)
         outer.addWidget(left_widget)
 
@@ -140,7 +169,6 @@ class PlatformShell(QMainWindow):
         rl.setContentsMargins(6, 6, 6, 6)
         rl.setSpacing(0)
         self._right_stack = QStackedWidget()
-        self._right_stack.setStyleSheet(f"background:{C_BG};")
         rl.addWidget(self._right_stack)
         outer.addWidget(right_widget)
 
@@ -165,7 +193,7 @@ class PlatformShell(QMainWindow):
     def _build_topbar(self) -> QFrame:
         topbar = QFrame()
         topbar.setFixedHeight(dp(46))
-        topbar.setStyleSheet(f"background:{C_PANEL};border-bottom:1px solid {C_BORDER_SOFT};")
+        topbar.setStyleSheet(f"border-bottom:1px solid {C_BORDER_SOFT};")
         tl = QHBoxLayout(topbar)
         tl.setContentsMargins(dp(14), 0, dp(10), 0)
         tl.setSpacing(dp(8))
@@ -227,7 +255,7 @@ class PlatformShell(QMainWindow):
     def _build_nav_rail(self) -> QWidget:
         nav_panel = QWidget()
         nav_panel.setFixedWidth(dp(64))
-        nav_panel.setStyleSheet(f"background:{C_BG};border-right:1px solid {C_BORDER_SOFT};")
+        nav_panel.setStyleSheet(f"border-right:1px solid {C_BORDER_SOFT};")
         nav_lo = QVBoxLayout(nav_panel)
         nav_lo.setContentsMargins(dp(5), dp(10), dp(5), dp(10))
         nav_lo.setSpacing(dp(4))

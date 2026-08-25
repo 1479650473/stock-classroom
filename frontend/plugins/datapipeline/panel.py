@@ -8,7 +8,7 @@ from frontend.platform.theme import (
     qss_table, qss_btn_accent, qss_btn_accent_outline, style_caption,
 )
 from frontend.platform.premium import (
-    PAL, card_qss, value_ss, label_ss, SectionTitle,
+    PAL, card_qss, value_ss, label_ss, SectionTitle, well,
 )
 from datetime import datetime, time as dtime
 from PyQt5.QtWidgets import (
@@ -59,9 +59,7 @@ class PipelinePanel(QWidget):
         lo.addLayout(hdr)
 
         # ── Last update status card ──
-        self._status_card = QFrame()
-        self._status_card.setObjectName("card")
-        self._status_card.setStyleSheet(card_qss("card"))
+        self._status_card = well("card")
         cl = QVBoxLayout(self._status_card)
         cl.setContentsMargins(dp(16), dp(12), dp(16), dp(12))
         cl.setSpacing(dp(4))
@@ -140,6 +138,11 @@ class PipelinePanel(QWidget):
         lo.addLayout(btn_row)
 
         lo.addStretch()
+
+    def on_theme_changed(self):
+        self._step_table.setStyleSheet(qss_table())
+        self._step_table.viewport().update()
+        self.update()
 
     def load(self):
         if not self.db_path:

@@ -12,9 +12,9 @@ _tilt_color().
 
 import math
 
-from PyQt5.QtCore import Qt, QTimer, QRectF
+from PyQt5.QtCore import Qt, QTimer, QRectF, QPointF
 from PyQt5.QtWidgets import QLabel, QFrame, QWidget, QHBoxLayout
-from PyQt5.QtGui import QPainter, QColor, QPen, QFont, QLinearGradient
+from PyQt5.QtGui import QPainter, QColor, QPen, QFont, QLinearGradient, QPainterPath
 
 from . import theme as _th
 
@@ -315,3 +315,80 @@ class SplitBar(QWidget):
             p.drawText(QRectF(w * (self._up + self._dn) / total, y, w * self._flat / total, seg_h),
                        Qt.AlignRight | Qt.AlignVCenter, "{:.0%}".format(self._flat / total))
         p.end()
+
+
+class MachinedWell(QFrame):
+    """Theme-reactive card frame.
+
+    paintEvent draws the card background itself from the ACTIVE theme every
+    paint, so a theme switch repaints cards instantly without rebuilding them.
+    In Obsidian it layers a real machined-metal well (vertical sheen + top edge
+    highlight + 1px inner groove) on top — the QSS-only path can't express that
+    depth. Other themes get the themed matte gradient + top-highlight bevel.
+    """
+
+    def __init__(self, name="card", radius=None, parent=None):
+        super().__init__(parent)
+        self.setObjectName(name)
+        self._radius = _tkey("radius_card") if radius is None else radius
+        self.setAttribute(Qt.WA_StyledBackground, True)
+
+    def retheme(self):
+        self.update()
+
+    def paintEvent(self, ev):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        t = _th.current_theme()
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        radius = min(max(self._radius, 2), r.width() / 2, r.height() / 2)
+        path = QPainterPath()
+        path.addRoundedRect(r, radius, radius)
+
+        # themed matte gradient background (top -> mid -> bottom)
+        g = QLinearGradient(0, 0, 0, h)
+        g.setColorAt(0.0, QColor(t["card_stops"][0]))
+        g.setColorAt(0.5, QColor(t["card_stops"][1]))
+        g.setColorAt(1.0, QColor(t["card_stops"][2]))
+        p.fillPath(path, g)
+
+        # border + top-highlight bevel
+        p.setPen(QPen(QColor(t["card_border"]), 1))
+        p.setBrush(Qt.NoBrush)
+        p.drawPath(path)
+        if t["card_hover_border"]:
+            p.setPen(QPen(QColor(t["card_border_top"]), 1))
+            top = QPainterPath()
+            top.addRoundedRect(r.adjusted(0, 0, 0, -r.height() + 4), radius, radius)
+            p.drawPath(top)
+
+        if _th.theme_key() == "obsidian":
+            # machined metal: vertical sheen (top light -> bottom shadow)
+            sheen = QLinearGradient(0, 0, 0, h)
+            sheen.setColorAt(0.0, QColor(255, 255, 255, 20))
+            sheen.setColorAt(0.35, QColor(255, 255, 255, 0))
+            sheen.setColorAt(0.65, QColor(0, 0, 0, 0))
+            sheen.setColorAt(1.0, QColor(0, 0, 0, 74))
+            p.fillPath(path, sheen)
+            # thin top edge highlight
+            p.setPen(QPen(QColor(255, 255, 255, 15), 1))
+            inner = QPainterPath()
+            inner.addRoundedRect(QRectF(r.x() + 1, r.y() + 1, r.width() - 2, r.height() - 2),
+                                 max(radius - 1, 0), max(radius - 1, 0))
+            p.setBrush(Qt.NoBrush)
+            p.drawPath(inner)
+            # inner groove (sunk cut line)
+            groove = QPainterPath()
+            groove.addRoundedRect(QRectF(r.x() + 2.5, r.y() + 2.5, r.width() - 5, r.height() - 5),
+                                  max(radius - 2.5, 0), max(radius - 2.5, 0))
+            p.setPen(QPen(QColor(0, 0, 0, 110), 1))
+            p.drawPath(groove)
+        p.end()
+
+        super().paintEvent(ev)
+
+
+def well(name="card", radius=None, parent=None) -> QFrame:
+    """Create a theme-reactive card frame; paints a real machined well in Obsidian."""
+    return MachinedWell(name, radius, parent)

@@ -13,7 +13,17 @@ set_theme(key) (or build_style(key)); the C_* module attrs stay in sync.
 
 from typing import Dict
 
+from PyQt5.QtCore import QObject, pyqtSignal
+
 FONT_BASE = 13
+
+
+class _ThemeSignals(QObject):
+    """Emitted when the active theme changes (for immediate re-render)."""
+    changed = pyqtSignal()
+
+
+signals = _ThemeSignals()
 
 # ──────────────────────────────────────────────────────────────
 #  Theme registry — three full visual directions
@@ -137,6 +147,8 @@ def set_theme(key: str) -> None:
         "text": t["text"], "subtext": t["sub"], "accent": t["accent"],
         "rise": t["up"], "fall": t["down"], "hover": t["raised"],
     })
+    if signals.receivers(signals.changed):
+        signals.changed.emit()
 
 
 # sync to defaults at import

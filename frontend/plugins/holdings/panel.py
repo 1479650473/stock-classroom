@@ -26,7 +26,7 @@ from frontend.platform.theme import (
     qss_combo, qss_table, style_h1, style_label, style_caption,
 )
 from frontend.platform.premium import (
-    PAL, card_qss, value_ss, label_ss, CountUpLabel,
+    PAL, card_qss, value_ss, label_ss, CountUpLabel, well,
 )
 
 
@@ -99,6 +99,12 @@ class HoldingsPanel(QWidget):
         self._acc_combo.blockSignals(False)
 
     # ── Data ──
+
+    def on_theme_changed(self):
+        self.table.setStyleSheet(qss_table())
+        self._acc_combo.setStyleSheet(qss_combo())
+        self.table.viewport().update()
+        self.update()
 
     def load(self):
         aid = self._acc_combo.currentData()
@@ -193,10 +199,8 @@ class HoldingsPanel(QWidget):
                               total_pnl))
 
     def _make_card(self, label, value, color, fmt=None):
-        card = QFrame()
-        card.setObjectName("card")
+        card = well("card")
         card.setFixedHeight(dp(64))
-        card.setStyleSheet(card_qss("card"))
         cl = QVBoxLayout(card)
         cl.setContentsMargins(dp(12), dp(8), dp(12), dp(8))
         cl.setSpacing(dp(2))

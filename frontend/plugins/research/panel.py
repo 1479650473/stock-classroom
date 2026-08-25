@@ -25,7 +25,9 @@ from frontend.platform.theme import (
     style_caption, style_num,
 )
 from frontend.platform.local_worker import LocalWorker
-from frontend.platform.premium import BreadthGauge, card_qss as _card_qss, PAL as _PAL
+from frontend.platform.premium import (
+    BreadthGauge, card_qss as _card_qss, PAL as _PAL, well, MachinedWell,
+)
 from frontend.platform.premium import value_ss as _value_ss, label_ss as _label_ss, pill_ss as _pill_ss
 
 from PyQt5.QtWidgets import (
@@ -35,10 +37,6 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtGui import QColor, QFont
-
-# 高级卡片 QSS: 竖向哑光渐变 + 顶部高光斜面 + 圆角 (字符串拼接, 避免 QSS 大括号与 format 冲突)
-def _CARD_QSS():
-    return _card_qss("rstat")
 
 
 def _sec_title(text: str, hint: str = "") -> QWidget:
@@ -82,13 +80,11 @@ def _pill(text: str, color: str) -> QLabel:
     return lbl
 
 
-class _StatCard(QFrame):
+class _StatCard(MachinedWell):
     """高级诊断卡: 字距标题 + 主值(药丸状态/轻量数字) + 副注."""
 
     def __init__(self, title: str, parent=None):
-        super().__init__(parent)
-        self.setObjectName("rstat")
-        self.setStyleSheet(_CARD_QSS())
+        super().__init__("rstat", 10, parent)
         lo = QVBoxLayout(self)
         lo.setContentsMargins(dp(12), dp(10), dp(12), dp(10))
         lo.setSpacing(dp(6))
@@ -129,13 +125,11 @@ class _StatCard(QFrame):
             self._value.setText(str(value))
 
 
-class _SecCard(QFrame):
+class _SecCard(MachinedWell):
     """高级因子研究卡: 标题 + 指标网格(轻量数字 + 字距标签)."""
 
     def __init__(self, title: str, parent=None):
-        super().__init__(parent)
-        self.setObjectName("rstat")
-        self.setStyleSheet(_CARD_QSS())
+        super().__init__("rstat", 10, parent)
         lo = QVBoxLayout(self)
         lo.setContentsMargins(dp(12), dp(10), dp(12), dp(10))
         lo.setSpacing(dp(6))
@@ -255,9 +249,7 @@ class ResearchPanel(QWidget):
         lo.addLayout(env_grid)
 
         # 市场宽度仪表 (研究信号可视化: 破年线占比 + 弱市/强市分区)
-        self._gauge_card = QFrame()
-        self._gauge_card.setObjectName("rstat")
-        self._gauge_card.setStyleSheet(_CARD_QSS())
+        self._gauge_card = well("rstat")
         gl = QVBoxLayout(self._gauge_card)
         gl.setContentsMargins(dp(12), dp(10), dp(12), dp(8))
         gl.setSpacing(0)
@@ -337,6 +329,16 @@ class ResearchPanel(QWidget):
             c.set({})
         self._rank_table.setRowCount(0)
         self._rank_table.setColumnCount(0)
+
+    def on_theme_changed(self):
+        self._rank_table.setStyleSheet(self._table_qss())
+        self._rank_table.viewport().update()
+        if self._snap:
+            try:
+                self._render(self._snap)
+            except Exception:
+                pass
+        self.update()
 
     def load(self):
         if self.on_status:

@@ -10,7 +10,7 @@ from frontend.platform.theme import (
     qss_table, style_h1, style_label, style_caption,
 )
 from frontend.platform.premium import (
-    PAL, card_qss, value_ss, label_ss, SectionTitle, SplitBar,
+    PAL, card_qss, value_ss, label_ss, SectionTitle, SplitBar, well,
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QFont
@@ -131,6 +131,11 @@ class MarketPanel(QWidget):
         label = "行业板块" if self._sector_type == "industry" else "概念板块"
         if self.on_status: self.on_status(f"{label}已加载 - {len(sectors)}条")
 
+    def on_theme_changed(self):
+        self.table.setStyleSheet(qss_table())
+        self.table.viewport().update()
+        self.update()
+
     def load(self):
         if not self.db_path:
             return
@@ -216,11 +221,9 @@ class MarketPanel(QWidget):
                 w.deleteLater()
 
         for d in indices:
-            card = QFrame()
-            card.setObjectName("card")
+            card = well("card")
             card.setFixedSize(dp(172), dp(76))
             card.setCursor(Qt.PointingHandCursor)
-            card.setStyleSheet(card_qss("card"))
             card._code = d.get("code", "")
             card._name = d.get("name", "")
             orig_mpe = card.mousePressEvent

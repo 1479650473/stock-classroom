@@ -7,7 +7,7 @@ from frontend.platform.theme import (
     dp, dps, fs, C_TEXT, C_SUBTEXT, C_FAINT, C_PANEL, qss_table,
 )
 from frontend.platform.premium import (
-    PAL, card_qss, value_ss, label_ss, SectionTitle,
+    PAL, card_qss, value_ss, label_ss, SectionTitle, well,
 )
 from .panorama import DataPanorama
 from PyQt5.QtWidgets import (
@@ -72,9 +72,7 @@ class DCCompanion(QWidget):
 
         # ── Data panorama (database coverage across time) ──
         lo.addWidget(SectionTitle("数据全景"))
-        pano_card = QFrame()
-        pano_card.setObjectName("pano_card")
-        pano_card.setStyleSheet(card_qss("pano_card"))
+        pano_card = well("pano_card")
         pcl = QVBoxLayout(pano_card)
         pcl.setContentsMargins(dp(8), dp(8), dp(8), dp(8))
         self._panorama = DataPanorama()
@@ -114,6 +112,11 @@ class DCCompanion(QWidget):
 
         lo.addStretch()
         scroll.setWidget(container)
+
+    def on_theme_changed(self):
+        self._col_table.setStyleSheet(qss_table())
+        self._col_table.viewport().update()
+        self.update()
 
     def set_databases(self, kline_db, cache_db):
         """Point the data-panorama at the kline + cache databases."""

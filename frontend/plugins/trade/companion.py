@@ -17,7 +17,7 @@ from frontend.platform.theme import (
     qss_btn, qss_btn_accent, qss_input, qss_spinbox,
 )
 from frontend.platform.premium import (
-    PAL, card_qss, value_ss, label_ss, pill_ss, SectionTitle, CountUpLabel,
+    PAL, card_qss, value_ss, label_ss, pill_ss, SectionTitle, CountUpLabel, well,
 )
 
 from PyQt5.QtWidgets import (
@@ -342,9 +342,7 @@ class TradeCompanion(QWidget):
         self._start_paper_worker()
 
         # ── Account management card ──
-        mgmt = QFrame()
-        mgmt.setObjectName("mem_card")
-        mgmt.setStyleSheet(card_qss("mem_card"))
+        mgmt = well("mem_card")
         ml = QVBoxLayout(mgmt)
         ml.setContentsMargins(dp(14), dp(12), dp(14), dp(12))
         ml.setSpacing(dp(7))
@@ -397,9 +395,7 @@ class TradeCompanion(QWidget):
         lo.addWidget(mgmt)
 
         # ── New account card ──
-        nw = QFrame()
-        nw.setObjectName("mem_card2")
-        nw.setStyleSheet(card_qss("mem_card2"))
+        nw = well("mem_card2")
         nl2 = QVBoxLayout(nw)
         nl2.setContentsMargins(dp(14), dp(12), dp(14), dp(12))
         nl2.setSpacing(dp(6))

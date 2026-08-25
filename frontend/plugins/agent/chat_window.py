@@ -14,7 +14,7 @@ from .chat_worker import ChatWorker
 from .tools import TOOLS
 from frontend.platform.theme import (
     dp, dps, fs,
-    C_BG, C_PANEL, C_BORDER, C_TEXT, C_SUBTEXT, C_ACCENT, C_ACCENT_HOVER,
+    C_BG, C_PANEL, C_BORDER, C_TEXT, C_SUBTEXT, C_ACCENT, C_ACCENT_HOVER, C_ON_ACCENT,
 )
 
 
@@ -43,7 +43,7 @@ class ChatBubble(QWidget):
 
         if is_user:
             label.setStyleSheet(
-                f"background:{C_ACCENT};color:#1A1410;border-radius:10px;padding:8px 12px;font-size:{fs(12)};"
+                f"background:{C_ACCENT};color:{C_ON_ACCENT};border-radius:10px;padding:8px 12px;font-size:{fs(12)};"
             )
             lo.addStretch()
             lo.addWidget(label)
@@ -118,7 +118,7 @@ class ChatWindow(QDialog):
         self._send_btn.setFixedSize(dp(56), dp(36))
         self._send_btn.setCursor(Qt.PointingHandCursor)
         self._send_btn.setStyleSheet(
-            f"QPushButton{{background:{C_ACCENT};color:#1A1410;border:none;border-radius:6px;font-size:{fs(12)};font-weight:700}}"
+            f"QPushButton{{background:{C_ACCENT};color:{C_ON_ACCENT};border:none;border-radius:6px;font-size:{fs(12)};font-weight:700}}"
             f"QPushButton:hover{{background:{C_ACCENT_HOVER}}}"
             f"QPushButton:disabled{{background:{C_BORDER};color:{C_SUBTEXT}}}"
         )
