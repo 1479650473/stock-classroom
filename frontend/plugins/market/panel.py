@@ -281,7 +281,7 @@ class MarketPanel(QWidget):
         self.table.setHorizontalHeaderLabels(cols)
 
         for i, b in enumerate(sectors):
-            bg = QColor(PAL["panel"]) if i % 2 else QColor(PAL["bg"])
+            bg = QColor(PAL["c_mid"]) if i % 2 else QColor(PAL["bg"])
             change = b.get("change_pct", 0)
             chg_color = C_RISE if change >= 0 else C_FALL
             ldr_chg = b.get("leader_chg", 0)

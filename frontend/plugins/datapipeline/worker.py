@@ -17,8 +17,8 @@ def _step_stock_list():
     return update_stock_list() or 0
 
 def _step_kline():
-    from backend.data_manager import update_kline
-    return update_kline(catch_up_days=10) or 0
+    from backend.data_manager import daily_update
+    return daily_update(catch_up_days=10) or 0
 
 def _step_spot():
     from backend.data_manager import cache_spot_from_akshare

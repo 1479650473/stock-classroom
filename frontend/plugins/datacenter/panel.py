@@ -378,7 +378,7 @@ class DCPanel(QWidget):
         cols_cn = [CN.get(c, c) for c in cols]
         table.setHorizontalHeaderLabels(["#"] + cols_cn)
         for r, row in enumerate(rows):
-            bg = QColor(PAL["panel"]) if r % 2 else QColor(PAL["bg"])
+            bg = QColor(PAL["c_mid"]) if r % 2 else QColor(PAL["bg"])
             rn = QTableWidgetItem(str(r + 1))
             rn.setForeground(QColor("#484F58"))
             rn.setBackground(bg)

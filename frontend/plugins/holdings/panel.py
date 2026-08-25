@@ -193,10 +193,10 @@ class HoldingsPanel(QWidget):
         self.table.setColumnWidth(1, dp(90))
 
         if self.on_status:
-            self.on_status("持仓: %d 只, 市值 %s, 累计盈亏 %+,.0f"
-                           % (len(positions),
-                              "{:,.0f}".format(summary.get("market_value", 0)),
-                              total_pnl))
+            self.on_status("持仓: {} 只, 市值 {:,.0f}, 累计盈亏 {:+,.0f}".format(
+                len(positions),
+                summary.get("market_value", 0),
+                total_pnl or 0))
 
     def _make_card(self, label, value, color, fmt=None):
         card = well("card")

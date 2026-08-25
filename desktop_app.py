@@ -33,6 +33,16 @@ if __name__ == "__main__":
 
         w = PlatformShell()
         w.show()
+        # 全局 excepthook: 捕捉 Qt 事件循环内(Qt 槽/回调)的未捕获异常, 写入桌面错误日志便于定位
+        def _global_excepthook(etype, value, tb):
+            try:
+                with open(os.path.join(PROJECT_DIR, "desktop_error.log"), "a", encoding="utf-8") as f:
+                    f.write("=== UNCAUGHT (Qt event loop) ===\n")
+                    traceback.print_exception(etype, value, tb, file=f)
+            except Exception:
+                pass
+            sys.__excepthook__(etype, value, tb)
+        sys.excepthook = _global_excepthook
         sys.exit(app.exec_())
     except Exception as e:
         with open(os.path.join(PROJECT_DIR, "desktop_error.log"), "w", encoding="utf-8") as f:

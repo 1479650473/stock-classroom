@@ -87,7 +87,7 @@ class PipelinePanel(QWidget):
         self._step_table.setStyleSheet(qss_table())
         self._step_table.setRowCount(len(STEP_NAMES))
         for i, name in enumerate(STEP_NAMES):
-            bg = QColor(PAL["panel"]) if i % 2 == 0 else QColor(PAL["bg"])
+            bg = QColor(PAL["c_mid"]) if i % 2 == 0 else QColor(PAL["bg"])
             nm = QTableWidgetItem(name)
             nm.setForeground(QColor(C_SUBTEXT))
             nm.setBackground(bg)
