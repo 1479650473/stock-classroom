@@ -16,7 +16,7 @@ from __future__ import annotations
 import time
 from datetime import datetime
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from . import gateway as gw_mod, services as svc, jobs as jobs_mod
 from .decision_gate import BaseDecisionGate  # noqa: F401
@@ -303,6 +303,23 @@ class LoopResult:
     paper: Optional[dict] = None
 
 
+def build_operate_loop(gw=None, use_llm: bool = True) -> "ResearchLoop":
+    """构造"AI操盘"闭环: 有 LLM key → 真 LLM 后端(模型真正决定策略); 无 key → Stub 后端(可验证).
+
+    这是"模拟账户交给模型 agent 操作"的接线点 —— 用户只旁观 ResearchLoop 的逐步推理与下单。
+    """
+    backend = None
+    if use_llm:
+        try:
+            from .llm_client import LLMError
+            backend = LLMBackend()
+        except LLMError:
+            backend = None
+    if backend is None:
+        backend = StubBackend()
+    return ResearchLoop(backend, gw or InProcessGw())
+
+
 class ResearchLoop:
     def __init__(self, backend: BaseBackend, gw: Any):
         self.backend = backend
@@ -312,11 +329,19 @@ class ResearchLoop:
             universe_selector: Optional[dict] = None, initial_balance: float = 100000.0,
             paper: bool = False, paper_account_id: Optional[int] = None,
             gate: Optional["BaseDecisionGate"] = None,
-            use_factor_research: bool = True) -> LoopResult:
+            use_factor_research: bool = True, progress: Optional[Callable] = None) -> LoopResult:
+        def _emit(msg):   # 进度流: 给"AI操盘"台实时展示 agent 推理/动作
+            if progress:
+                try:
+                    progress(msg)
+                except Exception:
+                    pass
         # 1) 宏观
         macro = self.gw.macro_regime()
+        _emit(f"读取宏观 regime → {macro.get('overall', '')}")
         # 2) 标的域
         universe = self._pick_universe(universe_code, universe_selector, macro)
+        _emit(f"选定标的域 → {universe.get('code')} {universe.get('name', '')}")
         factors = self.gw.factors()
         context = {"macro": macro, "universe": universe, "factors": factors,
                    "initial_balance": initial_balance}
@@ -325,10 +350,10 @@ class ResearchLoop:
             rec = self._recommend_factor(universe, macro)
             context["recommended_factor"] = rec
             if rec:
-                print(f"  [因子研究] 最优 {rec['dsl_key']} IC={rec['ic']:.3f} ICIR={rec['icir']:.2f} "
+                _emit(f"因子研究 → 最优 {rec['dsl_key']} IC={rec['ic']:.3f} ICIR={rec['icir']:.2f} "
                       f"方向={'高' if rec['direction']==1 else '低'} 覆盖={rec['coverage']:.0%}")
             else:
-                print("  [因子研究] 未选出显著因子 → 回退样例策略")
+                _emit("因子研究 → 未选出显著因子, 回退样例策略")
             # 2c) 价值/质量研究维度(基本面 EP/BP/ROE, 点时间无前视) —— 扩展单日K线之外
             try:
                 from ..strategy.factor_selector import study_value_factors, classify_value_records
@@ -339,43 +364,52 @@ class ResearchLoop:
                     context["value_research"] = tagged
                     context["recommended_value_factor"] = vbest
                     if vbest:
-                        print(f"  [价值/质量研究] {len(vres)}因子 | 最强 {vbest['dsl_key']} "
+                        _emit(f"价值/质量研究 → 最强 {vbest['dsl_key']} "
                               f"IC={vbest['ic']:.3f} ICIR={vbest['icir']:.2f} "
                               f"方向={'高' if vbest['direction']==1 else '低'} conf={vbest['confidence']}")
                     else:
-                        print(f"  [价值/质量研究] {len(vres)}因子 | 无显著(全被拒)")
+                        _emit(f"价值/质量研究 → {len(vres)}因子 | 无显著(全被拒)")
             except Exception as e:
-                print(f"  [价值/质量研究跳过] {type(e).__name__}: {str(e)[:50]}")
+                _emit(f"价值/质量研究跳过 → {type(e).__name__}")
         result = LoopResult(macro=macro, universe=universe)
 
         # 3) 生成 → 回测 → 复盘修订 多轮
         try:
+            _emit("LLM 生成策略契约...")
             contract = self.backend.generate(context)
+            _emit(f"策略生成 → {contract.get('name','')} | {contract.get('description','')[:60]}")
         except Exception as e:
-            print(f"  [生成失败, 回退样例策略] {type(e).__name__}: {str(e)[:60]}")
+            _emit(f"生成失败({type(e).__name__}) → 回退样本策略")
             contract = self._proven_contract(universe, initial_balance)
         for rnd in range(1, rounds + 1):
             sid = self._safe_create(contract)
             if sid is None:
                 continue
+            _emit(f"回测 第{rnd}轮...")
             job = self.gw.backtest(sid, {"initial_balance": initial_balance})
             job = job or {}
             data = job.get("decoded_result") or job.get("result") or {}
             metrics = data.get("metrics", {}) if isinstance(data, dict) else {}
             rr = RoundResult(rnd, contract, sid, metrics, score(metrics))
             result.rounds.append(rr)
+            _emit(f"  第{rnd}轮: 收益 {metrics.get('total_return', 0)*100:+.2f}% "
+                  f"回撤 {metrics.get('max_drawdown', 0)*100:.1f}% "
+                  f"夏普 {metrics.get('sharpe', 0):.2f} → 评分 {rr.score}")
             if rnd < rounds:
                 # 复盘 → 为下一轮准备修订契约(下一轮迭代再创建/回测)
                 try:
+                    _emit("复盘修订策略...")
                     contract = self.backend.review(contract, metrics, context)
+                    _emit(f"  修订 → {contract.get('name','')} | {contract.get('description','')[:60]}")
                 except Exception as e:
-                    print(f"  [复盘失败, 保持原策略不变] {type(e).__name__}: {str(e)[:60]}")
+                    _emit(f"复盘失败({type(e).__name__}) → 保持原策略")
         result.rounds = [r for r in result.rounds if r.metrics]
 
         # 4) 择优(取评分最高的一轮)
         valid = [r for r in result.rounds if r.score != float("-inf")]
         if valid:
             result.best = max(valid, key=lambda r: r.score)
+            _emit(f"择优 → 第{result.best.round_id}轮 (评分 {result.best.score})")
 
         # 5) 上 paper 盘: 用最优策略的最新 entry 信号 → 先过 AI 决策门(若有)
         if paper and result.best:
@@ -396,11 +430,18 @@ class ResearchLoop:
             if entry:
                 qty = int((initial_balance * 0.95) / price // 100) * 100 if price > 0 else 100
                 payload["qty"] = max(qty, 100)
+                _emit(f"入场信号触发 → 市价买入 {code} {payload['qty']} 股 @ {price}")
                 result.paper = self.gw.paper_order(payload)
                 result.paper["signal"] = "long"
+                po = result.paper
+                _emit(f"下单 → 账户#{po.get('account_id')} {po.get('side')} {po.get('code')} "
+                      f"{po.get('code')} {po.get('qty')}股 @ {po.get('filled_price')} "
+                      f"状态 {po.get('status')}")
             else:
                 result.paper = {"signal": "none",
                                 "note": "当前无 entry 信号或决策门暂缓" if not sig else "决策门裁决 hold/exit，暂缓下单"}
+                _emit(f"入场检查 → 信号={'有' if sig else '无'}"
+                      f"{'但决策门暂缓' if sig else ', 不下单'}")
             if decision is not None:
                 result.paper["decision"] = decision.to_dict()
         return result
