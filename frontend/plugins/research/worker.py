@@ -415,6 +415,13 @@ def run_paper_multi(hp=20, top_k_pct=0.2, fwd_start="2024-01-01",
             progress(f"纸面盘 {i+1}/{len(names)} · {name}", round(12 + (i / len(names)) * 56, 0))
         try:
             fw = forward_paper_run(frames, contracts[name], fwd_start, fwd_end, initial_balance=1_000_000.0)
+            # 精确绩效指标(α/年化/总收益/夏普/胜率/回撤...). nav 为绝对市值(起点1e6).
+            mtr = {}
+            try:
+                from backend.strategy.metrics import compute_full_metrics
+                mtr = compute_full_metrics(fw["nav_n"], freq_bars=contracts[name].rebalance_bars)
+            except Exception:
+                mtr = {}
             runs[name] = {
                 "dates": fw["dates"], "nav": fw["nav_n"],
                 "final_holdings": fw["final_holdings"], "final_cash": fw["final_cash"],
@@ -422,6 +429,8 @@ def run_paper_multi(hp=20, top_k_pct=0.2, fwd_start="2024-01-01",
                 "rebalances": fw["rebalances"],
                 "daily_holdings": fw.get("daily_holdings", []),
                 "rebalance_log": fw.get("rebalance_log", []),
+                "metrics": mtr,
+                "strategy_name": name,
             }
         except Exception as e:
             runs[name] = {"error": str(e)}
@@ -430,6 +439,34 @@ def run_paper_multi(hp=20, top_k_pct=0.2, fwd_start="2024-01-01",
     grid = next((r['dates'] for r in runs.values()
                  if isinstance(r, dict) and not r.get('error') and r.get('dates')), None)
     buyhold = _build_buyhold(close, fwd_start, as_of, grid) if grid else _build_buyhold(close, fwd_start, as_of)
+    # 附基准指标(买持 相对起点倍数)到 buyhold; 再给每策略算 α/β/超额(vs 买持基准)
+    bh_metrics = {}
+    try:
+        from backend.strategy.metrics import compute_full_metrics
+        bh_metrics = compute_full_metrics(buyhold.get("nav") or [], freq_bars=hp)
+    except Exception:
+        bh_metrics = {}
+    buyhold["metrics"] = bh_metrics
+    # 每策略 α(vs 同一重平衡日网格的买持基准)
+    bhnav = buyhold.get("nav") or []
+    for name, r in runs.items():
+        if isinstance(r, dict) and r.get("error"):
+            continue
+        try:
+            from backend.strategy.metrics import compute_full_metrics
+            nav = r.get("nav") or []
+            # 对齐: 策略 nav 与基准 nav 同网格(重平衡日采样) → 直接同长即可
+            b = bhnav if len(bhnav) == len(nav) else None
+            m = compute_full_metrics(nav, bench=b, freq_bars=contracts[name].rebalance_bars)
+            r["metrics"] = m
+        except Exception:
+            pass
+        # 策略条件原理(买入/持有/卖出) —— 供持仓页/LLM
+        try:
+            from backend.strategy.describe import describe_contract
+            r["describe"] = describe_contract(contracts[name])
+        except Exception:
+            r["describe"] = {}
     _persist_paper_runs(as_of, len(frames), hp, fwd_start, sel, runs, buyhold)
     if progress:
         progress("完成", 100.0)

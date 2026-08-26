@@ -442,12 +442,18 @@ class StrategyDetailDialog(QDialog):
         t = QLabel(f"单策略详图 · {name}")
         t.setStyleSheet(label_ss(size=13) + f"color:{PAL['text']};")
         root.addWidget(t)
-        # 摘要卡
+        # 摘要卡(精确指标: 总收益/年化/夏普/α/胜率/回撤)
         nav = paper.get('nav', []) or []
+        m = paper.get('metrics') or {}
         ret = (nav[-1] / _INIT - 1) if nav else 0
-        terms = [("期初", f"{_INIT:,.0f}"), ("期末净值", f"{(nav[-1] if nav else 0):,.0f}"),
-                 ("累计收益", f"{ret:+.1%}"), ("调仓次数", str(paper.get('rebalances', 0))),
-                 ("换手率", f"{(paper.get('turnover_avg', 0) * 100):.1f}%"), ("as_of", str(as_of or '—'))]
+        _f = lambda x, s="%": (f"{x*100:+.1f}{s}" if x is not None else "—")
+        terms = [("累计收益", _f(m.get('total_return', ret))),
+                 ("年化α", _f(m.get('alpha'), "%")),
+                 ("年化收益", _f(m.get('cagr'), "%")),
+                 ("夏普", f"{m.get('sharpe', 0):.2f}" if m else "—"),
+                 ("胜率", _f(m.get('win_rate')) if m.get('win_rate') is not None else "—"),
+                 ("最大回撤", _f(m.get('max_drawdown'))),
+                 ("as_of", str(as_of or '—'))]
         sum_row = QHBoxLayout(); sum_row.setSpacing(dp(8))
         for k, val in terms:
             card = QFrame(); card.setStyleSheet(card_qss("card"))
@@ -457,6 +463,25 @@ class StrategyDetailDialog(QDialog):
             lo.addWidget(lb); lo.addWidget(v)
             sum_row.addWidget(card, 1)
         root.addLayout(sum_row)
+        # 策略条件原理(买入/持有/卖出) —— 命中用户"F/D策略条件原理"
+        desc = paper.get('describe') or {}
+        if desc:
+            cond_frame = QFrame(); cond_frame.setStyleSheet(
+                f"background:{PAL['bg']};border:1px solid {PAL['border']};border-radius:6px;")
+            clo = QVBoxLayout(cond_frame); clo.setContentsMargins(dp(10), dp(6), dp(10), dp(6)); clo.setSpacing(dp(2))
+            def _cond_line(k, v):
+                lbl = QLabel(f"{k}：{v}")
+                lbl.setStyleSheet(f"color:{PAL['sub']};font-size:{fs(9)};background:transparent;")
+                lbl.setWordWrap(True)
+                clo.addWidget(lbl)
+            hd = QLabel(f"策略原理 · {desc.get('kind', '')}")
+            hd.setStyleSheet(label_ss(size=9) + f"color:{PAL['accent']};")
+            clo.addWidget(hd)
+            _cond_line("买入条件", desc.get('buy_condition', '—'))
+            if desc.get('hold_period'):
+                _cond_line("持有/调仓", desc.get('hold_period'))
+            _cond_line("卖出条件", desc.get('sell_conditions', '—'))
+            root.addWidget(cond_frame)
         # 大曲线(单策略 vs 基线)
         cur = QFrame(); cur.setStyleSheet(card_qss("card"))
         clo = QVBoxLayout(cur); clo.setContentsMargins(dp(10), dp(6), dp(10), dp(6))
