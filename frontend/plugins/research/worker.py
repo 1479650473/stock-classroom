@@ -108,6 +108,70 @@ def study_factors(study_start: str = "2022-01-01", progress=None) -> dict:
 
 
 # ── ④ 组合纸面盘(重平衡NET vs 等权买持) ──────────────────────────
+def _kline_db_path():
+    """kline.db 绝对路径(项目根 /data/kline.db)."""
+    import os as _os
+    return _os.path.join(_os.path.dirname(_ROOT), 'data', 'kline.db')
+
+
+def _kline_last_close(code):
+    """kline_daily 最新收盘价(做'模拟买入'的当日现价)."""
+    import sqlite3 as _sq
+    try:
+        con = _sq.connect(_kline_db_path())
+        r = con.execute("SELECT close FROM kline_daily WHERE code=? ORDER BY date DESC LIMIT 1", (code,)).fetchone()
+        con.close()
+        return float(r[0]) if r and r[0] else None
+    except Exception:
+        return None
+
+
+def sim_buy_picks(codes, account_id=None, budget_percent=1.0, db_path=None):
+    """把选出的股票**一键模拟买入**(等权分配当前账户可用资金, 市价单按最新收盘价).
+
+    codes: [{code,name,price}, ...] 或 [code, ...]. 未指定账户→首个活跃账户.
+    db_path: 覆盖 TradeEngine 默认 DB(测试用, 默认 None=真实 sim_trade.db).
+    返回 {account_id, bought:[{code,name,qty,price}], skipped:[{code,reason}], total_cost}.
+    口径: 模拟盘(真实 TradeEngine, sim_trade.db); 单票30%仓位上限/资金不足会被跳过并说明.
+    """
+    from trade_engine.engine import TradeEngine
+    eng = TradeEngine(db_path=db_path)
+    if account_id is None:
+        accs = eng.list_accounts()
+        if not accs:
+            return {"error": "无模拟账户(请先在交易页创建)"}
+        account_id = accs[0]['id']
+    if codes and isinstance(codes[0], str):
+        codes = [{"code": c, "name": "", "price": _kline_last_close(c)} for c in codes]
+    codes = [c for c in codes if c.get("code")]
+    if not codes:
+        return {"error": "无选股结果"}
+    # 等权分配账户可用资金
+    acc = eng.get_account(account_id)
+    bal = float(acc["balance"]) if acc else 0.0
+    if bal <= 0:
+        return {"error": "账户可用资金为 0"}
+    n = len(codes)
+    budget_each = bal * float(budget_percent) / n
+    bought, skipped, total_cost = [], [], 0.0
+    for c in codes:
+        code = c["code"]
+        name = c.get("name") or code
+        px = c.get("price") or _kline_last_close(code)
+        if not px or px <= 0:
+            skipped.append({"code": code, "reason": "无有效价格"}); continue
+        qty = int(budget_each / px / eng.LOT_SIZE) * eng.LOT_SIZE
+        if qty < eng.LOT_SIZE:
+            skipped.append({"code": code, "reason": "资金不足一手"}); continue
+        order, err = eng.place_order(account_id, code, name, 'buy', 'market',
+                                     price=px, qty=qty, current_price=px)
+        if order is None:
+            skipped.append({"code": code, "reason": err}); continue
+        bought.append({"code": code, "name": name, "qty": qty, "price": px})
+        total_cost += qty * px
+    return {"account_id": account_id, "bought": bought, "skipped": skipped, "total_cost": total_cost}
+
+
 def pick_at(strategy: str = "D多因子", date: str = None, hp: int = 20,
             top_k_pct: float = 0.2) -> dict:
     """按策略+日期做**该日截面**选股(回测选股快照). 供研究面板'选股历史某日'操作.

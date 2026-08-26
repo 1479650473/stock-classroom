@@ -297,11 +297,18 @@ class ResearchPanel(QWidget):
         self._btn_pick.setFixedHeight(dp(28))
         self._btn_pick.clicked.connect(self._on_pick)
         pick_row.addWidget(self._btn_pick)
-        self._pick_cap = QLabel("")
-        self._pick_cap.setStyleSheet(_label_ss(size=9) + f"color:{_PAL['faint']};")
-        pick_row.addWidget(self._pick_cap)
+        self._btn_sim_buy = _btn("一键模拟买入")
+        self._btn_sim_buy.setFixedHeight(dp(28))
+        self._btn_sim_buy.setToolTip("把当前选股结果等权分配模拟账户资金市价买入")
+        self._btn_sim_buy.clicked.connect(self._on_sim_buy)
+        pick_row.addWidget(self._btn_sim_buy)
         pick_row.addStretch()
         lo.addLayout(pick_row)
+        # 选股/买入结果 caption(独立一行, 避免窄窗口被裁)
+        self._pick_cap = QLabel("")
+        self._pick_cap.setStyleSheet(_label_ss(size=9) + f"color:{_PAL['faint']};")
+        self._pick_cap.setWordWrap(True)
+        lo.addWidget(self._pick_cap)
         self._rank_table = QTableWidget()
         self._rank_table.setStyleSheet(self._table_qss())
         self._rank_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -417,11 +424,46 @@ class ResearchPanel(QWidget):
                 self.on_status("选股失败: %s" % (data.get("error") if data else "无数据"))
             return
         codes = data.get("codes", [])
+        self._last_pick_codes = codes
         self._fill_rank_table(codes)
         self._pick_cap.setText(
             f"{data.get('strategy')} · 选股日 {data.get('date')} · 池 {data.get('pool_size')}只")
         if self.on_status:
             self.on_status(f"{data.get('strategy')} {data.get('date')} 选股 {len(codes)} 只")
+
+    def _on_sim_buy(self):
+        """把当前选股结果一键模拟买入(等权分配模拟账户资金)."""
+        codes = getattr(self, "_last_pick_codes", []) or []
+        if not codes:
+            # 回退默认: 用当前排名表代码
+            codes = [{"code": self._rank_table.item(i, 0).text()}
+                     for i in range(self._rank_table.rowCount())
+                     if self._rank_table.item(i, 0)]
+        codes = [c for c in codes if c.get("code")]
+        if not codes:
+            if self.on_status:
+                self.on_status("无可买入的选股(先查看某日选股)")
+            return
+        w = LocalWorker(self._work_sim_buy, "sim_buy", args=[codes])
+        w.result.connect(self._on_sim_buy_data)
+        self._workers.append(w)
+        w.start()
+
+    def _work_sim_buy(self, codes):
+        from .worker import sim_buy_picks
+        return sim_buy_picks(codes)
+
+    def _on_sim_buy_data(self, tag, data):
+        if not isinstance(data, dict) or data.get("error"):
+            if self.on_status:
+                self.on_status("模拟买入失败: %s" % (data.get("error") if data else "无数据"))
+            return
+        nb = len(data.get("bought", []))
+        nskip = len(data.get("skipped", []))
+        self._pick_cap.setText(
+            f"模拟买入 {nb} 只 / 跳过 {nskip} 只 · 花费 {data.get('total_cost', 0):,.0f} · 账户#{data.get('account_id')}")
+        if self.on_status:
+            self.on_status(f"模拟买入完成: {nb}只 花费 {data.get('total_cost', 0):,.0f} (跳过{nskip})")
 
     def _render(self, snap):
         sig = snap.get("signals", {})

@@ -745,7 +745,10 @@ class HoldingsPanel(QWidget):
         tabs.setStyleSheet(f"QTabWidget::pane{{border:1px solid {PAL['border_lo']};}}")
         self._hx_date = QComboBox(); self._hx_date.currentIndexChanged.connect(lambda _: self._render_hold())
         self._hx_view = _HoldingsView()
-        hx = QWidget(); hl = QVBoxLayout(hx); hl.setContentsMargins(dp(6), dp(6), dp(6), dp(6))
+        hx = QWidget(); hl = QVBoxLayout(hx); hl.setContentsMargins(dp(6), dp(6), dp(6), dp(6)); hl.setSpacing(dp(6))
+        self._hx_cap = QLabel("")
+        self._hx_cap.setStyleSheet(label_ss(size=10, gold=True))
+        hl.addWidget(self._hx_cap)
         hl.addWidget(self._hx_date)
         hl.addWidget(self._hx_view)
         tabs.addTab(hx, "持仓(按调仓日)")
@@ -896,11 +899,14 @@ class HoldingsPanel(QWidget):
         idx = self._hx_date.currentIndex()
         dh = self._paper.get('daily_holdings', []) if getattr(self, '_paper', None) else []
         if idx < 0 or idx >= len(dh):
-            self._hx_view.set_holdings([]); return
+            self._hx_view.set_holdings([]); self._hx_cap.setText(""); return
         h = dh[idx]
         holds = h.get('holdings', {})
         rows = _snapshot_holdings(holds, h['date'])
         self._hx_view.set_holdings(rows)
+        # 明确标注: [策略] 于 [调仓日] 的持仓
+        st = self._selected_strategy() or ""
+        self._hx_cap.setText(f"{st} 于 {_fmt_date(h['date'])} 的持仓" if st else f"{_fmt_date(h['date'])} 的持仓")
 
     def _render_reb(self, paper):
         rows = _rebalance_rows(paper)
@@ -934,3 +940,12 @@ def hm(v):
 def _pt(n):
     """fs() 返回 'Npx' 字符串, 这里取整数字号给 QFont."""
     return int(str(fs(n)).replace('px', ''))
+
+
+def _fmt_date(d):
+    """把 'YYYYMMDD' / 'YYYY-MM-DD HH:MM:SS' 归一化为 'YYYY-MM-DD'."""
+    s = str(d).strip()
+    s = s[:10].replace('/', '-')
+    if len(s) == 8 and s.isdigit():
+        return s[:4] + "-" + s[4:6] + "-" + s[6:8]
+    return s

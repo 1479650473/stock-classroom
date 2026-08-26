@@ -213,6 +213,7 @@ class MarketPanel(QWidget):
                 idx_final[code] = {
                     "price": cur[0] if cur else None,
                     "prev": prv[0] if prv else None,
+                    "date": latest,
                 }
 
             indices = []
@@ -225,6 +226,7 @@ class MarketPanel(QWidget):
                 indices.append({
                     "code": code, "name": INDEX_MAP[code],
                     "price": cur, "change_pct": round(cp, 2),
+                    "date": idx_final[code].get("date"),
                 })
 
             today_rows = conn.execute(
@@ -267,7 +269,7 @@ class MarketPanel(QWidget):
 
         for d in indices:
             card = well("card")
-            card.setFixedSize(dp(150), dp(96))
+            card.setFixedSize(dp(150), dp(110))
             card.setCursor(Qt.PointingHandCursor)
             card._code = d.get("code", "")
             card._name = d.get("name", "")
@@ -298,6 +300,12 @@ class MarketPanel(QWidget):
             c = QLabel("{}{:.2f}%".format("+" if chg >= 0 else "", chg))
             c.setStyleSheet(f"color:{color};font-size:{fs(tr(12))};font-weight:600;background:transparent")
             cl.addWidget(c)
+
+            # 数据日期(每个指数自己的最新交易日)
+            dt = d.get("date")
+            dd = QLabel(f"数据至 {_fmt_date(dt)}" if dt else "数据至 —")
+            dd.setStyleSheet(label_ss(size=8) + f"color:{C_FAINT};")
+            cl.addWidget(dd)
 
             self.card_row.addWidget(card)
         if not indices:
@@ -359,3 +367,12 @@ class MarketPanel(QWidget):
 
     def _on_click(self, row, col):
         pass
+
+
+def _fmt_date(d):
+    """把 'YYYYMMDD' / 'YYYY-MM-DD HH:MM:SS' 归一化为 'YYYY-MM-DD'."""
+    s = str(d).strip()
+    s = s[:10].replace('/', '-')
+    if len(s) == 8 and s.isdigit():
+        return s[:4] + "-" + s[4:6] + "-" + s[6:8]
+    return s
