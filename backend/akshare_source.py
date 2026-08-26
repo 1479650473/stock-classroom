@@ -157,15 +157,27 @@ def ak_fetch_kline(code: str, days: int = 10, timeout: float = 20.0):
     return _normalize_kline_rows(stored, rows, days=days)
 
 
+_TIMEOUT_EXEC = None
+
+
+def _timeout_exec():
+    """共享的单一超时执行器 —— 避免每次调用都新建 ThreadPoolExecutor(5200×池会线程爆炸崩 native)."""
+    global _TIMEOUT_EXEC
+    if _TIMEOUT_EXEC is None or _TIMEOUT_EXEC._shutdown:
+        from concurrent.futures import ThreadPoolExecutor
+        _TIMEOUT_EXEC = ThreadPoolExecutor(max_workers=24)
+    return _TIMEOUT_EXEC
+
+
 def _run_with_timeout(fn, timeout: float):
-    """把 fn() 放进子线程跑, 超时终止(akshare 库内挂起无法真正 kill, 靠超时返回 None)。"""
-    from concurrent.futures import ThreadPoolExecutor, TimeoutError as _TE
-    with ThreadPoolExecutor(max_workers=1) as ex:
-        fut = ex.submit(fn)
-        try:
-            return fut.result(timeout=timeout)
-        except _TE:
-            return None
+    """把 fn() 放进共享线程池跑, 超时终止(akshare 库内挂起无法真正 kill, 靠超时返回 None)。"""
+    from concurrent.futures import TimeoutError as _TE
+    ex = _timeout_exec()
+    fut = ex.submit(fn)
+    try:
+        return fut.result(timeout=timeout)
+    except _TE:
+        return None
 
 
 def _fetch_kline_with_fallback(symbol: str, days: int, timeout: float):
