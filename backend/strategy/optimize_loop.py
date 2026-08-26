@@ -134,18 +134,36 @@ def run_optimize_loop(use_llm: bool = True, hp: int = 20, account_id: Optional[i
     from backend.strategy.factor_research import FactorResearchEngine
     from backend.strategy.factor_data import load_universe_frames
 
-    # ① 5家族回测(带精确指标+买卖条件)
+    # ① 5家族回测(带精确指标+买卖条件). 优先复用已缓存的 paper_runs.json(快), hp 匹配才用.
     _emit("① 5因子家族回测(精确指标)...")
-    r = run_paper_multi(hp=hp, fwd_start=fwd_start)
-    if r.get("error"):
-        return {"error": r["error"]}
-    families = r["runs"]
-    # 把契约对象挂回(describe/metrics 已在 runs 里)
-    contracts = _strategy_contracts(hp)
-    for n in families:
-        if isinstance(families[n], dict) and not families[n].get("error"):
-            families[n]["contract"] = contracts[n]
-    bh = r["buyhold"]
+    r = None
+    try:
+        import os as _os
+        _cpath = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))), 'data', 'paper_runs.json')
+        with open(_cpath, encoding='utf-8') as f:
+            _cached = json.load(f)
+        if int(_cached.get("hp", -1)) == hp:
+            families = dict(_cached.get("runs") or {})
+            bh = _cached.get("buyhold") or {}
+            # 补 contract 对象(describe/metrics 已在 runs 里; contract 需重建)
+            contracts = _strategy_contracts(hp)
+            for n in families:
+                if isinstance(families[n], dict) and not families[n].get("error"):
+                    families[n]["contract"] = contracts[n]
+            r = {"families": families, "buyhold": bh, "as_of": _cached.get("as_of"), "pool_size": _cached.get("pool_size")}
+            _emit(f"   复用缓存 paper_runs (as_of={_cached.get('as_of')})")
+    except Exception:
+        r = None
+    if r is None:
+        r = run_paper_multi(hp=hp, fwd_start=fwd_start)
+        if r.get("error"):
+            return {"error": r["error"]}
+        families = r["runs"]
+        contracts = _strategy_contracts(hp)
+        for n in families:
+            if isinstance(families[n], dict) and not families[n].get("error"):
+                families[n]["contract"] = contracts[n]
+        bh = r["buyhold"]
     _emit(f"   买持基准: 总收益{(bh.get('metrics') or {}).get('total_return',0)*100:+.1f}%")
     best = max((n for n, c in families.items() if isinstance(c, dict) and not c.get("error")),
                key=lambda n: (families[n].get("metrics") or {}).get("total_return", -1e9))
@@ -159,15 +177,16 @@ def run_optimize_loop(use_llm: bool = True, hp: int = 20, account_id: Optional[i
         return {"families": families, "buyhold": bh, "error": proposal["error"]}
     _emit(f"   提议: {proposal.get('name','')} | {proposal.get('description','')[:60]}")
 
-    # ③ 回测新契约(带基准 α)
+    # ③ 回测新契约(带基准 α). 用与 5家族纸面盘一致的帧(缓存, start=WARM, 含基本面).
     _emit("③ 回测新契约...")
-    frames = load_universe_frames(build_wide_pool())
+    from frontend.plugins.research.worker import _load_frames
+    frames = _load_frames()
     eng = FactorResearchEngine()
     close = eng._panel(frames, "close")
     import pandas as pd
     from backend.strategy.portfolio_rebalance import forward_paper_run
     nc = proposal["contract"]
-    fwd_end = str(pd.Timestamp(eng._panel(frames, 'close').index[-1]).date())
+    fwd_end = str(pd.Timestamp(close.index[-1]).date())
     fw = forward_paper_run(frames, nc, fwd_start, fwd_end, initial_balance=1_000_000.0)
     m = compute_full_metrics(fw["nav_n"], freq_bars=nc.rebalance_bars)
     # 与买持对比 α
