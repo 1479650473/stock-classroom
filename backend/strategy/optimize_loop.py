@@ -56,7 +56,7 @@ class LLMOptimizer:
     name = "llm"
 
     def __init__(self):
-        from .llm_client import LLMClient, extract_json, LLMError
+        from ..agent.llm_client import LLMClient, extract_json, LLMError
         self._client = LLMClient()
         self._extract = extract_json
 
@@ -69,12 +69,15 @@ class LLMOptimizer:
                 continue
             m = c.get("metrics") or {}
             d = c.get("describe") or {}
+            win = m.get("win_rate")
+            win_s = f"{win*100:.1f}%" if win is not None else "N/A"
+            alpha = m.get("alpha")
+            alpha_s = f"{alpha*100:.1f}%" if alpha is not None else "N/A"
             rows.append(
                 f"- {n}: 因子={c.get('strategy_name', n)}, 买入={d.get('buy_condition','')[:60]}；"
                 f"总收益={m.get('total_return',0)*100:+.1f}% 年化={m.get('cagr',0)*100:+.1f}% "
                 f"夏普={m.get('sharpe',0):.2f} 最大回撤={m.get('max_drawdown',0)*100:.1f}% "
-                f"α={m.get('alpha',0)*100 if m.get('alpha') is not None else 'N/A':.1f}% "
-                f"胜率={m.get('win_rate',0)*100 if m.get('win_rate') is not None else 'N/A':.1f}%")
+                f"α={alpha_s} 胜率={win_s}")
         fam_tbl = "\n".join(rows)
         prompt = (
             "你是A股量化组合策略研究员。以下是5个因子家族策略的精确回测指标与买卖条件：\n\n"
@@ -87,7 +90,7 @@ class LLMOptimizer:
             "\"base_weights\":{...},\"top_k_pct\":float,\"rebalance_bars\":int,\"use_tilt\":bool}\n"
             "不要输出markdown围栏，不要解释。\n"
         )
-        from .llm_client import LLMError
+        from ..agent.llm_client import LLMError
         try:
             text = self._client.complete(
                 "你是A股量化策略研究员, 只输出声明式JSON契约。", prompt)
