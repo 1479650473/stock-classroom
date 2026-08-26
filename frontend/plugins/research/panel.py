@@ -22,7 +22,7 @@ from frontend.platform.theme import (
     C_BG, C_PANEL, C_RAISED, C_BORDER, C_BORDER_SOFT, C_TEXT, C_SUBTEXT, C_FAINT,
     C_ACCENT, C_ACCENT_HOVER, C_ACCENT_DIM, C_ON_ACCENT, C_UP, C_DOWN, C_INFO, C_WARN,
     C_GOLD, C_GOLD_HOVER,
-    qss_btn, qss_btn_accent, qss_table, qss_card, style_h1, style_h2, style_label,
+    qss_btn, qss_btn_accent, qss_table, qss_card, qss_combo, style_h1, style_h2, style_label,
     style_caption, style_num,
 )
 from frontend.platform.local_worker import LocalWorker
@@ -30,13 +30,14 @@ from frontend.platform.premium import (
     BreadthGauge, card_qss as _card_qss, PAL as _PAL, well, MachinedWell,
 )
 from frontend.platform.premium import value_ss as _value_ss, label_ss as _label_ss, pill_ss as _pill_ss
+from .worker import STRATEGY_LABELS
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton, QFrame,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QScrollArea,
-    QButtonGroup, QSizePolicy,
+    QButtonGroup, QSizePolicy, QComboBox, QDateEdit,
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QDate
 from PyQt5.QtGui import QColor, QFont
 
 
@@ -274,6 +275,33 @@ class ResearchPanel(QWidget):
 
         # 多因子选股
         lo.addWidget(_sec_title("多因子选股  ·  z(BP)+z(REV20)−z(VOL20) 综合分"))
+        # 回测选股控制条: 策略 + 日期 + 查看按钮 (选'该日'截面选股)
+        pick_row = QHBoxLayout(); pick_row.setSpacing(dp(8))
+        pick_row.addWidget(QLabel("策略"))
+        self._pick_strategy = QComboBox()
+        self._pick_strategy.setFixedHeight(dp(28))
+        self._pick_strategy.setMinimumWidth(dp(110))
+        for name in STRATEGY_LABELS:
+            self._pick_strategy.addItem(name)
+        self._pick_strategy.setStyleSheet(qss_combo())
+        pick_row.addWidget(self._pick_strategy)
+        pick_row.addWidget(QLabel("日期"))
+        self._pick_date = QDateEdit()
+        self._pick_date.setCalendarPopup(True)
+        self._pick_date.setDisplayFormat("yyyy-MM-dd")
+        self._pick_date.setFixedHeight(dp(28))
+        self._pick_date.setStyleSheet(qss_combo())
+        self._pick_date.setDate(QDate.currentDate())
+        pick_row.addWidget(self._pick_date)
+        self._btn_pick = _btn("查看该日选股", accent=True)
+        self._btn_pick.setFixedHeight(dp(28))
+        self._btn_pick.clicked.connect(self._on_pick)
+        pick_row.addWidget(self._btn_pick)
+        self._pick_cap = QLabel("")
+        self._pick_cap.setStyleSheet(_label_ss(size=9) + f"color:{_PAL['faint']};")
+        pick_row.addWidget(self._pick_cap)
+        pick_row.addStretch()
+        lo.addLayout(pick_row)
         self._rank_table = QTableWidget()
         self._rank_table.setStyleSheet(self._table_qss())
         self._rank_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -370,6 +398,31 @@ class ResearchPanel(QWidget):
         if self.on_status:
             self.on_status(f"研究完成 持有期{snap.get('hp')}日 池{len(snap.get('codes') or [])}只")
 
+    def _on_pick(self):
+        """按所选策略+日期做'该日截面'选股(回测选股快照), 填排名表."""
+        strategy = self._pick_strategy.currentText()
+        date = self._pick_date.date().toString("yyyy-MM-dd")
+        w = LocalWorker(self._work_pick, "pick", args=[strategy, date])
+        w.result.connect(self._on_pick_data)
+        self._workers.append(w)
+        w.start()
+
+    def _work_pick(self, strategy, date):
+        from .worker import pick_at
+        return pick_at(strategy, date)
+
+    def _on_pick_data(self, tag, data):
+        if not isinstance(data, dict) or data.get("error"):
+            if self.on_status:
+                self.on_status("选股失败: %s" % (data.get("error") if data else "无数据"))
+            return
+        codes = data.get("codes", [])
+        self._fill_rank_table(codes)
+        self._pick_cap.setText(
+            f"{data.get('strategy')} · 选股日 {data.get('date')} · 池 {data.get('pool_size')}只")
+        if self.on_status:
+            self.on_status(f"{data.get('strategy')} {data.get('date')} 选股 {len(codes)} 只")
+
     def _render(self, snap):
         sig = snap.get("signals", {})
         vt = sig.get("value_tilt", {}) or {}
@@ -414,8 +467,14 @@ class ResearchPanel(QWidget):
         self._card_ep.set(st.get("EP", {}))
         self._card_roe.set(st.get("ROE", {}))
 
-        # 多因子排名
+        # 多因子排名(默认=最新截面 as_of)
         rk = snap.get("ranking", []) or []
+        self._fill_rank_table(rk)
+        self._pick_cap.setText(
+            f"默认 · {self._hp}日因子 · 数据截至 {snap.get('as_of')} · 池 {snap.get('pool_size')}只")
+
+    def _fill_rank_table(self, rk):
+        """把排名/选股行填进排名表(代码/现价/涨跌%/综合分). rk: [{code,price,chg,comp}]."""
         cols = ["代码", "现价", "涨跌%", "综合分"]
         self._rank_table.setRowCount(len(rk))
         self._rank_table.setColumnCount(len(cols))
@@ -439,8 +498,10 @@ class ResearchPanel(QWidget):
         self._rank_table.setColumnWidth(3, dp(96))
 
     def _on_row_click(self, row, col):
-        if not self._snap or row >= len(self._snap.get("ranking", [])):
+        # 支持'该日选股'后的点击: 用当前表格首列代码开K线
+        item = self._rank_table.item(row, 0)
+        if not item:
             return
-        code = self._snap["ranking"][row].get("code", "")
+        code = item.text()
         if code and self.on_open_kline:
             self.on_open_kline(code, "")

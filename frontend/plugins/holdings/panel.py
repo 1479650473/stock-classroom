@@ -84,6 +84,21 @@ def _names_map(codes):
         return {}
 
 
+def _kline_as_of():
+    """kline_daily 最新交易日(实时/历史持仓的'数据截至'基准). 归一化为 YYYY-MM-DD."""
+    try:
+        con = sqlite3.connect(KLINE_DB)
+        r = con.execute("SELECT MAX(date) FROM kline_daily").fetchone()
+        con.close()
+        d = r[0] if r and r[0] else None
+        if not d:
+            return None
+        s = str(d)
+        return s[:4] + "-" + s[4:6] + "-" + s[6:8] if len(s) == 8 else s[:10]
+    except Exception:
+        return None
+
+
 def _load_live_holdings():
     """读模拟盘今日实时持仓(选有持仓的账户), 用 kline 最新收盘价刷新市值/浮盈.
 
@@ -122,6 +137,7 @@ def _load_live_holdings():
         total_asset = cash + total_mv
         return {"account_id": aid, "account_name": aname, "cash": cash, "holdings": holdings,
                 "market_value": total_mv, "total_pnl": total_pnl, "total_asset": total_asset,
+                "as_of": _kline_as_of(),
                 "pct_pnl": (total_pnl / (total_asset - total_pnl) * 100.0) if (total_asset - total_pnl) else 0.0}
     except Exception as e:
         return {"error": str(e)}
@@ -762,7 +778,9 @@ class HoldingsPanel(QWidget):
         pnl = info['total_pnl']
         self._acct_labels['pnl'].setText(f"{pnl:+,.0f}")
         self._acct_labels['pnl'].setStyleSheet(value_ss(color=(PAL['up'] if pnl >= 0 else PAL['down']), size=13))
-        self._acct_cap.setText(f"{info['account_name']} (账户 #{info['account_id']}) · {len(info['holdings'])} 只持仓")
+        self._acct_cap.setText(
+            f"{info['account_name']} (账户 #{info['account_id']}) · {len(info['holdings'])} 只持仓 · "
+            f"数据截至 {info.get('as_of') or '—'}")
         self._live_view.set_holdings(info['holdings'])
 
     def _mk_table(self):

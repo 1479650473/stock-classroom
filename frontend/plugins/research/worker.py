@@ -24,7 +24,7 @@ from backend.strategy.factor_selector import build_wide_pool  # noqa: E402
 from backend.strategy.factor_data import load_universe_frames  # noqa: E402
 from backend.strategy.portfolio_rebalance import (  # noqa: E402
     adaptive_config_for_hp, forward_paper_run, composite_score, _xs_z, select_top_k,
-    SelectionContract,
+    SelectionContract, RebalancePlanner,
 )
 from backend.strategy.factor_research import FactorResearchEngine  # noqa: E402
 from backend.agent.decision_gate import (  # noqa: E402
@@ -108,6 +108,72 @@ def study_factors(study_start: str = "2022-01-01", progress=None) -> dict:
 
 
 # ── ④ 组合纸面盘(重平衡NET vs 等权买持) ──────────────────────────
+def pick_at(strategy: str = "D多因子", date: str = None, hp: int = 20,
+            top_k_pct: float = 0.2) -> dict:
+    """按策略+日期做**该日截面**选股(回测选股快照). 供研究面板'选股历史某日'操作.
+
+    strategy: 策略名(见 STRATEGY_LABELS / _strategy_contracts). date: 'YYYY-MM-DD',
+              默认 as_of(最近宽覆盖截面日). 该日因子z-score重算 → composite → top-K,
+              返回 {date, strategy, codes:[{code,name,price,chg,comp}], pool_size}.
+    口径: 平台因子z于 date 截面(同 forward_paper_run 的单日快照), 宽池, 无前视.
+    """
+    if strategy not in STRATEGY_LABELS:
+        return {"error": f"未知策略 {strategy}"}
+    frames = _load_frames()
+    if not frames:
+        return {"error": "无frames"}
+    eng = FactorResearchEngine()
+    close = eng._panel(frames, "close")
+    as_of = _as_of(close, len(frames))
+    if date is None:
+        date = str(pd.Timestamp(as_of).date())
+    try:
+        target = pd.Timestamp(date)
+    except Exception:
+        return {"error": f"日期无效 {date}"}
+    # 快照到<=该日最近交易日(该日无覆盖→取前一日, 避免 None)
+    valid = close.index[close.index <= target]
+    if len(valid) == 0:
+        return {"error": f"{date} 早于数据起点"}
+    d = valid[-1]
+    contract = _strategy_contracts(hp, top_k_pct=top_k_pct)[strategy]
+    # w_value: 该日真实三路信号(与回测一致): RebalancePlanner.plan_at 负责
+    planner = RebalancePlanner(contract)
+    plan = planner.plan_at(d, frames, holdings={}, cash=contract.initial_balance)
+    score = plan.get("score")
+    top = plan.get("top", [])
+    codes = []
+    if score is not None:
+        s = score.loc[~score.index.isin(INDEX_CODES)]
+        # 该日截面价为 close.loc[d] (不是最新bar), chg 用 d 对前一交易日 —— 诚实反映'该日选股'的价格
+        drow = close.loc[d] if d in close.index else None
+        d_prev = None
+        if d in close.index:
+            pi = close.index.get_loc(d)
+            if pi > 0:
+                d_prev = close.index[pi - 1]
+        for c in top:
+            if c not in s.index:
+                continue
+            px = None
+            if drow is not None:
+                v = drow.get(c)
+                if v is not None and not pd.isna(v):
+                    px = float(v)
+            if px is None:
+                last = frames[c]
+                px = float(last["close"].iloc[-1])
+            chg = 0.0
+            if d_prev is not None:
+                vp = close.loc[d_prev].get(c)
+                if vp is not None and not pd.isna(vp) and float(vp) > 0:
+                    chg = (px / float(vp) - 1.0) * 100.0
+            codes.append({"code": c, "name": "", "price": round(px, 2),
+                          "chg": round(chg, 2), "comp": round(float(score[c]), 3)})
+    return {"date": str(pd.Timestamp(d).date()), "strategy": strategy,
+            "codes": codes, "pool_size": len(frames), "top_k_pct": top_k_pct}
+
+
 def build_paper_only(hp: int = 20, top_k_pct: float = 0.2,
                      fwd_start: str = "2024-01-01", progress=None) -> dict:
     """仅组合纸面盘(不跑信号/研究/排名). 返回 paper字典 + as_of(供交易伴侣/AI工具)."""
