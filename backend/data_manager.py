@@ -318,6 +318,105 @@ def _log_update(update_date, stocks_total, stocks_new, rows_added, status="ok", 
         pass
 
 
+def _last_db_date(conn):
+    row = conn.execute("SELECT MAX(date) FROM kline_daily").fetchone()
+    return str(row[0]) if row and row[0] else None
+
+
+def update_codes(codes, end_date: str = None, catch_up_days: int = None, workers: int = 15,
+                 progress=None, timeout_each: float = 20.0) -> dict:
+    """定向增量更新一批代码(如量化池/选股池)的 K 线。
+
+    - 逐 code 并行拉取(接 akshare_source.ak_fetch_kline, 内层有重试+超时+3源回退)
+    - catch_up_days: 抓取窗口(bar数). None → 按 DB 最新日期到今天的缺口自动算, 至少 60,
+      保证 REVERSAL/VOLATILITY 因子(需前 20 根)在该截面有连续历史, 不退化/断历史.
+    - 超时兜底: 某 code 挂起超时 → 记 skipped, 不阻塞整批
+    - end_date 默认为最近交易日(昨日); 返回 {updated, skipped, rows_added, distribution}
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as _TE
+    if end_date is None:
+        end_date = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
+    # 自动算抓取窗口: 从 DB 最新日到 end_date 的日历缺口 + warmup 缓冲
+    if catch_up_days is None:
+        try:
+            _c = get_kline_db()
+            last = _last_db_date(_c)
+            _c.close()
+            if last:
+                gap = (datetime.strptime(str(end_date), "%Y%m%d") - datetime.strptime(str(last), "%Y%m%d")).days
+                catch_up_days = max(60, int(gap * 1.6) + 40)   # 1.6 倍日历日≈交易日, +40 warmup
+            else:
+                catch_up_days = 90
+        except Exception:
+            catch_up_days = 90
+    codes = list(codes)
+    total = len(codes)
+    updated, skipped, errors, rows_added = 0, 0, 0, 0
+    dist = {}
+    t0 = time.time()
+
+    def _fetch(c):
+        rows = ak_fetch_kline(c, days=catch_up_days)
+        # 保留全部抓取行(已限定 catch_up_days 窗口, INSERT OR REPLACE 去重) ——
+        # 不能只留 end_date: REVERSAL/VOLATILITY 因子需要该日前 20 根历史, 只留当日会断历史
+        return rows, c
+
+    batch_rows = []
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futs = {pool.submit(_fetch, c): c for c in codes}
+        for f in as_completed(futs):
+            c = futs[f]
+            try:
+                rows, _ = f.result(timeout=timeout_each)
+            except _TE:
+                skipped += 1
+                errors += 1
+                if progress:
+                    progress(f"{c} 超时(>{timeout_each:.0f}s) 跳过", c)
+                continue
+            except Exception as e:
+                skipped += 1
+                errors += 1
+                if progress:
+                    progress(f"{c} 拉取失败 {str(e)[:30]}", c)
+                continue
+            if rows:
+                updated += 1
+                batch_rows.extend(rows)
+                rows_added += len(rows)
+                dist[str(rows[-1][1])] = dist.get(str(rows[-1][1]), 0) + 1
+            else:
+                errors += 1
+            done = updated + skipped
+            if progress and (done % 50 == 0 or done == total):
+                progress(f"[{done}/{total}] +{rows_added} 行", None)
+
+    if batch_rows:
+        conn = get_kline_db()
+        inserted, write_skipped = _bulk_insert_kline(conn, batch_rows, replace=True)
+        try:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")   # app 可能持有 DB, 失败不致命
+        except Exception:
+            pass
+        conn.commit()
+        conn.close()
+        rows_added = inserted
+    else:
+        insert_skipped = 0
+
+    return {"updated": updated, "skipped": skipped, "errors": errors,
+            "rows_added": rows_added, "total": total,
+            "elapsed": time.time() - t0, "distribution": dist}
+
+
+def update_pool(pool=None, end_date: str = None, progress=None, workers: int = 15):
+    """刷新量化池(默认 build_wide_pool 的 287 只)到最新 —— as_of 前进的关键。"""
+    if pool is None:
+        from backend.strategy.factor_selector import build_wide_pool
+        pool = build_wide_pool()
+    return update_codes(pool, end_date=end_date, progress=progress, workers=workers)
+
+
 # ════════════════════════════════════════════════════════
 #  历史数据补全
 # ════════════════════════════════════════════════════════

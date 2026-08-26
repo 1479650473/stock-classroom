@@ -63,8 +63,14 @@ def _run_one(stage):
         if stage == 'data':
             from data_manager import daily_update
             _set_progress(stage, 'running', '日更 K线/基本面...', 0.1)
-            n = daily_update(catch_up_days=10)
-            detail = f'daily_update 返回 {n}'
+            # 全市场日更(慢, ~20min); 优先用量化池定向刷新(快, ~100s, 驱动 as_of)
+            try:
+                from data_manager import update_pool
+                rp = update_pool(workers=15, progress=lambda m, p=None: _set_progress(stage, 'running', m, None))
+                detail = f'量化池刷新 {rp.get("updated")} 只 +{rp.get("rows_added")} 行'
+            except Exception as e:
+                n = daily_update(catch_up_days=10)
+                detail = f'daily_update 返回 {n} ({str(e)[:40]})'
         elif stage == 'research':
             from frontend.plugins.research.worker import study_factors
             r = study_factors('2022-01-01', progress=cb)

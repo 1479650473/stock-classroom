@@ -56,12 +56,27 @@ def _load_frames():
     return frames
 
 
-def _as_of(close: pd.DataFrame, n_pool: int):
-    """最近'宽覆盖'截面日(≥40%池有效), 避免并集最后日=指数新日导致截面塌到1只."""
+def _as_of(close: pd.DataFrame, n_pool: int, bp: pd.DataFrame = None):
+    """最近'宽覆盖'截面日(≥40%池有效), 避免并集最后日=指数新日导致截面塌到1只.
+
+    bp(基本面BP panel) 传入时, 额外要求该日 BP 也足够覆盖(≥30%池) —— 保证 as_of 是
+    kline+价值因子都齐备的日期(基本面点时间有1天披露滞后, 不应让 value 因子在 as_of 消失)。
+    """
     valid = close.notna().sum(axis=1)
     cutoff = max(30, int(n_pool * 0.4))
     wide = valid[valid >= cutoff]
-    return wide.index[-1] if len(wide) else close.index[-1]
+    if len(wide) == 0:
+        return close.index[-1]
+    if bp is not None and len(bp):
+        bvalid = bp.notna().sum(axis=1)
+        bcut = max(20, int(n_pool * 0.3))
+        bp_ok = bvalid[bvalid >= bcut]
+        if len(bp_ok):
+            cap = bp_ok.index[-1]
+            wide = wide[wide.index <= cap]
+            if len(wide):
+                return wide.index[-1]
+    return wide.index[-1]
 
 
 # ── ② 价值因子研究(IC/ICIR) ─────────────────────────────────────
@@ -188,7 +203,8 @@ def pick_at(strategy: str = "D多因子", date: str = None, hp: int = 20,
         return {"error": "无frames"}
     eng = FactorResearchEngine()
     close = eng._panel(frames, "close")
-    as_of = _as_of(close, len(frames))
+    bp = eng._factor_panel(frames, "BP", close)
+    as_of = _as_of(close, len(frames), bp)
     if date is None:
         date = str(pd.Timestamp(as_of).date())
     try:
@@ -247,7 +263,8 @@ def build_paper_only(hp: int = 20, top_k_pct: float = 0.2,
     now = datetime.now().strftime("%Y-%m-%d")
     eng = FactorResearchEngine()
     close = eng._panel(frames, "close")
-    as_of = _as_of(close, len(frames))
+    bp = eng._factor_panel(frames, "BP", close)
+    as_of = _as_of(close, len(frames), bp)
     contract = adaptive_config_for_hp(hp, top_k_pct=top_k_pct)
     paper = {}
     try:
@@ -386,7 +403,8 @@ def run_paper_multi(hp=20, top_k_pct=0.2, fwd_start="2024-01-01",
     now = datetime.now().strftime("%Y-%m-%d")
     eng = FactorResearchEngine()
     close = eng._panel(frames, "close")
-    as_of = _as_of(close, len(frames))
+    bp = eng._factor_panel(frames, "BP", close)
+    as_of = _as_of(close, len(frames), bp)
     fwd_end = str(pd.Timestamp(as_of).date())
     contracts = strategies if strategies is not None else _strategy_contracts(hp, top_k_pct)
     names = list(contracts)
@@ -489,7 +507,8 @@ def build_snapshot(hp: int = 20, use_tilt: bool = True, top_k_pct: float = 0.2,
     # ② 价值因子研究
     eng = FactorResearchEngine()
     close = eng._panel(frames, "close")
-    as_of = _as_of(close, len(codes))
+    bp = eng._factor_panel(frames, "BP", close)
+    as_of = _as_of(close, len(codes), bp)
     snap["as_of"] = str(pd.Timestamp(as_of).date())
 
     def _icir(fid):

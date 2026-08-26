@@ -101,6 +101,11 @@ class AgentOpsPanel(QWidget):
         self._auto_time.setTime(QTime(15, 0))
         self._auto_time.timeChanged.connect(self._persist_sched)
         sched.addWidget(self._auto_time)
+        self._refresh_cb = QCheckBox("先刷新数据")
+        self._refresh_cb.setStyleSheet(f"color:{PAL['text']};font-size:{fs(12)};background:transparent;")
+        self._refresh_cb.setToolTip("开跑前先把量化池 K线 更新到最新(数据截至日前进)")
+        self._refresh_cb.toggled.connect(self._on_sched_toggle)
+        sched.addWidget(self._refresh_cb)
         self._sched_status = QLabel("")
         self._sched_status.setStyleSheet(value_ss(size=9) + f"color:{PAL['faint']};")
         sched.addWidget(self._sched_status)
@@ -246,7 +251,8 @@ class AgentOpsPanel(QWidget):
         self._state.setText("运行中…")
         self._state.setStyleSheet(f"color:{PAL['gold']};font-size:{fs(12)};background:transparent;")
         self._btn_run.setEnabled(False); self._btn_stop.setEnabled(True)
-        w = AgentOpsWorker(rounds=self._rounds.value(), use_llm=use_llm, account_id=aid, mode=mode)
+        w = AgentOpsWorker(rounds=self._rounds.value(), use_llm=use_llm, account_id=aid,
+                           mode=mode, refresh_pool=self._refresh_cb.isChecked())
         w.line.connect(self._on_line); w.done.connect(self._on_done); w.error.connect(self._on_error)
         self._worker = w
         self._append_log("═══ AI 操盘启动 ═══", gold=True)
@@ -333,6 +339,8 @@ class AgentOpsPanel(QWidget):
             ag = d.get("agentops", {}) or {}
             if ag.get("auto_enabled"):
                 self._auto_cb.setChecked(True)
+            if ag.get("refresh_pool"):
+                self._refresh_cb.setChecked(True)
             t = ag.get("auto_time", "15:00")
             try:
                 hh, mm = t.split(":"); self._auto_time.setTime(QTime(int(hh), int(mm)))
@@ -350,6 +358,7 @@ class AgentOpsPanel(QWidget):
             d["agentops"] = {
                 "auto_enabled": self._auto_cb.isChecked(),
                 "auto_time": self._auto_time.time().toString("HH:mm"),
+                "refresh_pool": self._refresh_cb.isChecked(),
             }
             with open(self._sched_path(), 'w', encoding='utf-8') as f:
                 json.dump(d, f, ensure_ascii=False, indent=2)

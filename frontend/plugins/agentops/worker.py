@@ -13,13 +13,15 @@ class AgentOpsWorker(QThread):
     done = pyqtSignal(dict)                      # {result_summary, account_summary, positions, paper}
     error = pyqtSignal(str)
 
-    def __init__(self, rounds=3, use_llm=True, account_id=None, universe_code=None, mode='stock'):
+    def __init__(self, rounds=3, use_llm=True, account_id=None, universe_code=None, mode='stock',
+                 refresh_pool=False):
         super().__init__()
         self._rounds = int(rounds)
         self._use_llm = bool(use_llm)
         self._account_id = account_id
         self._universe_code = universe_code
         self._mode = mode                        # 'stock'=单标的闭环; 'portfolio'=组合重平衡
+        self._refresh_pool = bool(refresh_pool)  # 开跑前先刷新量化池(as_of 前进)
         self._stopped = False
 
     def stop(self):
@@ -43,6 +45,18 @@ class AgentOpsWorker(QThread):
             acc = eng.get_account(ai)
             aname = acc['name'] if acc else str(ai)
             self.line.emit(f"托管账户 → #{ai} ({aname})")
+
+            # 开跑前刷新量化池(每日数据时效): 把 287 宽覆盖池更新到最新, as_of 前进
+            if self._refresh_pool:
+                self.line.emit("刷新量化池 K线(285只, ~100s)...", gold=False)
+                try:
+                    from data_manager import update_pool
+                    r = update_pool(workers=15,
+                                    progress=lambda m, c=None: self._safe_line(f"  {m}"))
+                    self.line.emit(f"量化池刷新完成: {r.get('updated')} 只更新, +{r.get('rows_added')} 行, "
+                                   f"最新 {max(r.get('distribution', {}).keys()) if r.get('distribution') else '?'}")
+                except Exception as e:
+                    self.line.emit(f"量化池刷新失败(继续): {str(e)[:60]}")
 
             loop = rl.build_operate_loop(use_llm=self._use_llm)
 

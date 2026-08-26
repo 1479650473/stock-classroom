@@ -144,37 +144,104 @@ AKSHARE_API_DICT = {
 # ══════════════════════════════════════════════════════════════
 
 @retry_with_backoff(max_attempts=3, retry_on_empty=True, on_retry=lambda a, e: log.warning("ak_fetch_kline 第%s次重试: %s", a, str(e)[:60]))
-def ak_fetch_kline(code: str, days: int = 10):
+def ak_fetch_kline(code: str, days: int = 10, timeout: float = 20.0):
     """获取个股日K线（前复权）。code 经 normalize_a_code 规范化成裸 6 位存储码。
+
+    来源韧性(参考 daily_stock_analysis): 主用新浪 stock_zh_a_daily, 失败/超时回退
+    腾讯 stock_zh_a_hist_tx/东财 stock_zh_a_hist, 每次调用绑定硬超时, 防挂起返回 []。
     Returns: [(stored_code, date_yyyymmdd, open, high, low, close, volume, amount, hsl)]
     """
     stored = normalize_a_code(code, "stock")       # 规范存储码(裸6位)
     symbol = ak_symbol(code, "stock")              # akshare 用 sh/sz 前缀
-    akshare_wait()
-    try:
+    rows = _fetch_kline_with_fallback(symbol, days=days, timeout=timeout)
+    return _normalize_kline_rows(stored, rows, days=days)
+
+
+def _run_with_timeout(fn, timeout: float):
+    """把 fn() 放进子线程跑, 超时终止(akshare 库内挂起无法真正 kill, 靠超时返回 None)。"""
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as _TE
+    with ThreadPoolExecutor(max_workers=1) as ex:
+        fut = ex.submit(fn)
+        try:
+            return fut.result(timeout=timeout)
+        except _TE:
+            return None
+
+
+def _fetch_kline_with_fallback(symbol: str, days: int, timeout: float):
+    """依次尝试 新浪/腾讯/东财 三个 akshare 源, 每个挂在独立线程 + 硬超时。"""
+    import akshare as ak
+
+    def _sina():
+        akshare_wait()
         df = ak.stock_zh_a_daily(symbol=symbol, adjust="qfq")
-        if df is None or df.empty:
-            return []
-        df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y%m%d")
-        df = df.tail(days)
-        rows = []
-        for _, bar in df.iterrows():
-            amount_val = float(bar.get("amount", 0)) if "amount" in df.columns else round(float(bar["close"]) * float(bar["volume"]), 2)
-            hsl = float(bar.get("turnover", 0)) * 100
-            rows.append((
-                stored,
-                bar["date"],
-                float(bar["open"]),
-                float(bar["high"]),
-                float(bar["low"]),
-                float(bar["close"]),
-                int(float(bar["volume"])),
-                amount_val,
-                hsl,
-            ))
-        return rows
-    except Exception:
+        return df
+
+    def _tx():
+        akshare_wait()
+        # 腾讯需要日期窗口(取近 enough 天)
+        from datetime import datetime, timedelta
+        start = (datetime.now() - timedelta(days=days * 2 + 30)).strftime("%Y%m%d")
+        end = datetime.now().strftime("%Y%m%d")
+        df = ak.stock_zh_a_hist_tx(symbol=symbol, start_date=start, end_date=end, adjust="qfq")
+        return df
+
+    def _em():
+        akshare_wait()
+        from datetime import datetime, timedelta
+        start = (datetime.now() - timedelta(days=days * 2 + 30)).strftime("%Y%m%d")
+        end = datetime.now().strftime("%Y%m%d")
+        df = ak.stock_zh_a_hist(symbol=symbol.replace("sh", "").replace("sz", ""),
+                                period="daily", start_date=start, end_date=end, adjust="qfq")
+        return df
+
+    df = None
+    for name, fn in (("sina", _sina), ("tx", _tx), ("em", _em)):
+        try:
+            df = _run_with_timeout(fn, timeout)
+        except Exception as e:
+            log.warning("ak_fetch_kline[%s] %s 异常: %s", name, symbol, str(e)[:50])
+            df = None
+        if df is not None and not df.empty:
+            return df
+    return None
+
+
+def _normalize_kline_rows(stored: str, df, days: int = 10):
+    """把任意源的 DataFrame 归一化成 (stored,date,open,high,low,close,volume,amount,hsl)。"""
+    if df is None or df.empty:
         return []
+    import pandas as pd
+    d = df.copy()
+    # 统一日期列
+    if "date" in d.columns:
+        d["date"] = pd.to_datetime(d["date"]).dt.strftime("%Y%m%d")
+    elif "日期" in d.columns:
+        d["date"] = pd.to_datetime(d["日期"]).dt.strftime("%Y%m%d")
+    else:
+        return []
+    # 列名统一(东财/新浪/腾讯不同): open/high/low/close/volume/amount
+    colmap = {"开盘": "open", "open": "open", "最高": "high", "high": "high",
+              "最低": "low", "low": "low", "收盘": "close", "close": "close",
+              "成交量": "volume", "volume": "volume", "成交额": "amount", "amount": "amount",
+              "换手率": "turnover", "turnover": "turnover"}
+    d = d.rename(columns={k: v for k, v in colmap.items() if k in d.columns})
+    rows = []
+    for _, bar in d.tail(days).iterrows():
+        try:
+            close = float(bar["close"])
+            vol = float(bar.get("volume", 0) or 0)
+            amt = float(bar.get("amount", 0) or 0)
+            if not amt and vol:
+                amt = close * vol
+            turn = float(bar.get("turnover", 0) or 0)
+            if turn and turn <= 1.0:   # 换手率可能为小数, 放大到 %
+                turn = turn * 100
+            rows.append((stored, str(bar["date"]), float(bar["open"]), float(bar["high"]),
+                         float(bar["low"]), close, int(vol), amt, turn))
+        except Exception:
+            continue
+    return rows
 
 
 def _normalize_index_code(code: str) -> str:
