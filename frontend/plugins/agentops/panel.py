@@ -64,6 +64,12 @@ class AgentOpsPanel(QWidget):
         self._use_llm.addItems(["LLM 真实决策", "stub 确定性验证"])
         self._use_llm.setStyleSheet(self._combo_ss())
         ctl.addWidget(self._use_llm)
+        ctl.addWidget(QLabel("模式"))
+        self._mode = QComboBox(); self._mode.setFixedHeight(dp(28)); self._mode.setMinimumWidth(dp(120))
+        self._mode.addItem("单标的闭环", "stock")
+        self._mode.addItem("组合重平衡", "portfolio")
+        self._mode.setStyleSheet(self._combo_ss())
+        ctl.addWidget(self._mode)
         ctl.addStretch()
         self._btn_run = QPushButton("▶ 启动 AI 操盘")
         self._btn_run.setObjectName("flowBtnAll")
@@ -235,11 +241,12 @@ class AgentOpsPanel(QWidget):
             return
         aid = self._acct.itemData(self._acct.currentIndex())
         use_llm = (self._use_llm.currentIndex() == 0)
+        mode = self._mode.itemData(self._mode.currentIndex()) or "stock"
         self._log.clear()
         self._state.setText("运行中…")
         self._state.setStyleSheet(f"color:{PAL['gold']};font-size:{fs(12)};background:transparent;")
         self._btn_run.setEnabled(False); self._btn_stop.setEnabled(True)
-        w = AgentOpsWorker(rounds=self._rounds.value(), use_llm=use_llm, account_id=aid)
+        w = AgentOpsWorker(rounds=self._rounds.value(), use_llm=use_llm, account_id=aid, mode=mode)
         w.line.connect(self._on_line); w.done.connect(self._on_done); w.error.connect(self._on_error)
         self._worker = w
         self._append_log("═══ AI 操盘启动 ═══", gold=True)
@@ -279,20 +286,29 @@ class AgentOpsPanel(QWidget):
                 self._sum_labels['pnl'].setStyleSheet(hero_ss(size=15) +
                     f";color:{PAL['up'] if pnl >= 0 else PAL['down']}")
                 self._fill_positions(TradeEngine().get_positions(aid))
-        # 汇总
-        best = data.get("best_round")
+        # 汇总(按模式)
+        mode = data.get("mode", "stock")
         paper = data.get("paper") or {}
-        self._append_log("─── 择优结果 ───", gold=True)
-        if best is not None:
-            self._append_log(f"最优策略: 第{best}轮 · "
-                             f"收益 {data.get('best_return', 0):+.2f}% · "
-                             f"回撤 {data.get('best_mdd', 0):.1f}% · "
-                             f"夏普 {data.get('best_sharpe', 0):.2f}")
-        if paper.get("signal") == "long":
-            self._append_log(f"模拟买入成交: {paper.get('code')} {paper.get('qty')}股 "
-                             f"@{paper.get('filled_price')} (账户#{paper.get('account_id')})", gold=True)
+        if mode == "portfolio":
+            self._append_log("─── 组合重平衡结果 ───", gold=True)
+            self._append_log(f"调仓日 {str(data.get('as_of', ''))[:10]} · "
+                             f"三路信号 {data.get('tilt_label') or 'neutral'} · "
+                             f"价值层权重 ×{data.get('w_value')}")
+            self._append_log(f"调仓 {data.get('n_trades')} 笔 · 成交 {data.get('filled')} 笔", gold=True)
+            self._append_log(f"持仓已更新为多因子目标组合(见下方持仓表)")
         else:
-            self._append_log(f"本次未下单: {paper.get('note', '')}")
+            best = data.get("best_round")
+            self._append_log("─── 择优结果 ───", gold=True)
+            if best is not None:
+                self._append_log(f"最优策略: 第{best}轮 · "
+                                 f"收益 {data.get('best_return', 0):+.2f}% · "
+                                 f"回撤 {data.get('best_mdd', 0):.1f}% · "
+                                 f"夏普 {data.get('best_sharpe', 0):.2f}")
+            if paper.get("signal") == "long":
+                self._append_log(f"模拟买入成交: {paper.get('code')} {paper.get('qty')}股 "
+                                 f"@{paper.get('filled_price')} (账户#{paper.get('account_id')})", gold=True)
+            else:
+                self._append_log(f"本次未下单: {paper.get('note', '')}")
 
     def _on_error(self, msg):
         self._state.setText("出错")

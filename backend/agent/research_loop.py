@@ -447,7 +447,7 @@ class ResearchLoop:
         return result
 
     def portfolio_paper(self, gw=None, pool=None, contract=None, account_id=None,
-                        as_of=None, max_pool: int = 300) -> dict:
+                        as_of=None, max_pool: int = 300, progress: Optional[Callable] = None) -> dict:
         """组合级 paper 盘 —— 把组合重平衡选股器(接 portfolio_value_alloc)挂进主闭环。
 
         与 run() 的"单票 paper"(一次一票)不同: 这里在账户**当前现金/持仓**上, 用 RebalancePlanner
@@ -455,6 +455,12 @@ class ResearchLoop:
         调仓交易, 逐笔走 gw.paper_order 真实下到 paper 账户。即"研究→组合纸面"的一步。
         幂等/保守: 不新建账户(用 account_id 或活跃账户), 不强制买入空信号, 由目标组合决定。
         """
+        def _emit(msg):
+            if progress:
+                try:
+                    progress(msg)
+                except Exception:
+                    pass
         from ..strategy.portfolio_rebalance import SelectionContract, RebalancePlanner, _xs_z
         from ..strategy.factor_data import load_universe_frames
         from ..strategy.factor_research import FactorResearchEngine
@@ -472,7 +478,9 @@ class ResearchLoop:
         frames = load_universe_frames(pool, start="2023-06-01", end=end,
                                       with_fundamentals=True, fetch_missing=False)
         if not frames:
+            _emit("组合池无数据 → 终止")
             return {"error": "无池数据", "code": "empty_pool"}
+        _emit(f"组合池加载 {len(pool)} 只 ({max_pool} 上限)")
 
         # ② 面板 + 三路信号源
         eng = FactorResearchEngine()
@@ -543,6 +551,7 @@ class ResearchLoop:
         if acc:
             for p in engine.get_positions(account_id):
                 holdings[p["code"]] = int(p["qty"])
+        _emit(f"账户#{account_id} 现金 {cash:,.0f} · 现持仓 {len(holdings)} 只")
 
         # ④ 重平衡目标(选一个基本面覆盖足够的最新日期, 避免落在最新日覆盖稀薄→退化单只)
         # 找一个 BP 截面有效数 >= max(30, 池10%) 的最近日期
@@ -557,17 +566,26 @@ class ResearchLoop:
             as_of = frames[next(iter(frames))].index[-1]
         planner = RebalancePlanner(contract, signal_fn=signal_fn)
         plan = planner.plan_at(pd.Timestamp(as_of), frames, holdings, cash)
+        wv = plan.get("w_value")
+        tilt = plan.get("tilt") or {}
+        _emit(f"重平衡日 {str(pd.Timestamp(as_of).date())} · 三路信号 {tilt.get('tilt_label','')} · "
+              f"价值层权重 ×{wv} · 目标 {len(plan.get('target', {}))} 只 · 调仓 {len(plan.get('trades', []))} 笔")
 
         # ⑤ 逐笔下 paper 单
         orders = []
-        for t in plan.get("trades", []):
+        for i, t in enumerate(plan.get("trades", [])):
             try:
                 o = gw.paper_order({"code": t["code"], "side": t["side"], "order_type": "market",
                                     "qty": t["qty"], "current_price": t["price"],
                                     "account_id": account_id})
+                ok = o.get("status") if o else None
+                _emit(f"  [{i+1}/{len(plan.get('trades', []))}] {t['side'].upper()} {t['code']} "
+                      f"{t['qty']} 股 @ {t['price']:.2f} → {ok}")
                 orders.append({"trade": t, "order": o})
             except Exception as ex:
+                _emit(f"  [{i+1}/{len(plan.get('trades', []))}] {t['code']} 下单失败: {str(ex)[:50]}")
                 orders.append({"trade": t, "error": f"{type(ex).__name__}: {str(ex)[:60]}"})
+        _emit(f"组合重平衡完成: {len(orders)} 笔调仓已提交")
         return {"account_id": account_id, "as_of": str(plan["date"]), "cash": cash,
                 "holdings": holdings, "tilt": plan.get("tilt"), "w_value": plan.get("w_value"),
                 "target": plan.get("target"), "n_trades": len(plan.get("trades", [])),

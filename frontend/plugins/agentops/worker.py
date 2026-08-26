@@ -13,12 +13,13 @@ class AgentOpsWorker(QThread):
     done = pyqtSignal(dict)                      # {result_summary, account_summary, positions, paper}
     error = pyqtSignal(str)
 
-    def __init__(self, rounds=3, use_llm=True, account_id=None, universe_code=None):
+    def __init__(self, rounds=3, use_llm=True, account_id=None, universe_code=None, mode='stock'):
         super().__init__()
         self._rounds = int(rounds)
         self._use_llm = bool(use_llm)
         self._account_id = account_id
         self._universe_code = universe_code
+        self._mode = mode                        # 'stock'=单标的闭环; 'portfolio'=组合重平衡
         self._stopped = False
 
     def stop(self):
@@ -44,8 +45,36 @@ class AgentOpsWorker(QThread):
             self.line.emit(f"托管账户 → #{ai} ({aname})")
 
             loop = rl.build_operate_loop(use_llm=self._use_llm)
-            self.line.emit(f"后端 → {'LLM(模型真正决策)' if self._use_llm else 'stub(确定性验证)'} · "
-                           f"{self._rounds} 轮研究闭环")
+
+            if self._mode == 'portfolio':
+                # 组合级: 读当前持仓 → 多因子目标组合 → 批量调仓
+                self.line.emit(f"模式 → 组合重平衡 · 多因子(价值+反转-波动)+价值tilt")
+                self.line.emit(f"后端 → {'LLM' if self._use_llm else 'stub'} (组合级为规则因子, 与LLM无关)")
+                from backend.strategy.portfolio_rebalance import SelectionContract
+                contract = SelectionContract(top_k_pct=0.2, rebalance_bars=20, initial_balance=100000.0)
+                res = loop.portfolio_paper(gw=loop.gw, contract=contract, account_id=ai,
+                                           max_pool=200, progress=lambda m: self._safe_line(m))
+                if self._stopped:
+                    return
+                orders = res.get("orders", [])
+                filled = sum(1 for o in orders if o.get("order") and o["order"].get("status") == "filled")
+                self.done.emit({
+                    "mode": "portfolio",
+                    "as_of": res.get("as_of"),
+                    "n_trades": res.get("n_trades"),
+                    "filled": filled,
+                    "w_value": res.get("w_value"),
+                    "tilt_label": (res.get("tilt") or {}).get("tilt_label"),
+                    "paper": {"signal": "portfolio", "note": f"{res.get('n_trades')} 笔调仓成交 {filled}"},
+                    "account_summary": eng.get_summary(ai),
+                    "positions": self._positions(eng, ai),
+                    "backend": "portfolio",
+                })
+                return
+
+            # 单标的闭环(默认)
+            self.line.emit(f"模式 → 单标的闭环 · {self._rounds} 轮研究")
+            self.line.emit(f"后端 → {'LLM(模型真正决策)' if self._use_llm else 'stub(确定性验证)'}")
 
             def _progress(msg):
                 if not self._stopped:
@@ -55,17 +84,10 @@ class AgentOpsWorker(QThread):
                            progress=_progress)
             if self._stopped:
                 return
-
-            # 汇总结果
             paper = res.paper or {}
-            account = eng.get_summary(ai) or {}
-            positions = [{
-                "code": p['code'], "name": p['name'], "qty": p['qty'],
-                "cost": round(p['cost_price'], 2), "price": round(p['current_price'], 2),
-                "mv": round(p['market_value'], 2), "pnl": round(p['float_pnl'], 2),
-            } for p in eng.get_positions(ai)]
             best = res.best
             self.done.emit({
+                "mode": "stock",
                 "universe": res.universe.get('code') if res.universe else None,
                 "best_round": best.round_id if best else None,
                 "best_score": best.score if best else None,
@@ -74,9 +96,20 @@ class AgentOpsWorker(QThread):
                 "best_sharpe": (best.metrics.get('sharpe', 0) if best else 0),
                 "best_contract": best.contract if best else None,
                 "paper": paper,
-                "account_summary": account,
-                "positions": positions,
+                "account_summary": eng.get_summary(ai),
+                "positions": self._positions(eng, ai),
                 "backend": loop.backend.name,
             })
         except Exception as e:
             self.error.emit(str(e))
+
+    def _safe_line(self, msg):
+        if not self._stopped:
+            self.line.emit(msg)
+
+    def _positions(self, eng, ai):
+        return [{
+            "code": p['code'], "name": p['name'], "qty": p['qty'],
+            "cost": round(p['cost_price'], 2), "price": round(p['current_price'], 2),
+            "mv": round(p['market_value'], 2), "pnl": round(p['float_pnl'], 2),
+        } for p in eng.get_positions(ai)]
