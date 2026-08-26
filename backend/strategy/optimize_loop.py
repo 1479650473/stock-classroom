@@ -187,8 +187,18 @@ def run_optimize_loop(use_llm: bool = True, hp: int = 20, account_id: Optional[i
     eng = FactorResearchEngine()
     close = eng._panel(frames, "close")
     import pandas as pd
-    from backend.strategy.portfolio_rebalance import forward_paper_run
-    nc = proposal["contract"]
+    from backend.strategy.portfolio_rebalance import forward_paper_run, SelectionContract
+    # 统一构造契约: LLM 给 factors/base_weights 参数; Stub 直接给 contract 对象
+    if "contract" in proposal:
+        nc = proposal["contract"]
+    else:
+        nc = SelectionContract(
+            factors=proposal.get("factors", ["BP", "REVERSAL_20", "VOLATILITY_20"]),
+            base_weights=proposal.get("base_weights", {"BP": 1.0, "REVERSAL_20": 1.0, "VOLATILITY_20": -1.0}),
+            top_k_pct=float(proposal.get("top_k_pct", 0.2)),
+            rebalance_bars=int(proposal.get("rebalance_bars", 20)),
+            use_tilt=bool(proposal.get("use_tilt", True)),
+            initial_balance=1_000_000.0)
     fwd_end = str(pd.Timestamp(close.index[-1]).date())
     fw = forward_paper_run(frames, nc, fwd_start, fwd_end, initial_balance=1_000_000.0)
     m = compute_full_metrics(fw["nav_n"], freq_bars=nc.rebalance_bars)
