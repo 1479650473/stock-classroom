@@ -112,7 +112,13 @@ class MarketPanel(QWidget):
         for btn in [self._btn_ind, self._btn_cpt]:
             btn.setFixedHeight(dp(28))
             btn.setCursor(Qt.PointingHandCursor)
-            btn.setObjectName("indBtn")
+            # 内联选中样式(父级 setStyleSheet 破坏全局 indBtn 背景级联, 须内联)
+            btn.setStyleSheet(
+                f"QPushButton{{background:{PAL['c_mid']};color:{PAL['sub']};"
+                f"border:1px solid {PAL['border_lo']};border-top:1px solid {PAL['border_hi']};"
+                f"border-radius:{dps(6)};font-size:{fs(tr(12))};font-weight:600;padding:{dps(3)} {dps(12)};}}"
+                f"QPushButton:hover{{color:{PAL['text']};border-top-color:{PAL['gold']};}}"
+                f"QPushButton:checked{{background:{PAL['gold']};color:#14110B;border-color:{PAL['gold']};}}")
             tabs.addWidget(btn)
         lo.addLayout(tabs)
 

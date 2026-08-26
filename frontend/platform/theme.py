@@ -255,26 +255,25 @@ def qss_btn_accent() -> str:
         return _graphite_btn_accent()
     if _current_key == "ivory":
         return _ivory_btn_accent()
-    a, ah = _t("accent_grad"), _t("accent_grad_hover")
-    return (f"QPushButton{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-            f"stop:0 {a[0]},stop:1 {a[1]});color:{_t('on_accent')};border:none;"
+    # default: warm gold primary button (emphasis color), not the theme accent
+    gold, goldh = _t("gold"), _t("gold_hover")
+    return (f"QPushButton{{background:{goldh};color:#14110B;border:none;"
             f"border-radius:{dps(_t('radius_btn'))};padding:{dps(5)} {dps(14)};"
             f"font-size:{fs(12)};font-weight:600;}}"
-            f"QPushButton:hover{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-            f"stop:0 {ah[0]},stop:1 {ah[1]});}}"
-            f"QPushButton:pressed{{background:{_t('accent')};}}"
+            f"QPushButton:hover{{background:{goldh};}}"
+            f"QPushButton:pressed{{background:{gold};}}"
             f"QPushButton:disabled{{background:{_t('overlay')};color:{_t('faint')};}}")
 
 
 def qss_btn_accent_outline() -> str:
     if _current_key == "obsidian":
         return _obsidian_btn_accent_outline()
-    c = _t("accent")
-    return (f"QPushButton{{background:{_t('accent_dim')};color:{c};"
-            f"border:1px solid {c};border-top:1px solid {_t('accent_hover')};"
+    c = _t("gold")
+    return (f"QPushButton{{background:transparent;color:{c};"
+            f"border:1px solid {c};border-top:1px solid {_t('gold_hover')};"
             f"border-radius:{dps(_t('radius_btn'))};padding:{dps(4)} {dps(12)};"
             f"font-size:{fs(12)};font-weight:600;}}"
-            f"QPushButton:hover{{background:{_t('accent_dim')};color:{_t('accent_hover')};}}"
+            f"QPushButton:hover{{background:{_t('gold_dim')};color:{_t('gold_hover')};}}"
             f"QPushButton:disabled{{color:{_t('faint')};border-color:{_t('border_soft')};background:transparent;}}")
 
 
@@ -426,15 +425,13 @@ def _graphite_btn() -> str:
 
 def _graphite_btn_accent() -> str:
     t = _t
-    a, ah = t("accent_grad"), t("accent_grad_hover")
+    gold, goldh = t("gold"), t("gold_hover")
     return (
-        f"QPushButton{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-        f"stop:0 {a[0]},stop:1 {a[1]});color:{t('on_accent')};"
-        f"border:1px solid {t('accent_border')};border-top:1px solid {t('accent_hover')};"
+        f"QPushButton{{background:{goldh};color:#14110B;"
+        f"border:1px solid {goldh};border-top:1px solid {goldh};"
         f"border-bottom:1px solid {t('border')};"
         f"border-radius:{dps(t('radius_btn'))};padding:{dps(5)} {dps(14)};font-size:{fs(12)};font-weight:600;}}"
-        f"QPushButton:hover{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-        f"stop:0 {ah[0]},stop:1 {ah[1]});border-top-color:{t('accent_hover')};}}"
+        f"QPushButton:hover{{background:{goldh};border-top-color:{goldh};}}"
         f"QPushButton:disabled{{background:{t('overlay')};color:{t('faint')};}}"
     )
 
@@ -720,7 +717,7 @@ QPushButton#navBtn:hover {{ background: {t['raised']}; color: {t['text']}; }}
 QPushButton#navBtn:checked {{ background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 {t['gold_dim']}, stop:1 rgba(0,0,0,0)); color: {t['gold']}; border-left: 3px solid {t['gold']}; font-weight:600; }}
 QPushButton#indBtn {{ background: {t['panel']}; color: {t['sub']}; border: 1px solid {t['border']}; border-top: 1px solid {t['border_top']}; border-radius: $dp4; padding: $dp3 $dp12; font-size: $fs11; }}
 QPushButton#indBtn:hover {{ color: {t['text']}; border-top-color: {t['gold']}; }}
-QPushButton#indBtn:checked {{ background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {t['gold_hover']}, stop:1 {t['gold']}); color: #14110B; border-color: {t['gold']}; font-weight:600; }}
+QPushButton#indBtn:checked {{ background: {t['gold']}; color: #14110B; border-color: {t['gold']}; font-weight:600; }}
 """
 
 

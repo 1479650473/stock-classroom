@@ -7,10 +7,11 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QFont
 from frontend.platform.local_worker import LocalWorker
 from frontend.platform.theme import (
-    dp, dps, fs, C_ACCENT, C_BG, C_TEXT, C_SUBTEXT, C_FAINT, C_PANEL, C_BORDER_SOFT,
+    dp, dps, fs, tr,
+    C_ACCENT, C_BG, C_TEXT, C_SUBTEXT, C_FAINT, C_PANEL, C_BORDER_SOFT, C_GOLD,
     qss_table, qss_list, qss_input,
 )
-from frontend.platform.premium import PAL, card_qss, value_ss, label_ss, CountUpLabel, well
+from frontend.platform.premium import PAL, card_qss, value_ss, label_ss, hero_ss, CountUpLabel, well
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "data")
 
@@ -29,16 +30,6 @@ BG_EVEN = QColor("#0D1117")
 BG_ODD = QColor("#161B22")
 C_BORDER = "#21262D"
 
-# 模式分段控件 — 高级暗金(深色渐变 + 金色选中) 替代旧扁平 toggle
-_SEG_QSS = (
-    "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-    "stop:0 #1B222C,stop:1 #151A24);color:#8B949E;border:1px solid #222A35;"
-    "border-top:1px solid #2C3542;border-radius:6px;padding:3px 14px;font-size:20px;font-weight:500;}"
-    "QPushButton:hover{color:#D5DCE5;border-top-color:#D4A574;}"
-    "QPushButton:checked{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-    "stop:0 #C99763,stop:1 #B07F4E);color:#1A1410;border-color:#C99763;font-weight:600;}"
-)
-
 
 class DCPanel(QWidget):
     def __init__(self, parent=None):
@@ -53,7 +44,7 @@ class DCPanel(QWidget):
         self._dc_selected_table = None
         self._sort_col = -1
         self._sort_asc = True
-        self.setStyleSheet("background:#0D1117")
+        self.setStyleSheet(f"background:{PAL['bg']}")
         self._build_ui()
 
     def _build_ui(self):
@@ -68,7 +59,7 @@ class DCPanel(QWidget):
         mode_bar = QHBoxLayout()
         mode_bar.setSpacing(4)
         mode_label = QLabel("模式:")
-        mode_label.setStyleSheet("color:#8B949E;font-size:20px;background:transparent")
+        mode_label.setStyleSheet(label_ss(size=11) + f"color:{PAL['faint']};")
         mode_bar.addWidget(mode_label)
 
         self._mode_btns = []
@@ -77,7 +68,14 @@ class DCPanel(QWidget):
             btn.setCheckable(True)
             btn.setChecked(i == 0)
             btn.setFixedHeight(dp(26))
-            btn.setObjectName("indBtn")
+            btn.setCursor(Qt.PointingHandCursor)
+            # 内联选中样式(父级 setStyleSheet 会破坏全局 indBtn 背景级联, 须内联)
+            btn.setStyleSheet(
+                f"QPushButton{{background:{PAL['c_mid']};color:{PAL['sub']};"
+                f"border:1px solid {PAL['border_lo']};border-top:1px solid {PAL['border_hi']};"
+                f"border-radius:{dps(6)};font-size:{fs(tr(12))};font-weight:600;padding:{dps(3)} {dps(12)};}}"
+                f"QPushButton:hover{{color:{PAL['text']};border-top-color:{PAL['gold']};}}"
+                f"QPushButton:checked{{background:{PAL['gold']};color:#14110B;border-color:{PAL['gold']};}}")
             btn.clicked.connect(lambda checked, idx=i: self._switch_mode(idx))
             mode_bar.addWidget(btn)
             self._mode_btns.append(btn)
@@ -100,7 +98,7 @@ class DCPanel(QWidget):
             f"border-radius:8px;outline:none;}}"
             f"QTreeWidget::item{{padding:3px 6px;border-radius:4px;}}"
             f"QTreeWidget::item:selected{{background:{PAL['accent']};color:{PAL['bg']};}}"
-            f"QTreeWidget::item:hover:!selected{{background:{PAL['panel']};}}")
+            f"QTreeWidget::item:hover:!selected{{background:{PAL['c_mid']};}}")
         self.table.setStyleSheet(qss_table())
         self.stock_table.setStyleSheet(qss_table())
         self.search.setStyleSheet(qss_input())
@@ -128,7 +126,7 @@ class DCPanel(QWidget):
             f"QTreeWidget{{background:{C_BG};color:{C_TEXT};border:1px solid {C_BORDER_SOFT};"
             f"border-radius:8px;outline:none;}}"
             f"QTreeWidget::item{{padding:3px 6px;border-radius:4px;}}"
-            f"QTreeWidget::item:selected{{background:{C_ACCENT};color:{C_PANEL};}}"
+            f"QTreeWidget::item:selected{{background:{PAL['gold']};color:#1A1410;}}"
             f"QTreeWidget::item:hover:!selected{{background:{C_PANEL};}}")
         body.addWidget(self.tree)
 
@@ -258,12 +256,12 @@ class DCPanel(QWidget):
             if info["found"]:
                 title = QLabel(info["label"])
                 title.setStyleSheet(
-                    f"color:{info['color']};font-size:{fs(10)};font-weight:500;"
+                    f"color:{info['color']};font-size:{fs(tr(11))};font-weight:500;"
                     f"letter-spacing:{dp(1.5)}px;background:transparent;")
                 cl.addWidget(title)
                 rows_lbl = CountUpLabel(fmt=lambda v: "{:,.0f} 行".format(v), duration=900)
                 rows_lbl.setStyleSheet(
-                    value_ss(color=C_TEXT, size=18))
+                    hero_ss(size=17))
                 cl.addWidget(rows_lbl)
                 detail = QLabel("{:.0f}MB  ·  {}表".format(info["size_mb"], info["table_count"]))
                 detail.setStyleSheet(label_ss(size=9))
@@ -275,7 +273,7 @@ class DCPanel(QWidget):
             else:
                 title = QLabel(info["label"] + "\n未找到")
                 title.setStyleSheet(
-                    f"color:{info['color']};font-size:{fs(14)};font-weight:500;"
+                    f"color:{info['color']};font-size:{fs(tr(14))};font-weight:500;"
                     f"background:transparent;")
                 title.setAlignment(Qt.AlignCenter)
                 cl.addWidget(title)

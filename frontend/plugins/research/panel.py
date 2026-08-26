@@ -18,9 +18,10 @@ if _BD not in sys.path:
     sys.path.insert(0, _BD)
 
 from frontend.platform.theme import (
-    dp, dps, fs,
+    dp, dps, fs, tr, style_title,
     C_BG, C_PANEL, C_RAISED, C_BORDER, C_BORDER_SOFT, C_TEXT, C_SUBTEXT, C_FAINT,
     C_ACCENT, C_ACCENT_HOVER, C_ACCENT_DIM, C_ON_ACCENT, C_UP, C_DOWN, C_INFO, C_WARN,
+    C_GOLD, C_GOLD_HOVER,
     qss_btn, qss_btn_accent, qss_table, qss_card, style_h1, style_h2, style_label,
     style_caption, style_num,
 )
@@ -47,11 +48,11 @@ def _sec_title(text: str, hint: str = "") -> QWidget:
     lo.setSpacing(dp(6))
     bar = QFrame()
     bar.setFixedSize(dp(3), dp(14))
-    bar.setStyleSheet(f"background:{_PAL['accent']};border-radius:1px;")
+    bar.setStyleSheet(f"background:{_PAL['gold']};border-radius:1px;")
     lo.addWidget(bar)
     lbl = QLabel(text)
     lbl.setStyleSheet(
-        f"color:{_PAL['text']};font-size:{fs(11)};font-weight:600;"
+        f"color:{_PAL['text']};font-size:{fs(tr(12))};font-weight:600;"
         f"letter-spacing:{dp(1)}px;background:transparent;")
     lo.addWidget(lbl)
     lo.addStretch()
@@ -90,18 +91,18 @@ class _StatCard(MachinedWell):
         lo.setSpacing(dp(6))
         t = QLabel(title)
         t.setStyleSheet(
-            f"color:{_PAL['sub']};font-size:{fs(10)};font-weight:500;"
+            f"color:{_PAL['sub']};font-size:{fs(tr(11))};font-weight:500;"
             f"letter-spacing:{dp(2)}px;background:transparent;")
         lo.addWidget(t)
         self._value = QLabel("--")
         self._value.setStyleSheet(
-            f"color:{_PAL['text']};font-size:{fs(17)};font-weight:300;background:transparent;"
+            f"color:{_PAL['text']};font-size:{fs(tr(18))};font-weight:300;background:transparent;"
             f"font-family:'Segoe UI Light','Microsoft YaHei UI Light','Microsoft YaHei',sans-serif;"
             f"letter-spacing:{dp(0.5)}px;")
         lo.addWidget(self._value)
         self._sub = QLabel("")
         self._sub.setStyleSheet(
-            f"color:{_PAL['faint']};font-size:{fs(10)};background:transparent;")
+            f"color:{_PAL['faint']};font-size:{fs(tr(11))};background:transparent;")
         self._sub.setWordWrap(True)
         lo.addWidget(self._sub)
         lo.addStretch()
@@ -136,7 +137,7 @@ class _SecCard(MachinedWell):
         head = QHBoxLayout()
         t = QLabel(title)
         t.setStyleSheet(
-            f"color:{_PAL['accent']};font-size:{fs(12)};font-weight:600;background:transparent;"
+            f"color:{_PAL['gold']};font-size:{fs(tr(12))};font-weight:600;background:transparent;"
             f"letter-spacing:{dp(0.5)}px;font-family:'Segoe UI','Microsoft YaHei';")
         head.addWidget(t)
         head.addStretch()
@@ -195,15 +196,13 @@ class ResearchPanel(QWidget):
         lo.setContentsMargins(dp(14), dp(14), dp(14), dp(14))
         lo.setSpacing(dp(12))
 
-        # 标题(金色字距) + 说明
+        # 标题(金色) + 说明
         title = QLabel("量化研究")
-        title.setStyleSheet(
-            f"color:{_PAL['text']};font-size:{fs(17)};font-weight:600;background:transparent;"
-            f"letter-spacing:{dp(2)}px;")
+        title.setStyleSheet(style_title() + f"color:{_PAL['text']};")
         lo.addWidget(title)
         cap = QLabel("LLM-IN-THE-LOOP · 价值因子 · 多因子分层 · 组合纸面盘")
         cap.setStyleSheet(
-            f"color:{_PAL['faint']};font-size:{fs(9)};letter-spacing:{dp(1)}px;background:transparent;")
+            f"color:{_PAL['faint']};font-size:{fs(tr(10))};letter-spacing:{dp(1)}px;background:transparent;")
         lo.addWidget(cap)
 
         # 控制条
@@ -297,19 +296,19 @@ class ResearchPanel(QWidget):
         return (
             f"QPushButton{{background:{_PAL['c_mid']};color:{_PAL['sub']};"
             f"border:1px solid {_PAL['border_lo']};border-top:1px solid {_PAL['border_hi']};"
-            f"border-radius:{dps(6)};font-size:{fs(11)};font-weight:600;padding:{dps(3)} {dps(11)};}}"
-            f"QPushButton:hover{{border-color:{_PAL['accent']};color:{_PAL['text']};}}"
-            f"QPushButton:checked{{background:{_PAL['accent']};color:{C_ON_ACCENT};border-color:{_PAL['accent']};}}")
+            f"border-radius:{dps(6)};font-size:{fs(tr(11))};font-weight:600;padding:{dps(3)} {dps(11)};}}"
+            f"QPushButton:hover{{border-color:{_PAL['gold']};color:{_PAL['text']};}}"
+            f"QPushButton:checked{{background:{_PAL['gold']};color:#14110B;border-color:{_PAL['gold']};}}")
 
     def _table_qss(self) -> str:
         return (
             f"QTableWidget{{background:{C_BG};color:{_PAL['text']};border:1px solid {_PAL['border_lo']};"
-            f"border-radius:{dps(8)};gridline-color:{_PAL['border_lo']};font-size:{fs(11)};}}"
+            f"border-radius:{dps(8)};gridline-color:{_PAL['border_lo']};font-size:{fs(13)};}}"
             f"QTableWidget::item{{padding:{dps(4)} {dps(9)};border-bottom:1px solid #12161d;}}"
-            f"QTableWidget::item:selected{{background:{_PAL['accent']};color:{C_ON_ACCENT};}}"
+            f"QTableWidget::item:selected{{background:{_PAL['gold']};color:#14110B;}}"
             f"QTableWidget::item:hover:!selected{{background:{_PAL['c_mid']};}}"
             f"QHeaderView::section{{background:{_PAL['c_mid']};color:{_PAL['sub']};border:none;"
-            f"border-bottom:1px solid {_PAL['border_lo']};padding:{dps(5)} {dps(9)};font-size:{fs(10)};"
+            f"border-bottom:1px solid {_PAL['border_lo']};padding:{dps(6)} {dps(9)};font-size:{fs(12)};"
             f"font-weight:600;letter-spacing:{dp(0.5)}px;}}")
 
     def _on_hp(self, btn):
@@ -426,7 +425,7 @@ class ResearchPanel(QWidget):
                 (str(r.get("code", "")), _PAL["text"]),
                 ("{:.2f}".format(r.get("price", 0)), _PAL["sub"]),
                 (("{:+.2f}".format(r.get("chg", 0))), _PAL["down"] if r.get("chg", 0) < 0 else _PAL["up"]),
-                ("{:.3f}".format(r.get("comp", 0)), _PAL["accent"]),
+                ("{:.3f}".format(r.get("comp", 0)), _PAL["gold"]),
             ]
             for j, (text, color) in enumerate(items):
                 it = QTableWidgetItem(text)

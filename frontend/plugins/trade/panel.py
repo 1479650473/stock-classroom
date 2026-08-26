@@ -9,13 +9,15 @@ if _BD not in sys.path:
 
 from trade_engine.engine import TradeEngine
 from frontend.platform.theme import (
-    dp, dps, fs,
+    dp, dps, fs, tr, style_title,
     C_BG, C_PANEL, C_RAISED, C_BORDER, C_BORDER_SOFT, C_TEXT, C_SUBTEXT, C_FAINT,
     C_ACCENT, C_ACCENT_HOVER, C_ACCENT_DIM, C_ON_ACCENT, C_UP, C_DOWN,
+    C_GOLD,
     qss_btn, qss_btn_accent, qss_combo, qss_input, qss_list, qss_spinbox,
     qss_table, style_h1, style_h2, style_label, style_caption,
 )
 from frontend.platform.local_worker import LocalWorker
+from frontend.platform.premium import PAL as _PAL, card_qss as _card_qss, label_ss as _label_ss, value_ss as _value_ss, hero_ss as _hero_ss
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
@@ -134,22 +136,17 @@ class _SummaryCards(QWidget):
         for label, key, row, col in items:
             card = QFrame()
             card.setObjectName("card")
-            card.setStyleSheet(
-                f"QFrame#card{{background:{C_PANEL};border:1px solid {C_BORDER_SOFT};"
-                f"border-radius:{dps(8)};}}"
-            )
+            card.setStyleSheet(_card_qss("card"))
             cl = QVBoxLayout(card)
-            cl.setContentsMargins(dp(10), dp(6), dp(10), dp(6))
-            cl.setSpacing(dp(2))
+            cl.setContentsMargins(dp(11), dp(8), dp(11), dp(8))
+            cl.setSpacing(dp(3))
 
             lb = QLabel(label)
-            lb.setStyleSheet(style_caption())
+            lb.setStyleSheet(_label_ss(size=9, gold=True))
             cl.addWidget(lb)
 
             val = QLabel("--")
-            val.setStyleSheet(
-                f"color:{C_TEXT};font-size:{fs(14)};font-weight:700;background:transparent;"
-                f"font-family:'Consolas','Segoe UI','Microsoft YaHei';")
+            val.setStyleSheet(_hero_ss(size=15))
             cl.addWidget(val)
             self._labels[key] = val
             grid.addWidget(card, row, col)
@@ -157,9 +154,10 @@ class _SummaryCards(QWidget):
     def _set_num(self, key, text, color=None):
         lb = self._labels[key]
         lb.setText(text)
-        lb.setStyleSheet(
-            f"color:{color or C_TEXT};font-size:{fs(14)};font-weight:700;background:transparent;"
-            f"font-family:'Consolas','Segoe UI','Microsoft YaHei';")
+        if color:
+            lb.setStyleSheet(_hero_ss(size=15) + f"color:{color};")
+        else:
+            lb.setStyleSheet(_hero_ss(size=15))
 
     def update_summary(self, summary):
         if summary is None:
@@ -310,17 +308,17 @@ class _OrderPanel(QWidget):
         lo.addWidget(self._price_label)
 
         # ── Order type toggle ──
-        tr = QHBoxLayout()
-        tr.setSpacing(0)
+        tr_lo = QHBoxLayout()
+        tr_lo.setSpacing(0)
         seg_market = (
             f"QPushButton{{background:{C_PANEL};color:{C_SUBTEXT};border:1px solid {C_BORDER};"
-            f"border-radius:{dps(6)} 0 0 {dps(6)};font-size:{fs(11)};padding:{dps(3)} 0;}}"
-            f"QPushButton:checked{{background:{C_ACCENT_DIM};color:{C_ACCENT};border-color:{C_ACCENT};}}"
+            f"border-radius:{dps(6)} 0 0 {dps(6)};font-size:{fs(tr(11))};padding:{dps(3)} 0;}}"
+            f"QPushButton:checked{{background:{_PAL['gold']};color:#1A1410;border-color:{_PAL['gold']};}}"
         )
         seg_limit = (
             f"QPushButton{{background:{C_PANEL};color:{C_SUBTEXT};border:1px solid {C_BORDER};"
-            f"border-radius:0 {dps(6)} {dps(6)} 0;border-left:none;font-size:{fs(11)};padding:{dps(3)} 0;}}"
-            f"QPushButton:checked{{background:{C_ACCENT_DIM};color:{C_ACCENT};border-color:{C_ACCENT};}}"
+            f"border-radius:0 {dps(6)} {dps(6)} 0;border-left:none;font-size:{fs(tr(11))};padding:{dps(3)} 0;}}"
+            f"QPushButton:checked{{background:{_PAL['gold']};color:#1A1410;border-color:{_PAL['gold']};}}"
         )
         self._market_btn = QPushButton("市价单")
         self._market_btn.setCheckable(True)
@@ -330,7 +328,7 @@ class _OrderPanel(QWidget):
         self._market_btn.setStyleSheet(seg_market)
         self._market_btn.setToolTip("以当前市场价格立即成交")
         self._market_btn.clicked.connect(lambda: self._set_order_type('market'))
-        tr.addWidget(self._market_btn, 1)
+        tr_lo.addWidget(self._market_btn, 1)
 
         self._limit_btn = QPushButton("限价单")
         self._limit_btn.setCheckable(True)
@@ -339,8 +337,8 @@ class _OrderPanel(QWidget):
         self._limit_btn.setStyleSheet(seg_limit)
         self._limit_btn.setToolTip("挂出限价委托，价格到达后自动成交")
         self._limit_btn.clicked.connect(lambda: self._set_order_type('limit'))
-        tr.addWidget(self._limit_btn, 1)
-        lo.addLayout(tr)
+        tr_lo.addWidget(self._limit_btn, 1)
+        lo.addLayout(tr_lo)
 
         # ── Qty ──
         qr = QHBoxLayout()
@@ -690,7 +688,7 @@ class TradePanel(QWidget):
         lo.setSpacing(dp(8))
 
         title = QLabel("模拟交易")
-        title.setStyleSheet(style_h1())
+        title.setStyleSheet(style_title() + f"color:{C_TEXT};")
         lo.addWidget(title)
 
         self._account_bar = _AccountBar(self._engine)
@@ -712,7 +710,7 @@ class TradePanel(QWidget):
         lo.addWidget(self._pending)
 
         pos_title = QLabel("持仓")
-        pos_title.setStyleSheet(style_h2())
+        pos_title.setStyleSheet(style_title() + f"color:{C_TEXT};")
         lo.addWidget(pos_title)
 
         self._pos_table = _PositionTable()
@@ -720,7 +718,7 @@ class TradePanel(QWidget):
         lo.addWidget(self._pos_table)
 
         trade_title = QLabel("成交记录")
-        trade_title.setStyleSheet(style_h2())
+        trade_title.setStyleSheet(style_title() + f"color:{C_TEXT};")
         lo.addWidget(trade_title)
 
         self._trade_hist = _TradeHistory()

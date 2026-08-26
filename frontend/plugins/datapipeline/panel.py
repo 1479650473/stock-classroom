@@ -3,12 +3,12 @@
 
 import sqlite3, os
 from frontend.platform.theme import (
-    dp, dps, fs,
-    C_BG, C_PANEL, C_BORDER, C_TEXT, C_SUBTEXT, C_ACCENT,
+    dp, dps, fs, tr, style_title,
+    C_BG, C_PANEL, C_BORDER, C_TEXT, C_SUBTEXT, C_ACCENT, C_GOLD,
     qss_table, qss_btn_accent, qss_btn_accent_outline, style_caption,
 )
 from frontend.platform.premium import (
-    PAL, card_qss, value_ss, label_ss, SectionTitle, well,
+    PAL, card_qss, value_ss, label_ss, hero_ss, SectionTitle, well,
 )
 from datetime import datetime, time as dtime
 from PyQt5.QtWidgets import (
@@ -49,12 +49,11 @@ class PipelinePanel(QWidget):
         hdr = QVBoxLayout()
         hdr.setSpacing(0)
         title = QLabel("数据管道")
-        title.setStyleSheet(
-            f"color:{C_TEXT};font-size:{fs(17)};font-weight:600;letter-spacing:{dp(2)}px;background:transparent")
+        title.setStyleSheet(style_title() + f"color:{C_TEXT};")
         hdr.addWidget(title)
         self._auto_hint = QLabel("")
         self._auto_hint.setStyleSheet(
-            f"color:{C_SUBTEXT};font-size:{fs(11)};background:transparent")
+            f"color:{C_SUBTEXT};font-size:{fs(tr(12))};background:transparent")
         hdr.addWidget(self._auto_hint)
         lo.addLayout(hdr)
 
@@ -65,12 +64,12 @@ class PipelinePanel(QWidget):
         cl.setSpacing(dp(4))
 
         self._last_date = QLabel("上次更新: --")
-        self._last_date.setStyleSheet(value_ss(color=C_TEXT, size=15))
+        self._last_date.setStyleSheet(hero_ss(size=16))
         cl.addWidget(self._last_date)
 
         self._last_status = QLabel("状态: 未知")
         self._last_status.setStyleSheet(
-            f"color:{C_SUBTEXT};font-size:{fs(12)};background:transparent")
+            f"color:{C_SUBTEXT};font-size:{fs(tr(12))};background:transparent")
         cl.addWidget(self._last_status)
         lo.addWidget(self._status_card)
 

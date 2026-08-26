@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
 from PyQt5.QtCore import Qt, QRectF
 from PyQt5.QtGui import QColor, QPainter, QPen, QPolygonF, QFont, QFontMetricsF
 from PyQt5.QtCore import QPointF
-from frontend.platform.theme import dp, fs, dps, style_title
+from frontend.platform.theme import dp, fs, dps, tr, style_title
 from frontend.platform.premium import PAL, card_qss, label_ss, value_ss, hero_ss, well
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -644,9 +644,16 @@ class HoldingsPanel(QWidget):
         self._mode_group = QButtonGroup(self); self._mode_group.setExclusive(True)
         self._mode_btns = {}
         for key, label in [("live", "实时持仓"), ("hist", "历史持仓")]:
-            b = QPushButton(label); b.setObjectName("indBtn"); b.setCheckable(True)
+            b = QPushButton(label); b.setCheckable(True)
             b.setProperty('mode', key)
             b.setMinimumWidth(dp(88))
+            # 内联选中样式(父级 setStyleSheet 破坏全局 indBtn 背景级联, 须内联)
+            b.setStyleSheet(
+                f"QPushButton{{background:{PAL['c_mid']};color:{PAL['sub']};"
+                f"border:1px solid {PAL['border_lo']};border-top:1px solid {PAL['border_hi']};"
+                f"border-radius:{dps(6)};font-size:{fs(tr(12))};font-weight:600;padding:{dps(3)} {dps(12)};}}"
+                f"QPushButton:hover{{color:{PAL['text']};border-top-color:{PAL['gold']};}}"
+                f"QPushButton:checked{{background:{PAL['gold']};color:#14110B;border-color:{PAL['gold']};}}")
             self._mode_group.addButton(b); self._mode_btns[key] = b
             mode_row.addWidget(b)
             b.clicked.connect(lambda _=False, k=key: self._set_mode(k))
