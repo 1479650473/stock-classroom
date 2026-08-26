@@ -4,8 +4,9 @@
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QTextEdit,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QComboBox, QSpinBox,
+    QTimeEdit, QCheckBox,
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer, QTime
 from PyQt5.QtGui import QFont, QColor
 from frontend.platform.theme import dp, dps, fs
 from frontend.platform.premium import PAL, card_qss, label_ss, value_ss, hero_ss, well
@@ -25,9 +26,15 @@ class AgentOpsPanel(QWidget):
         self.on_status = None
         self._worker = None
         self._accounts = []
+        self._last_fire = None            # 上次自动触发日期(YYYY-MM-DD, 每日一跑)
         self.setStyleSheet(f"background:{PAL['bg']}")
         self._build()
         self._refresh_accounts()
+        # 定时器: 每15s检查一次是否到点(自动操盘)
+        self._auto_timer = QTimer(self)
+        self._auto_timer.timeout.connect(self._check_auto)
+        self._auto_timer.start(15000)
+        self._load_sched()
 
     def _build(self):
         lo = QVBoxLayout(self)
@@ -73,6 +80,26 @@ class AgentOpsPanel(QWidget):
         self._btn_stop.clicked.connect(self._stop)
         ctl.addWidget(self._btn_stop)
         lo.addLayout(ctl)
+
+        # 定时自动操盘(每日收盘后)
+        sched = QHBoxLayout(); sched.setSpacing(dp(8))
+        sched.addWidget(QLabel("定时"))
+        self._auto_cb = QCheckBox("每日自动操盘")
+        self._auto_cb.setStyleSheet(f"color:{PAL['text']};font-size:{fs(12)};background:transparent;")
+        self._auto_cb.toggled.connect(self._on_sched_toggle)
+        sched.addWidget(self._auto_cb)
+        sched.addWidget(QLabel("时间"))
+        self._auto_time = QTimeEdit(); self._auto_time.setDisplayFormat("HH:mm")
+        self._auto_time.setFixedHeight(dp(28)); self._auto_time.setFixedWidth(dp(64))
+        self._auto_time.setStyleSheet(self._spin_ss())
+        self._auto_time.setTime(QTime(15, 0))
+        self._auto_time.timeChanged.connect(self._persist_sched)
+        sched.addWidget(self._auto_time)
+        self._sched_status = QLabel("")
+        self._sched_status.setStyleSheet(value_ss(size=9) + f"color:{PAL['faint']};")
+        sched.addWidget(self._sched_status)
+        sched.addStretch()
+        lo.addLayout(sched)
 
         # 账户摘要
         self._sum_row = QHBoxLayout(); self._sum_row.setSpacing(dp(8))
@@ -275,6 +302,73 @@ class AgentOpsPanel(QWidget):
 
     def _refresh(self):
         self._refresh_accounts()
+
+    # ── 定时自动操盘 ──
+    def _sched_path(self):
+        import os
+        return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
+                            'backend', 'configs', 'settings.json')
+
+    def _load_sched(self):
+        try:
+            import json
+            with open(self._sched_path(), encoding='utf-8') as f:
+                d = json.load(f)
+            ag = d.get("agentops", {}) or {}
+            if ag.get("auto_enabled"):
+                self._auto_cb.setChecked(True)
+            t = ag.get("auto_time", "15:00")
+            try:
+                hh, mm = t.split(":"); self._auto_time.setTime(QTime(int(hh), int(mm)))
+            except Exception:
+                pass
+        except Exception:
+            pass
+        self._update_sched_status()
+
+    def _persist_sched(self):
+        try:
+            import json
+            with open(self._sched_path(), encoding='utf-8') as f:
+                d = json.load(f)
+            d["agentops"] = {
+                "auto_enabled": self._auto_cb.isChecked(),
+                "auto_time": self._auto_time.time().toString("HH:mm"),
+            }
+            with open(self._sched_path(), 'w', encoding='utf-8') as f:
+                json.dump(d, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+        self._update_sched_status()
+
+    def _on_sched_toggle(self):
+        self._persist_sched()
+
+    def _update_sched_status(self):
+        if self._auto_cb.isChecked():
+            self._sched_status.setText(f"下次 {self._auto_time.time().toString('HH:mm')}")
+            self._sched_status.setStyleSheet(value_ss(size=9) + f"color:{PAL['gold']};")
+        else:
+            self._sched_status.setText("未启用")
+            self._sched_status.setStyleSheet(value_ss(size=9) + f"color:{PAL['faint']};")
+
+    def _check_auto(self):
+        """每15s: 若启用且到点且今日未跑 → 自动触发一轮操盘(用户旁观)."""
+        if not self._auto_cb.isChecked():
+            return
+        if self._worker is not None and self._worker.isRunning():
+            return
+        from datetime import datetime
+        now = datetime.now()
+        hh = self._auto_time.time().hour(); mm = self._auto_time.time().minute()
+        if (now.hour, now.minute) < (hh, mm):
+            return
+        today = now.strftime("%Y-%m-%d")
+        if self._last_fire == today:
+            return
+        self._last_fire = today
+        self._append_log(f"⏰ 定时触发 ({today} {now:%H:%M}) —— 自动操盘开始", gold=True)
+        self._run()
 
     def on_theme_changed(self):
         self.setStyleSheet(f"background:{PAL['bg']}")
