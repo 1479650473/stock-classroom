@@ -467,7 +467,7 @@ class StrategyDetailDialog(QDialog):
         desc = paper.get('describe') or {}
         if desc:
             cond_frame = QFrame(); cond_frame.setStyleSheet(
-                f"background:{PAL['bg']};border:1px solid {PAL['border']};border-radius:6px;")
+                f"background:{PAL['bg']};border:1px solid {PAL['border_lo']};border-radius:6px;")
             clo = QVBoxLayout(cond_frame); clo.setContentsMargins(dp(10), dp(6), dp(10), dp(6)); clo.setSpacing(dp(2))
             def _cond_line(k, v):
                 lbl = QLabel(f"{k}：{v}")
