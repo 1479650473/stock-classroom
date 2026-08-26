@@ -58,3 +58,4 @@ _gen_paper.py
 paper_run.json
 _gen_paper_multi.py
 paper_runs.json
+.update-venv/
