@@ -7,8 +7,9 @@
 import os, json, sqlite3
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
                              QTableWidget, QTableWidgetItem, QHeaderView, QComboBox, QTabWidget,
-                             QAbstractItemView, QPushButton, QButtonGroup, QDialog, QGridLayout)
-from PyQt5.QtCore import Qt
+                             QAbstractItemView, QPushButton, QButtonGroup, QDialog, QGridLayout,
+                             QScrollArea, QStackedWidget)
+from PyQt5.QtCore import Qt, QRectF
 from PyQt5.QtGui import QColor, QPainter, QPen, QPolygonF, QFont, QFontMetricsF
 from PyQt5.QtCore import QPointF
 from frontend.platform.theme import dp, fs, dps
@@ -19,6 +20,7 @@ PAPER_RUNS = os.path.join(ROOT, 'data', 'paper_runs.json')
 PAPER_JSON = os.path.join(ROOT, 'data', 'paper_run.json')
 KLINE_DB = os.path.join(ROOT, 'data', 'kline.db')
 HS300_JSON = os.path.join(ROOT, 'data', 'hs300.json')
+SIM_DB = os.path.join(ROOT, 'data', 'sim_trade.db')
 _INIT = 1_000_000.0
 
 
@@ -57,6 +59,72 @@ def _close_map(codes, date):
         return {r[0]: r[1] for r in rows}
     except Exception:
         return {}
+
+
+def _last_close(code):
+    """某股 kline 最新收盘价."""
+    try:
+        con = sqlite3.connect(KLINE_DB)
+        r = con.execute("SELECT close FROM kline_daily WHERE code=? ORDER BY date DESC LIMIT 1", (code,)).fetchone()
+        con.close()
+        return float(r[0]) if r else None
+    except Exception:
+        return None
+
+
+def _names_map(codes):
+    """kline stock_list 的 code→name."""
+    try:
+        con = sqlite3.connect(KLINE_DB)
+        q = "SELECT code, name FROM stock_list WHERE code IN (%s)" % ",".join("?" for _ in codes)
+        m = {r[0]: r[1] for r in con.execute(q, list(codes))}
+        con.close()
+        return m
+    except Exception:
+        return {}
+
+
+def _load_live_holdings():
+    """读模拟盘今日实时持仓(选有持仓的账户), 用 kline 最新收盘价刷新市值/浮盈.
+
+    返回 {account_id, account_name, cash, holdings:[{code,name,qty,cost,px,value,pnl,weight}],
+          market_value, total_asset, total_pnl, pct_pnl}."""
+    try:
+        con = sqlite3.connect(SIM_DB); con.row_factory = sqlite3.Row
+        c = con.cursor()
+        acc = c.execute("""SELECT a.id, a.name, a.balance FROM accounts a
+                           WHERE a.id IN (SELECT DISTINCT account_id FROM positions WHERE qty>0)
+                           ORDER BY a.id DESC LIMIT 1""").fetchone()
+        if not acc:
+            acc = c.execute("SELECT id,name,balance FROM accounts ORDER BY id DESC LIMIT 1").fetchone()
+            if not acc:
+                return None
+            return {"account_id": acc["id"], "account_name": acc["name"], "cash": float(acc["balance"] or 0),
+                    "holdings": [], "market_value": 0.0, "total_asset": float(acc["balance"] or 0),
+                    "total_pnl": 0.0, "pct_pnl": 0.0}
+        aid, aname, cash = acc["id"], acc["name"], float(acc["balance"] or 0)
+        rows = c.execute("SELECT code,name,qty,cost_price,current_price FROM positions WHERE account_id=? AND qty>0", (aid,)).fetchall()
+        con.close()
+        holdings = []
+        for r in rows:
+            code, name, qty, cost = r["code"], r["name"], int(r["qty"]), float(r["cost_price"] or 0)
+            px = _last_close(code)
+            if px is None or px <= 0:
+                px = float(r["current_price"] or cost) or 0.0
+            value = qty * px
+            holdings.append({"code": code, "name": name, "qty": qty, "cost": cost,
+                             "px": px, "value": value, "pnl": qty * (px - cost)})
+        holdings = [h for h in holdings if h["value"] > 0]
+        total_mv = sum(h["value"] for h in holdings)
+        total_pnl = sum(h["pnl"] for h in holdings)
+        for h in holdings:
+            h["weight"] = (h["value"] / total_mv) if total_mv else 0.0
+        total_asset = cash + total_mv
+        return {"account_id": aid, "account_name": aname, "cash": cash, "holdings": holdings,
+                "market_value": total_mv, "total_pnl": total_pnl, "total_asset": total_asset,
+                "pct_pnl": (total_pnl / (total_asset - total_pnl) * 100.0) if (total_asset - total_pnl) else 0.0}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 def _load_hs300(rebal_dates):
@@ -316,6 +384,29 @@ def _rebalance_rows(paper):
     return rows
 
 
+def _snapshot_holdings(holdings, date):
+    """把 {code: qty} + 日期 → [{code,name,qty,px,value,weight}] 按市值降序(供环形图/卡片)."""
+    if not holdings:
+        return []
+    codes = list(holdings)
+    cmap = _close_map(codes, date)
+    nmap = _names_map(codes)
+    total = 0
+    for c, q in holdings.items():
+        px = cmap.get(c)
+        if px:
+            total += q * px
+    rows = []
+    for c, q in holdings.items():
+        px = cmap.get(c)
+        val = q * px if px else 0.0
+        rows.append({"code": c, "name": nmap.get(c, ''), "qty": q,
+                     "px": px if px is not None else 0.0, "value": val,
+                     "weight": (val / total) if total else 0.0})
+    rows.sort(key=lambda r: -r['value'])
+    return rows
+
+
 class StrategyDetailDialog(QDialog):
     """单策略详图: 大号净值曲线(vs 买持/沪深300) + 该策略完整调仓记录(分页)."""
     PER_PAGE = 100
@@ -410,6 +501,109 @@ class StrategyDetailDialog(QDialog):
         self._next.setEnabled(self._page < n - 1)
 
 
+class _StockTile(QFrame):
+    """单只股票的持仓卡片(代码+名称 / 数量+现价 / 市值+权重)."""
+
+    def __init__(self, h, color, parent=None):
+        super().__init__(parent)
+        self._code = h.get('code', '')
+        self.setStyleSheet(card_qss('card'))
+        lo = QVBoxLayout(self); lo.setContentsMargins(dp(9), dp(7), dp(9), dp(7)); lo.setSpacing(dp(1))
+        top = QHBoxLayout(); top.setSpacing(dp(6))
+        code = QLabel(h['code']); code.setStyleSheet(label_ss(size=9) + f"color:{PAL['text']};")
+        wt = QLabel(f"{h['weight']*100:.1f}%"); wt.setStyleSheet(value_ss(color=color.name() if hasattr(color, 'name') else PAL['accent'], size=10))
+        top.addWidget(code); top.addStretch(1); top.addWidget(wt)
+        lo.addLayout(top)
+        nm = QLabel(h.get('name', '')); nm.setStyleSheet(value_ss(size=8) + f"color:{PAL['sub']};")
+        lo.addWidget(nm)
+        meta = QLabel(f"数量 {h['qty']:,}   现价 {h['px']:.2f}\n市值 {h['value']:,.0f}")
+        meta.setStyleSheet(value_ss(size=7) + f"color:{PAL['faint']};")
+        lo.addWidget(meta)
+
+
+class _Donut(QWidget):
+    """权重环形图(主题 token 配色, 纯色段安全)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumHeight(dp(156))
+        self._seg = []
+        self._t = ""
+        self._b = ""
+
+    def set_data(self, seg, top, bot):
+        self._seg = seg; self._t = top; self._b = bot; self.update()
+
+    def paintEvent(self, _):
+        p = QPainter(self); p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        total = sum(v for v, _c in self._seg) or 1.0
+        r = min(w, h) * 0.45
+        cx, cy = w // 2, h // 2
+        p.setPen(Qt.NoPen); p.setBrush(QColor(PAL['c_mid']))
+        p.drawEllipse(QPointF(cx, cy), r, r)
+        a0 = 90 * 16
+        for v, c in self._seg:
+            span = -int(360 * 16 * v / total)
+            p.setPen(Qt.NoPen); p.setBrush(c)
+            p.drawPie(QRectF(cx - r, cy - r, r * 2, r * 2), a0, span)
+            a0 += span
+        inner = r * 0.62
+        p.setBrush(QColor(PAL['bg']))
+        p.drawEllipse(QPointF(cx, cy), inner, inner)
+        p.setPen(QColor(PAL['text'])); p.setFont(QFont("Microsoft YaHei", _pt(11)))
+        fm1 = p.fontMetrics()
+        p.drawText(QPointF(cx - fm1.width(self._t) / 2, cy - _pt(2)), self._t)
+        p.setPen(QColor(PAL['sub'])); p.setFont(QFont("Microsoft YaHei", _pt(8)))
+        fm2 = p.fontMetrics()
+        p.drawText(QPointF(cx - fm2.width(self._b) / 2, cy + _pt(14)), self._b)
+        p.end()
+
+
+class _HoldingsView(QWidget):
+    """直观持仓: 权重环形图 + 股票卡片网格(2列, 可滚动)."""
+
+    PALETTE = ['accent', 'up', 'down', 'text', 'border_hi', 'sub', 'faint', 'grid']
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        lo = QVBoxLayout(self); lo.setContentsMargins(dp(2), dp(2), dp(2), dp(2)); lo.setSpacing(dp(6))
+        self._donut = _Donut(); lo.addWidget(self._donut)
+        self._legend = QLabel(''); self._legend.setStyleSheet(value_ss(size=8) + f"color:{PAL['sub']};")
+        lo.addWidget(self._legend)
+        self._scroll = QScrollArea(); self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.NoFrame)
+        self._grid_host = QWidget()
+        self._grid = QGridLayout(self._grid_host)
+        self._grid.setContentsMargins(dp(2), dp(2), dp(2), dp(2)); self._grid.setSpacing(dp(6))
+        self._scroll.setWidget(self._grid_host)
+        lo.addWidget(self._scroll, 1)
+
+    def _color(self, i):
+        return QColor(PAL[self.PALETTE[i % len(self.PALETTE)]])
+
+    def set_holdings(self, holdings):
+        while self._grid.count():
+            it = self._grid.takeAt(0)
+            if it.widget(): it.widget().deleteLater()
+        if not holdings:
+            self._donut.set_data([], "—", "无持仓")
+            self._legend.setText("暂无持仓(模拟盘今日)")
+            return
+        total = sum(h['value'] for h in holdings)
+        seg = [(h['value'], self._color(i)) for i, h in enumerate(holdings)]
+        self._donut.set_data(seg, f"{total:,.0f}", f"{len(holdings)} 只")
+        self._legend.setText("   ".join(f"{h['code']}·{h['weight']*100:.0f}%" for h in holdings[:10]))
+        cols = 2
+        for i, h in enumerate(holdings):
+            tile = _StockTile(h, self._color(i))
+            self._grid.addWidget(tile, i // cols, i % cols)
+        self._grid.setColumnStretch(0, 1); self._grid.setColumnStretch(1, 1)
+        top = (len(holdings) + cols - 1) // cols
+        for rr in range(top):
+            self._grid.setRowStretch(rr, 0)
+
+
 class HoldingsPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -418,6 +612,7 @@ class HoldingsPanel(QWidget):
         self.on_status = None
         self.setStyleSheet(f"background:{PAL['bg']}")
         self._data = {"runs": {}, "buyhold": {}, "selected": None}
+        self._mode = 'live'
         self._load_ui()
 
     def _load_ui(self):
@@ -431,13 +626,56 @@ class HoldingsPanel(QWidget):
         while self._cards_lo.count():
             it = self._cards_lo.takeAt(0)
             if it.widget(): it.widget().deleteLater()
-        # 标题
-        t = QLabel("纸面盘持仓账本"); t.setStyleSheet(label_ss(size=11) + f"color:{PAL['text']};")
+        t = QLabel("持仓"); t.setStyleSheet(label_ss(size=11) + f"color:{PAL['text']};")
         self._cards_lo.addWidget(t)
-        cap = QLabel("主流程末步 · 组合重平衡/纸面盘 · 多策略对比 · 每日持仓 · 每笔调仓")
+        cap = QLabel("实时持仓(模拟盘) · 历史持仓(纸面盘回测) 可切换")
         cap.setStyleSheet(value_ss(size=10) + f"color:{PAL['sub']};")
         self._cards_lo.addWidget(cap)
-        # 策略卡片(点卡片选中并进单策略详图)
+        # 实时/历史 切换
+        mode_row = QHBoxLayout(); mode_row.setSpacing(dp(6))
+        self._mode_group = QButtonGroup(self); self._mode_group.setExclusive(True)
+        self._mode_btns = {}
+        for key, label in [("live", "实时持仓"), ("hist", "历史持仓")]:
+            b = QPushButton(label); b.setObjectName("indBtn"); b.setCheckable(True)
+            b.setProperty('mode', key)
+            self._mode_group.addButton(b); self._mode_btns[key] = b
+            mode_row.addWidget(b, 1)
+            b.clicked.connect(lambda _=False, k=key: self._set_mode(k))
+        self._cards_lo.addLayout(mode_row)
+        # 页栈
+        self._stack = QStackedWidget()
+        self._live_page = self._build_live()
+        self._hist_page = self._build_hist()
+        self._stack.addWidget(self._live_page)
+        self._stack.addWidget(self._hist_page)
+        self._cards_lo.addWidget(self._stack, 1)
+
+    def _build_live(self):
+        """实时持仓页: 账户摘要 + 直观持仓(环形图+卡片)."""
+        page = QWidget()
+        lo = QVBoxLayout(page); lo.setContentsMargins(0, 0, 0, 0); lo.setSpacing(dp(8))
+        self._acct_row = QHBoxLayout(); self._acct_row.setSpacing(dp(8))
+        self._acct_labels = {}
+        for k, name in [("ta", "总资产"), ("cash", "现金"), ("mv", "持仓市值"), ("pnl", "浮动盈亏")]:
+            card = QFrame(); card.setStyleSheet(card_qss("card"))
+            c = QVBoxLayout(card); c.setContentsMargins(dp(9), dp(7), dp(9), dp(7)); c.setSpacing(0)
+            lb = QLabel(name); lb.setStyleSheet(label_ss(size=8))
+            v = QLabel("—"); v.setStyleSheet(value_ss(color=PAL['accent'], size=13))
+            c.addWidget(lb); c.addWidget(v)
+            self._acct_row.addWidget(card, 1)
+            self._acct_labels[k] = v
+        lo.addLayout(self._acct_row)
+        self._acct_cap = QLabel(""); self._acct_cap.setStyleSheet(value_ss(size=9) + f"color:{PAL['sub']};")
+        lo.addWidget(self._acct_cap)
+        self._live_view = _HoldingsView()
+        lo.addWidget(self._live_view, 1)
+        return page
+
+    def _build_hist(self):
+        """历史持仓页: 策略卡片 + 摘要 + 对比曲线 + 持仓(环形图)/调仓记录."""
+        page = QWidget()
+        lo = QVBoxLayout(page); lo.setContentsMargins(0, 0, 0, 0); lo.setSpacing(dp(8))
+        # 策略卡片
         self._chips_wrap = QWidget()
         self._chips_lo = QVBoxLayout(self._chips_wrap); self._chips_lo.setContentsMargins(0, 0, 0, 0); self._chips_lo.setSpacing(dp(6))
         self._chip_row = QHBoxLayout(); self._chip_row.setSpacing(dp(6))
@@ -445,42 +683,70 @@ class HoldingsPanel(QWidget):
         self._zoom_btn = QPushButton("🔍 进入单策略详图"); self._zoom_btn.setObjectName("indBtn")
         self._zoom_btn.clicked.connect(lambda: self._show_detail(self._selected_strategy()))
         self._chips_lo.addWidget(self._zoom_btn)
-        self._cards_lo.addWidget(self._chips_wrap)
+        lo.addWidget(self._chips_wrap)
         self._strategy_btns = {}
-        self._strategy_group = QButtonGroup(self); self._strategy_group.setExclusive(True)
+        self._strategy_group = QButtonGroup(page); self._strategy_group.setExclusive(True)
         # 摘要卡
         self._sum_row = QHBoxLayout(); self._sum_row.setSpacing(dp(8))
         self._sum_labels = {}
         for k, name in [("v0", "期初"), ("vend", "期末净值"), ("ret", "累计收益"),
                         ("reb", "调仓次数"), ("to", "换手率"), ("asof", "as_of")]:
             card = QFrame(); card.setStyleSheet(card_qss("card"))
-            lo = QVBoxLayout(card); lo.setContentsMargins(dp(10), dp(8), dp(10), dp(8)); lo.setSpacing(0)
+            c = QVBoxLayout(card); c.setContentsMargins(dp(10), dp(8), dp(10), dp(8)); c.setSpacing(0)
             lb = QLabel(name); lb.setStyleSheet(label_ss(size=8))
             v = QLabel("—"); v.setStyleSheet(value_ss(color=PAL['accent'], size=13))
-            lo.addWidget(lb); lo.addWidget(v)
+            c.addWidget(lb); c.addWidget(v)
             self._sum_row.addWidget(card, 1)
             self._sum_labels[k] = v
-        self._cards_lo.addLayout(self._sum_row)
-        # 收益曲线(多策略对比)
+        lo.addLayout(self._sum_row)
+        # 收益曲线
         cur = QFrame(); cur.setStyleSheet(card_qss("card"))
         clo = QVBoxLayout(cur); clo.setContentsMargins(dp(10), dp(6), dp(10), dp(6))
         cl = QLabel("收益曲线(策略对比)"); cl.setStyleSheet(label_ss(size=9) + f"color:{PAL['sub']};")
         clo.addWidget(cl)
         self._curve = _EquityCurve()
         clo.addWidget(self._curve)
-        self._cards_lo.addWidget(cur)
+        lo.addWidget(cur)
         # 表格区
         tabs = QTabWidget()
         tabs.setStyleSheet(f"QTabWidget::pane{{border:1px solid {PAL['border_lo']};}}")
-        self._hx_table = self._mk_table()
         self._hx_date = QComboBox(); self._hx_date.currentIndexChanged.connect(lambda _: self._render_hold())
+        self._hx_view = _HoldingsView()
         hx = QWidget(); hl = QVBoxLayout(hx); hl.setContentsMargins(dp(6), dp(6), dp(6), dp(6))
         hl.addWidget(self._hx_date)
-        hl.addWidget(self._hx_table)
+        hl.addWidget(self._hx_view)
         tabs.addTab(hx, "持仓(按调仓日)")
         self._reb_table = self._mk_table()
         tabs.addTab(self._reb_table, "调仓记录")
-        self._cards_lo.addWidget(tabs, 1)
+        lo.addWidget(tabs, 1)
+        return page
+
+    def _set_mode(self, mode):
+        b = self._mode_btns.get(mode)
+        if b: b.setChecked(True)
+        self._stack.setCurrentWidget(self._live_page if mode == 'live' else self._hist_page)
+        self._mode = mode
+        if mode == 'live':
+            self._render_live()
+        else:
+            self._render()
+
+    def _render_live(self):
+        info = _load_live_holdings()
+        if not info or info.get('error'):
+            for k in ('ta', 'cash', 'mv', 'pnl'):
+                self._acct_labels[k].setText("—")
+            self._acct_cap.setText("读取模拟盘持仓失败")
+            self._live_view.set_holdings([])
+            return
+        self._acct_labels['ta'].setText(f"{info['total_asset']:,.0f}")
+        self._acct_labels['cash'].setText(f"{info['cash']:,.0f}")
+        self._acct_labels['mv'].setText(f"{info['market_value']:,.0f}")
+        pnl = info['total_pnl']
+        self._acct_labels['pnl'].setText(f"{pnl:+,.0f}")
+        self._acct_labels['pnl'].setStyleSheet(value_ss(color=(PAL['up'] if pnl >= 0 else PAL['down']), size=13))
+        self._acct_cap.setText(f"{info['account_name']} (账户 #{info['account_id']}) · {len(info['holdings'])} 只持仓")
+        self._live_view.set_holdings(info['holdings'])
 
     def _mk_table(self):
         tbl = QTableWidget()
@@ -520,7 +786,7 @@ class HoldingsPanel(QWidget):
         if sel:
             b = self._strategy_btns.get(sel)
             if b: b.setChecked(True)
-        self._render()
+        self._set_mode(getattr(self, '_mode', 'live'))
 
     def _selected_strategy(self):
         b = self._strategy_group.checkedButton()
@@ -568,7 +834,7 @@ class HoldingsPanel(QWidget):
         if not paper or paper.get('error'):
             for k in ("v0", "vend", "ret", "reb", "to", "asof"):
                 self._sum_labels[k].setText("—")
-            self._hx_date.clear(); self._hx_table.setRowCount(0); self._reb_table.setRowCount(0)
+            self._hx_date.clear(); self._hx_view.set_holdings([]); self._reb_table.setRowCount(0)
             self._paper = None
             return
         self._paper = paper
@@ -595,17 +861,11 @@ class HoldingsPanel(QWidget):
         idx = self._hx_date.currentIndex()
         dh = self._paper.get('daily_holdings', []) if getattr(self, '_paper', None) else []
         if idx < 0 or idx >= len(dh):
-            self._hx_table.setRowCount(0); return
+            self._hx_view.set_holdings([]); return
         h = dh[idx]
         holds = h.get('holdings', {})
-        cmap = _close_map(list(holds.keys()), h['date'])
-        rows = [{"code": c, "qty": q, "px": cmap.get(c),
-                 "val": (q * cmap[c]) if cmap.get(c) else None} for c, q in holds.items()]
-        rows.sort(key=lambda r: -(r['val'] or 0))
-        self._fill_table(self._hx_table, ["代码", "数量", "现价", "市值", "权重"],
-                         [[r['code'], f'{r["qty"]:,}', f'{r["px"]:.2f}' if r['px'] else "—",
-                           f'{r["val"]:,.0f}' if r['val'] is not None else "—",
-                           f'{r["val"]/(h.get("nav") or 1):.1%}' if r['val'] else "—"] for r in rows])
+        rows = _snapshot_holdings(holds, h['date'])
+        self._hx_view.set_holdings(rows)
 
     def _render_reb(self, paper):
         rows = _rebalance_rows(paper)
