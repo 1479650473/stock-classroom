@@ -117,12 +117,20 @@ def run(pool_only=False, skip_paper=False):
     lg.info('量化池 %d 只', len(pool))
 
     # ① K线池
-    from data_manager import update_pool
+    from data_manager import update_pool, _log_update, get_kline_db
     def _plog(msg, code=None):
         lg.info(msg)
     rk = update_pool(pool=pool, workers=16, progress=_plog)
     out['steps']['kline'] = {k: rk[k] for k in ('updated', 'skipped', 'errors', 'rows_added', 'total', 'elapsed') if k in rk}
     lg.info('  K线池: %s', out['steps']['kline'])
+    # 同步写 data_update_log(让数据管道面板'上次更新'对齐今日; 表里 update_date 用 YYYY-MM-DD)
+    try:
+        _log_update(datetime.now().strftime('%Y-%m-%d'),
+                    rk.get('total', 0), rk.get('updated', 0), rk.get('rows_added', 0),
+                    'ok' if rk.get('errors', 0) < rk.get('total', 0) * 0.5 else 'partial',
+                    'update_daily 量化池 +%d 行, 失败 %d' % (rk.get('rows_added', 0), rk.get('errors', 0)))
+    except Exception as e:
+        lg.warning('  data_update_log 写入失败: %s', str(e)[:60])
 
     if not pool_only:
         # ② 基本面
