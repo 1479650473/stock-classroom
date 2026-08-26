@@ -12,8 +12,8 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
 from PyQt5.QtCore import Qt, QRectF
 from PyQt5.QtGui import QColor, QPainter, QPen, QPolygonF, QFont, QFontMetricsF
 from PyQt5.QtCore import QPointF
-from frontend.platform.theme import dp, fs, dps
-from frontend.platform.premium import PAL, card_qss, label_ss, value_ss, well
+from frontend.platform.theme import dp, fs, dps, style_title
+from frontend.platform.premium import PAL, card_qss, label_ss, value_ss, hero_ss, well
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 PAPER_RUNS = os.path.join(ROOT, 'data', 'paper_runs.json')
@@ -502,23 +502,30 @@ class StrategyDetailDialog(QDialog):
 
 
 class _StockTile(QFrame):
-    """单只股票的持仓卡片(代码+名称 / 数量+现价 / 市值+权重)."""
+    """单只股票的持仓卡片(代码+权重 / 名称 / 数量+现价 / 市值). 固定高三行, 紧凑高级."""
 
     def __init__(self, h, color, parent=None):
         super().__init__(parent)
-        self._code = h.get('code', '')
         self.setStyleSheet(card_qss('card'))
-        lo = QVBoxLayout(self); lo.setContentsMargins(dp(9), dp(7), dp(9), dp(7)); lo.setSpacing(dp(1))
+        self.setFixedHeight(dp(86))
+        lo = QVBoxLayout(self); lo.setContentsMargins(dp(11), dp(9), dp(11), dp(9)); lo.setSpacing(dp(2))
+        # 行1: 代码(白, 大) + 权重%(彩色, 右)
         top = QHBoxLayout(); top.setSpacing(dp(6))
-        code = QLabel(h['code']); code.setStyleSheet(label_ss(size=9) + f"color:{PAL['text']};")
-        wt = QLabel(f"{h['weight']*100:.1f}%"); wt.setStyleSheet(value_ss(color=color.name() if hasattr(color, 'name') else PAL['accent'], size=10))
+        code = QLabel(h['code']); code.setStyleSheet(value_ss(size=12) + f"color:{PAL['text']};")
+        wt = QLabel(f"{h['weight']*100:.1f}%")
+        wt.setStyleSheet(value_ss(color=PAL['gold'], size=11))
         top.addWidget(code); top.addStretch(1); top.addWidget(wt)
         lo.addLayout(top)
-        nm = QLabel(h.get('name', '')); nm.setStyleSheet(value_ss(size=8) + f"color:{PAL['sub']};")
+        # 行2: 名称(金色小 label)
+        nm = QLabel(h.get('name', '')); nm.setStyleSheet(label_ss(size=10, gold=True))
         lo.addWidget(nm)
-        meta = QLabel(f"数量 {h['qty']:,}   现价 {h['px']:.2f}\n市值 {h['value']:,.0f}")
-        meta.setStyleSheet(value_ss(size=7) + f"color:{PAL['faint']};")
+        # 行3: 数量 · 现价 · 市值(灰, 一行紧凑)
+        meta = QLabel(f"数量 {h['qty']:,}   现价 {h['px']:.2f}")
+        meta.setStyleSheet(value_ss(size=9) + f"color:{PAL['sub']};")
         lo.addWidget(meta)
+        val = QLabel(f"市值 {h['value']:,.0f}")
+        val.setStyleSheet(value_ss(size=9) + f"color:{PAL['faint']};")
+        lo.addWidget(val)
 
 
 class _Donut(QWidget):
@@ -599,8 +606,9 @@ class _HoldingsView(QWidget):
             tile = _StockTile(h, self._color(i))
             self._grid.addWidget(tile, i // cols, i % cols)
         self._grid.setColumnStretch(0, 1); self._grid.setColumnStretch(1, 1)
-        top = (len(holdings) + cols - 1) // cols
-        for rr in range(top):
+        # 固定行高: 卡片已 setFixedHeight, 行不 stretch, 滚动区按内容自然高度排列
+        for rr in range((len(holdings) + cols - 1) // cols):
+            self._grid.setRowMinimumHeight(rr, dp(92))
             self._grid.setRowStretch(rr, 0)
 
 
@@ -626,21 +634,23 @@ class HoldingsPanel(QWidget):
         while self._cards_lo.count():
             it = self._cards_lo.takeAt(0)
             if it.widget(): it.widget().deleteLater()
-        t = QLabel("持仓"); t.setStyleSheet(label_ss(size=11) + f"color:{PAL['text']};")
+        t = QLabel("持仓"); t.setStyleSheet(style_title() + f"color:{PAL['text']};")
         self._cards_lo.addWidget(t)
         cap = QLabel("实时持仓(模拟盘) · 历史持仓(纸面盘回测) 可切换")
-        cap.setStyleSheet(value_ss(size=10) + f"color:{PAL['sub']};")
+        cap.setStyleSheet(label_ss(size=10) + f"color:{PAL['sub']};")
         self._cards_lo.addWidget(cap)
-        # 实时/历史 切换
+        # 实时/历史 切换(分段, 不占满宽)
         mode_row = QHBoxLayout(); mode_row.setSpacing(dp(6))
         self._mode_group = QButtonGroup(self); self._mode_group.setExclusive(True)
         self._mode_btns = {}
         for key, label in [("live", "实时持仓"), ("hist", "历史持仓")]:
             b = QPushButton(label); b.setObjectName("indBtn"); b.setCheckable(True)
             b.setProperty('mode', key)
+            b.setMinimumWidth(dp(88))
             self._mode_group.addButton(b); self._mode_btns[key] = b
-            mode_row.addWidget(b, 1)
+            mode_row.addWidget(b)
             b.clicked.connect(lambda _=False, k=key: self._set_mode(k))
+        mode_row.addStretch()   # 不占满 → 未选中态不是大空盒
         self._cards_lo.addLayout(mode_row)
         # 页栈
         self._stack = QStackedWidget()
@@ -658,9 +668,9 @@ class HoldingsPanel(QWidget):
         self._acct_labels = {}
         for k, name in [("ta", "总资产"), ("cash", "现金"), ("mv", "持仓市值"), ("pnl", "浮动盈亏")]:
             card = QFrame(); card.setStyleSheet(card_qss("card"))
-            c = QVBoxLayout(card); c.setContentsMargins(dp(9), dp(7), dp(9), dp(7)); c.setSpacing(0)
-            lb = QLabel(name); lb.setStyleSheet(label_ss(size=8))
-            v = QLabel("—"); v.setStyleSheet(value_ss(color=PAL['accent'], size=13))
+            c = QVBoxLayout(card); c.setContentsMargins(dp(11), dp(9), dp(11), dp(9)); c.setSpacing(2)
+            lb = QLabel(name); lb.setStyleSheet(label_ss(size=9, gold=True))
+            v = QLabel("—"); v.setStyleSheet(hero_ss(size=15))
             c.addWidget(lb); c.addWidget(v)
             self._acct_row.addWidget(card, 1)
             self._acct_labels[k] = v

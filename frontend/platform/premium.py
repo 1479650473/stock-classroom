@@ -23,6 +23,7 @@ from . import theme as _th
 PAL = {
     "bg": "#0B0D11", "c_top": "#15181D", "c_mid": "#12151A", "c_bot": "#0E1115",
     "border_lo": "#232830", "border_hi": "#2E343C", "accent": "#7AA2F7",
+    "gold": "#D4A574", "gold_hover": "#E6C290",
     "text": "#E8EAED", "sub": "#9AA3B0", "faint": "#5C6670",
     "up": "#E5484D", "down": "#3FB950", "grid": "#1D222A", "axis": "#2E343C",
 }
@@ -36,6 +37,8 @@ __MAP = {
     "border_lo": lambda t: t["card_border"],
     "border_hi": lambda t: t["card_border_top"],
     "accent": lambda t: t["accent"],
+    "gold": lambda t: t["gold"],
+    "gold_hover": lambda t: t["gold_hover"],
     "text": lambda t: t["text"],
     "sub": lambda t: t["sub"],
     "faint": lambda t: t["faint"],
@@ -75,20 +78,35 @@ def card_qss(name="card", radius: int = None) -> str:
     )
 
 
-def value_ss(color=None, size=17) -> str:
+def value_ss(color=None, size=17, gold=False) -> str:
     """Light-weight wide number style (Segoe UI Light, font-weight 300)."""
+    if color is None:
+        color = _th.current_theme()["gold"] if gold else _tkey("text")
     return (
-        f"color:{color or _tkey('text')};font-size:{_th.fs(size)};font-weight:300;background:transparent;"
+        f"color:{color};font-size:{_th.fs(_th.tr(size))};font-weight:300;background:transparent;"
         f"font-family:'Segoe UI Light','Microsoft YaHei UI Light','Microsoft YaHei',sans-serif;"
         f"letter-spacing:{_th.dp(0.5)}px;"
     )
 
 
-def label_ss(size=10, color=None) -> str:
+def label_ss(size=10, color=None, gold=False) -> str:
     """Small unit label — widened letter-spacing for a refined look."""
+    if color is None:
+        color = _th.current_theme()["gold"] if gold else _tkey("sub")
     return (
-        f"color:{color or _tkey('sub')};font-size:{_th.fs(size)};font-weight:500;"
+        f"color:{color};font-size:{_th.fs(_th.tr(size))};font-weight:500;"
         f"letter-spacing:{_th.dp(1.5)}px;background:transparent;"
+    )
+
+
+def hero_ss(size=21, color=None) -> str:
+    """Big headline accent number — the 'hero' tier. Gold by default."""
+    if color is None:
+        color = _th.current_theme()["gold"]
+    return (
+        f"color:{color};font-size:{_th.fs(_th.tr(size))};font-weight:250;background:transparent;"
+        f"font-family:'Segoe UI Light','Microsoft YaHei UI Light','Microsoft YaHei',sans-serif;"
+        f"letter-spacing:{_th.dp(0.5)}px;"
     )
 
 
@@ -124,7 +142,7 @@ def _tilt_color(tilt):
 class SectionTitle(QWidget):
     """Accent short-bar + letter-spaced label section heading."""
 
-    def __init__(self, text, parent=None, size=12):
+    def __init__(self, text, parent=None, size=12, gold=True):
         super().__init__(parent)
         lo = QHBoxLayout(self)
         lo.setContentsMargins(0, 0, 0, 0)
@@ -132,11 +150,12 @@ class SectionTitle(QWidget):
         bar = QFrame()
         bar.setFixedSize(_th.dp(3), _th.dp(15))
         bar.setStyleSheet(
-            f"background:{_tkey('accent')};border-radius:{_th.dp(1)}px;border:none;")
+            f"background:{_th.current_theme()['gold'] if gold else _tkey('accent')};"
+            f"border-radius:{_th.dp(1)}px;border:none;")
         lo.addWidget(bar)
         self._lbl = QLabel(text)
         self._lbl.setStyleSheet(
-            f"color:{_tkey('text')};font-size:{_th.fs(size)};font-weight:600;"
+            f"color:{_tkey('text')};font-size:{_th.fs(_th.tr(size))};font-weight:600;"
             f"letter-spacing:{_th.dp(2)}px;background:transparent;")
         lo.addWidget(self._lbl)
         lo.addStretch()

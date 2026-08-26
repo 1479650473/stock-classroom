@@ -4,13 +4,13 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QFrame, QAbstractItemView,
     QPushButton)
 from frontend.platform.theme import (
-    dp, dps, fs,
+    dp, dps, fs, tr,
     C_BG, C_PANEL, C_BORDER, C_BORDER_SOFT, C_TEXT, C_SUBTEXT, C_FAINT,
-    C_ACCENT, C_UP as C_RISE, C_DOWN as C_FALL, C_RAISED as C_HOVER,
-    qss_table, style_h1, style_label, style_caption,
+    C_ACCENT, C_GOLD, C_UP as C_RISE, C_DOWN as C_FALL, C_RAISED as C_HOVER,
+    qss_table, style_h1, style_label, style_caption, style_title,
 )
 from frontend.platform.premium import (
-    PAL, card_qss, value_ss, label_ss, SectionTitle, SplitBar, well,
+    PAL, card_qss, value_ss, label_ss, hero_ss, SectionTitle, SplitBar, well,
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QFont
@@ -22,6 +22,9 @@ INDEX_MAP = {
     "sz399006": "创业板指", "sh000688": "科创50",
     "sh000300": "沪深300",
 }
+# Only codes that actually exist in kline_daily render; the rest gracefully skip.
+_PRESENT = {c for c in INDEX_MAP}
+
 
 class MarketPanel(QWidget):
     def __init__(self, parent=None):
@@ -34,48 +37,69 @@ class MarketPanel(QWidget):
 
     def _build_ui(self):
         lo = QVBoxLayout(self)
-        lo.setContentsMargins(8, 8, 8, 8)
-        lo.setSpacing(8)
+        lo.setContentsMargins(dp(14), dp(12), dp(14), dp(12))
+        lo.setSpacing(dp(12))
 
+        # ── Page header: title + subtitle ──
+        head = QHBoxLayout(); head.setSpacing(dp(10))
+        title = QLabel("市场全景")
+        title.setStyleSheet(style_title())
+        head.addWidget(title)
+        cap = QLabel("大盘指数 · 板块热度 · 涨跌分布")
+        cap.setStyleSheet(label_ss(size=10) + f"color:{C_FAINT};padding-top:{dp(4)}px;")
+        head.addWidget(cap)
+        head.addStretch()
+        lo.addLayout(head)
+
+        # ── Index hero cards ──
         self.card_row = QHBoxLayout()
-        self.card_row.setSpacing(8)
+        self.card_row.setSpacing(dp(10))
         lo.addLayout(self.card_row)
 
-        self.bar_widgets = {}
-        bar = QFrame()
-        bar.setObjectName("card")
-        bar.setStyleSheet(card_qss("card"))
+        # ── Breadth glass: 今日涨跌分布 ──
+        bar = well("card")
         bl = QVBoxLayout(bar)
-        bl.setContentsMargins(dp(14), dp(10), dp(14), dp(10))
+        bl.setContentsMargins(dp(16), dp(12), dp(16), dp(12))
         bl.setSpacing(dp(8))
+        bt = QHBoxLayout(); bt.setSpacing(dp(8))
+        btL = SectionTitle("今日涨跌分布")
+        bt.addWidget(btL); bt.addStretch()
+        self._date_lbl = QLabel("--")
+        self._date_lbl.setStyleSheet(label_ss(size=10) + f"color:{C_FAINT};")
+        bt.addWidget(self._date_lbl)
+        bl.addLayout(bt)
 
         stats_row = QHBoxLayout()
-        stats_row.setSpacing(dp(8))
-        for key, text in [("date", "日期"), ("up", "上涨"), ("dn", "下跌"),
+        stats_row.setSpacing(dp(24))
+        self.bar_widgets = {}
+        for key, text in [("up", "上涨"), ("dn", "下跌"), ("flat", "平盘"),
                           ("cnt", "总数"), ("vol", "成交额")]:
-            col = QVBoxLayout()
-            col.setSpacing(0)
+            col = QVBoxLayout(); col.setSpacing(2)
             lbl = QLabel(text)
-            lbl.setStyleSheet(label_ss(size=8))
+            lbl.setStyleSheet(label_ss(size=10, gold=True))
             col.addWidget(lbl)
             w = QLabel("--")
-            w.setStyleSheet(value_ss(color=C_SUBTEXT, size=13))
-            col.addWidget(w)
-            stats_row.addLayout(col, 1)
+            w.setStyleSheet(value_ss(size=15))
             self.bar_widgets[key] = w
+            col.addWidget(w)
+            stats_row.addLayout(col)
+        stats_row.addStretch()
         bl.addLayout(stats_row)
-
-        # 今日涨跌分布 (市场宽度图表)
         self._split = SplitBar()
+        self._split.setMinimumHeight(dp(20))
         bl.addWidget(self._split)
-        cap = QLabel("今日涨跌分布 · 上涨/下跌/平盘 家数占比")
-        cap.setStyleSheet(label_ss(size=8) + "padding:0 2px;")
-        bl.addWidget(cap)
+        bl.addSpacing(dp(2))
+        cap2 = QLabel("上涨 / 下跌 / 平盘 家数占比")
+        cap2.setStyleSheet(label_ss(size=9) + f"color:{C_FAINT};")
+        bl.addWidget(cap2)
         lo.addWidget(bar)
 
+        # ── 板块 Tabs ──
         self._sector_type = "industry"
-        self._sector_tabs = QHBoxLayout()
-        self._sector_tabs.setSpacing(4)
+        tabs = QHBoxLayout(); tabs.setSpacing(dp(6))
+        st = SectionTitle("板块表现")
+        tabs.addWidget(st)
+        tabs.addStretch()
         self._btn_ind = QPushButton("行业板块")
         self._btn_ind.setCheckable(True)
         self._btn_ind.setChecked(True)
@@ -86,12 +110,11 @@ class MarketPanel(QWidget):
         self._btn_cpt.clicked.connect(lambda: (setattr(self, "_sector_type", "concept"),
             self._btn_cpt.setChecked(True), self._btn_ind.setChecked(False), self._load_sectors()))
         for btn in [self._btn_ind, self._btn_cpt]:
-            btn.setFixedHeight(dp(26))
+            btn.setFixedHeight(dp(28))
             btn.setCursor(Qt.PointingHandCursor)
             btn.setObjectName("indBtn")
-            self._sector_tabs.addWidget(btn)
-        self._sector_tabs.addStretch()
-        lo.addLayout(self._sector_tabs)
+            tabs.addWidget(btn)
+        lo.addLayout(tabs)
 
         self.table = QTableWidget()
         self.table.setStyleSheet(qss_table())
@@ -162,27 +185,40 @@ class MarketPanel(QWidget):
 
             idx_codes = list(INDEX_MAP.keys())
 
-            idx_rows = conn.execute(
-                "SELECT code, close FROM kline_daily "
-                "WHERE code IN (%s) AND date = ?" % ",".join("?" for _ in idx_codes),
-                idx_codes + [d_latest]
-            ).fetchall()
-            idx_prev = conn.execute(
-                "SELECT code, close FROM kline_daily "
-                "WHERE code IN (%s) AND date = ?" % ",".join("?" for _ in idx_codes),
-                idx_codes + [d_prev]
-            ).fetchall()
-            idx_map = dict(idx_rows)
-            idx_prev_map = dict(idx_prev)
+            # Each index has its own data freshness (they lag the global max).
+            # Look up the LATEST date per index so stale indices still show a real
+            # price, not 0.00. Indices with zero rows are dropped entirely.
+            idx_final = {}
+            for code in idx_codes:
+                latest = conn.execute(
+                    "SELECT MAX(date) FROM kline_daily WHERE code=?", (code,)
+                ).fetchone()[0]
+                if not latest:
+                    continue
+                prev = conn.execute(
+                    "SELECT MAX(date) FROM kline_daily WHERE code=? AND date<?", (code, latest)
+                ).fetchone()[0]
+                cur = conn.execute(
+                    "SELECT close FROM kline_daily WHERE code=? AND date=?", (code, latest)
+                ).fetchone()
+                prv = conn.execute(
+                    "SELECT close FROM kline_daily WHERE code=? AND date=?", (code, prev)
+                ).fetchone() if prev else None
+                idx_final[code] = {
+                    "price": cur[0] if cur else None,
+                    "prev": prv[0] if prv else None,
+                }
 
             indices = []
             for code in idx_codes:
-                cur = idx_map.get(code)
-                prv = idx_prev_map.get(code)
+                if code not in idx_final or idx_final[code]["price"] is None:
+                    continue
+                cur = idx_final[code]["price"]
+                prv = idx_final[code]["prev"]
                 cp = (cur - prv) / prv * 100 if cur and prv else 0
                 indices.append({
                     "code": code, "name": INDEX_MAP[code],
-                    "price": cur or 0, "change_pct": round(cp, 2),
+                    "price": cur, "change_pct": round(cp, 2),
                 })
 
             today_rows = conn.execute(
@@ -225,7 +261,7 @@ class MarketPanel(QWidget):
 
         for d in indices:
             card = well("card")
-            card.setFixedSize(dp(172), dp(76))
+            card.setFixedSize(dp(150), dp(96))
             card.setCursor(Qt.PointingHandCursor)
             card._code = d.get("code", "")
             card._name = d.get("name", "")
@@ -240,36 +276,39 @@ class MarketPanel(QWidget):
             card.mousePressEvent = _make_click(card._code, card._name)
 
             cl = QVBoxLayout(card)
-            cl.setContentsMargins(dp(12), dp(8), dp(12), dp(8))
-            cl.setSpacing(0)
+            cl.setContentsMargins(dp(12), dp(9), dp(12), dp(9))
+            cl.setSpacing(2)
 
             nm = QLabel(d.get("name", ""))
-            nm.setStyleSheet(label_ss(size=9))
+            nm.setStyleSheet(label_ss(size=10, gold=True))
             cl.addWidget(nm)
 
             p = QLabel("{:.2f}".format(d.get("price", 0)))
-            p.setStyleSheet(value_ss(color=C_TEXT, size=15))
+            p.setStyleSheet(hero_ss(size=17))
             cl.addWidget(p)
 
             chg = d.get("change_pct", 0)
             color = C_RISE if chg >= 0 else C_FALL
             c = QLabel("{}{:.2f}%".format("+" if chg >= 0 else "", chg))
-            c.setStyleSheet(f"color:{color};font-size:{fs(12)};font-weight:600;background:transparent")
+            c.setStyleSheet(f"color:{color};font-size:{fs(tr(12))};font-weight:600;background:transparent")
             cl.addWidget(c)
 
             self.card_row.addWidget(card)
+        if not indices:
+            self.card_row.addStretch()
 
         fmt_vol = lambda v: "{:.0f}亿".format(v / 1e8) if v else "--"
-        self.bar_widgets["date"].setText(stats.get("date", "--"))
-        self.bar_widgets["date"].setStyleSheet(value_ss(color=C_TEXT, size=13))
+        self._date_lbl.setText(str(stats.get("date", "--")))
         self.bar_widgets["up"].setText(str(stats.get("up", 0)))
-        self.bar_widgets["up"].setStyleSheet(value_ss(color=C_RISE, size=14))
+        self.bar_widgets["up"].setStyleSheet(value_ss(size=15, gold=True))
         self.bar_widgets["dn"].setText(str(stats.get("dn", 0)))
-        self.bar_widgets["dn"].setStyleSheet(value_ss(color=C_FALL, size=14))
+        self.bar_widgets["dn"].setStyleSheet(value_ss(size=15, gold=True))
+        self.bar_widgets["flat"].setText(str(stats.get("flat", 0)))
+        self.bar_widgets["flat"].setStyleSheet(value_ss(size=15))
         self.bar_widgets["cnt"].setText(str(stats.get("count", 0)))
-        self.bar_widgets["cnt"].setStyleSheet(value_ss(color=C_TEXT, size=14))
+        self.bar_widgets["cnt"].setStyleSheet(value_ss(size=15))
         self.bar_widgets["vol"].setText(fmt_vol(stats.get("volume", 0)))
-        self.bar_widgets["vol"].setStyleSheet(value_ss(color=C_SUBTEXT, size=13))
+        self.bar_widgets["vol"].setStyleSheet(value_ss(size=15))
         # 今日涨跌分布图
         self._split.set_data(stats.get("up", 0), stats.get("dn", 0), stats.get("flat", 0))
 

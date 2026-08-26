@@ -11,9 +11,9 @@ from PyQt5.QtCore import Qt, QTimer, QRectF
 from PyQt5.QtGui import QPainter, QColor, QLinearGradient
 
 from .theme import (
-    STYLE, dp, dps, fs,
+    STYLE, dp, dps, fs, tr,
     C_BG, C_PANEL, C_BORDER, C_BORDER_SOFT, C_TEXT, C_SUBTEXT, C_FAINT,
-    C_ACCENT, C_RAISED, C_DOWN,
+    C_ACCENT, C_RAISED, C_DOWN, C_GOLD,
 )
 from .log_window import LogStream, LogWindow
 from .plugin_base import PlatformBus, PlatformServices, PluginRegion
@@ -272,7 +272,7 @@ class PlatformShell(QMainWindow):
 
     def _build_topbar(self) -> QFrame:
         topbar = QFrame()
-        topbar.setFixedHeight(dp(46))
+        topbar.setFixedHeight(dp(52))
         topbar.setStyleSheet(f"border-bottom:1px solid {C_BORDER_SOFT};")
         tl = QHBoxLayout(topbar)
         tl.setContentsMargins(dp(14), 0, dp(10), 0)
@@ -281,17 +281,19 @@ class PlatformShell(QMainWindow):
         # Brand block
         lbl_brand = QLabel("stock-classroom")
         lbl_brand.setStyleSheet(
-            f"color:{C_ACCENT};font-size:{fs(14)};font-weight:700;border:none;background:transparent;")
+            f"color:{C_GOLD};font-size:{fs(18)};font-weight:700;border:none;background:transparent;"
+            f"letter-spacing:{dp(1)}px;")
         tl.addWidget(lbl_brand)
 
         chip = QLabel(APP_VERSION)
         chip.setStyleSheet(
-            f"color:{C_FAINT};font-size:{fs(9)};border:1px solid {C_BORDER};"
-            f"border-radius:{dps(7)};padding:0 {dps(6)};background:transparent;")
-        chip.setFixedHeight(dp(15))
+            f"color:{C_GOLD};font-size:{fs(tr(13))};border:1px solid {C_BORDER};"
+            f"border-top:1px solid {C_BORDER_SOFT};border-radius:{dps(7)};padding:0 {dps(6)};"
+            f"background:transparent;font-weight:600;")
+        chip.setFixedHeight(dp(21))
         chip.setAlignment(Qt.AlignCenter)
         tl.addWidget(chip)
-        tl.addSpacing(dp(10))
+        tl.addSpacing(dp(12))
 
         # TOPBAR plugin slots: search next to brand, icon actions on the right
         icon_order = {"agent": 0, "settings": 1}
@@ -316,14 +318,14 @@ class PlatformShell(QMainWindow):
 
         refresh = QPushButton("刷新")
         refresh.setObjectName("refreshBtn")
-        refresh.setFixedHeight(dp(28))
+        refresh.setFixedHeight(dp(30))
         refresh.setCursor(Qt.PointingHandCursor)
         refresh.setToolTip("刷新当前面板数据")
         refresh.clicked.connect(lambda: self._plugin_mgr.refresh_current())
         tl.addWidget(refresh)
 
         log_btn = QPushButton("日志")
-        log_btn.setFixedHeight(dp(28))
+        log_btn.setFixedHeight(dp(30))
         log_btn.setCursor(Qt.PointingHandCursor)
         log_btn.setToolTip("查看运行日志")
         log_btn.clicked.connect(lambda: self._log_window.show()
@@ -354,11 +356,11 @@ class PlatformShell(QMainWindow):
         btn = QPushButton()
         btn.setObjectName("navBtn")
         btn.setCheckable(True)
-        btn.setFixedSize(dp(54), dp(50))
+        btn.setFixedSize(dp(56), dp(52))
         btn.setCursor(Qt.PointingHandCursor)
         btn.setToolTip(name)
         btn.setText(f"{icon}\n{name}")
-        btn.setStyleSheet(f"QPushButton#navBtn{{font-size:{fs(10)};}}")
+        btn.setStyleSheet(f"QPushButton#navBtn{{font-size:{fs(tr(10))};letter-spacing:0.5px;}}")
         btn.clicked.connect(lambda checked, pid=pid: self._activate_plugin(pid))
         return btn
 

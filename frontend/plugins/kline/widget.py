@@ -10,17 +10,19 @@ from frontend.platform.theme import (
 _BG=QColor(C_BG); _PANEL=QColor(C_PANEL); _BORDER=QColor(C_BORDER_SOFT)
 _TEXT=QColor(C_TEXT); _TEXTS=QColor(C_SUBTEXT); _ACCENT=QColor(C_ACCENT)
 _UP=QColor(C_UP); _DOWN=QColor(C_DOWN); _GRID=QColor(C_BORDER_SOFT)
+_GOLD=QColor(_ct()["gold"])
 _MA5=QColor('#F0A56A'); _MA10=QColor('#5DADE2'); _MA20=QColor('#AF7AC5')
 _MA60=QColor('#F7DC6F'); _MVOL=QColor('#6C757D')
 
 
 def resync_theme():
     """Re-read the chart colours from the ACTIVE theme (for live theme switch)."""
-    global _BG, _PANEL, _BORDER, _TEXT, _TEXTS, _ACCENT, _UP, _DOWN, _GRID
+    global _BG, _PANEL, _BORDER, _TEXT, _TEXTS, _ACCENT, _UP, _DOWN, _GRID, _GOLD
     t = _ct()
     _BG = QColor(t["bg"]); _PANEL = QColor(t["panel"]); _BORDER = QColor(t["border_soft"])
     _TEXT = QColor(t["text"]); _TEXTS = QColor(t["sub"]); _ACCENT = QColor(t["accent"])
     _UP = QColor(t["up"]); _DOWN = QColor(t["down"]); _GRID = QColor(t["border_soft"])
+    _GOLD = QColor(t["gold"])
 
 class KlineWidget(QWidget):
     def __init__(s):
@@ -191,20 +193,32 @@ class KlineWidget(QWidget):
         # Headline shows the LATEST bar (bars are ascending by date).
         b0=s._bars[-1]; c=float(b0['close']); ch=c-float(b0['open'])
         pct=ch/max(float(b0['open']),0.01)*100; up=ch>=0
-        f=p.font(); f.setBold(True); f.setPointSize(fsi(13)); p.setFont(f)
-        p.setPen(_ACCENT)
+        # Tier 1: symbol (gold, big) + name (light, medium) | date + days
+        f=p.font(); f.setBold(True); f.setPointSize(fsi(15)); p.setFont(f)
+        p.setPen(_GOLD)
         p.drawText(QRectF(dp(10),0,dp(200),H),Qt.AlignVCenter,f'{s._symbol}')
         f.setBold(False); f.setPointSize(fsi(12)); p.setFont(f)
         p.setPen(_TEXT)
-        p.drawText(QRectF(dp(80),0,dp(160),H),Qt.AlignVCenter,f'{s._name}')
-        p.setPen(_BORDER)
-        p.drawText(QRectF(dp(230),0,dp(30),H),Qt.AlignVCenter,'|')
-        p.setPen(_TEXTS)
-        p.drawText(QRectF(dp(250),0,dp(160),H),Qt.AlignVCenter,f"{len(s._bars)} 日  {b0.get('date','')}")
+        p.drawText(QRectF(dp(84),0,dp(180),H),Qt.AlignVCenter,f'{s._name}')
+        # Tier 2 (right): price (bold, colored) + change% + date·days
         p.setPen(_UP if up else _DOWN)
+        f.setBold(True); f.setPointSize(fsi(14)); p.setFont(f)
         ar='\u25b2' if up else '\u25bc'
-        f.setBold(True); p.setFont(f)
-        p.drawText(QRectF(dp(370),0,dp(300),H),Qt.AlignVCenter,f'{ar} {c:.2f}  {ch:+.2f} ({pct:+.2f}%)')
+        price_txt=f'{c:.2f}'
+        wt=p.fontMetrics().width(price_txt)
+        p.drawText(QRectF(W-dp(10)-wt,0,wt+dp(20),H),Qt.AlignVCenter,price_txt)
+        # change % right of price
+        f.setPointSize(fsi(11)); p.setFont(f); f.setBold(False)
+        ch_txt=f'({ch:+.2f} {pct:+.2f}%)'
+        wtc=p.fontMetrics().width(ch_txt)
+        x=W-dp(10)-wt-dp(20)-wtc-dp(8)
+        p.setPen(_UP if up else _DOWN)
+        p.drawText(QRectF(x,0,wtc+dp(20),H),Qt.AlignVCenter,ch_txt)
+        # date · days (muted, far left-mid)
+        p.setPen(_TEXTS); f.setPointSize(fsi(10)); p.setFont(f)
+        meta=f"{b0.get('date','')}  ·  {len(s._bars)}日"
+        wm=p.fontMetrics().width(meta)
+        p.drawText(QRectF(W-dp(10)-wt-dp(20)-wtc-dp(8)-dp(16)-wm,0,wm,17),Qt.AlignVCenter,meta)
 
     def _draw_cross(s,p,W,H,ml,cw,bw,vs,ve,py,ph):
         b=s._bars[s._ch]

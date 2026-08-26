@@ -37,6 +37,8 @@ THEMES: Dict[str, dict] = {
         "text": "#E8EAED", "sub": "#9AA3B0", "faint": "#5C6670",
         "accent": "#7AA2F7", "accent_hover": "#8FB4FF",
         "accent_dim": "rgba(122,162,247,0.12)", "on_accent": "#0A0C10",
+        "gold": "#D4A574", "gold_hover": "#E6C290",
+        "gold_dim": "rgba(212,165,116,0.16)",
         "up": "#E5484D", "down": "#3FB950", "info": "#7AA2F7", "warn": "#D29922",
         # card: flat panel + hairline + subtle top light (no heavy gradient)
         "card_stops": ["#15181D", "#12151A", "#0E1115"],
@@ -60,7 +62,9 @@ THEMES: Dict[str, dict] = {
         "text": "#E8E3DA", "sub": "#9AA0A6", "faint": "#5E646B",
         "accent": "#E0A050", "accent_hover": "#EDB97A",
         "accent_dim": "rgba(224,160,80,0.12)", "on_accent": "#1A120A",
-        "up": "#E0564D", "down": "#3FB950", "info": "#E0A050", "warn": "#D29922",
+        "gold": "#E0A96A", "gold_hover": "#F2C48C",
+        "gold_dim": "rgba(224,169,106,0.18)",
+        "up": "#E0564D", "down": "#3FB950", "info": "#E0A050", "warn": "#E9B44C",
         # machined inner well: set in theme template via obsidian-specific rules
         "card_stops": ["#111315", "#0D0F11", "#0A0B0D"],
         "card_border": "#000000", "card_border_top": "#2A2F34",
@@ -83,6 +87,8 @@ THEMES: Dict[str, dict] = {
         "text": "#1C1917", "sub": "#8A8177", "faint": "#B4AC9F",
         "accent": "#8E3A2F", "accent_hover": "#A04A3D",
         "accent_dim": "rgba(142,58,47,0.10)", "on_accent": "#F7F2EA",
+        "gold": "#A9812E", "gold_hover": "#C29B45",
+        "gold_dim": "rgba(169,129,46,0.16)",
         "up": "#8E3A2F", "down": "#3F7D50", "info": "#8E3A2F", "warn": "#B07A2A",
         # paper: light surface + hairline + crisp
         "card_stops": ["#FDFBF5", "#FBF8F2", "#F6F1E6"],
@@ -139,7 +145,8 @@ def set_theme(key: str) -> None:
         "C_BORDER_SOFT": t["border_soft"], "C_TEXT": t["text"],
         "C_SUBTEXT": t["sub"], "C_FAINT": t["faint"], "C_ACCENT": t["accent"],
         "C_ACCENT_HOVER": t["accent_hover"], "C_ACCENT_DIM": t["accent_dim"],
-        "C_ON_ACCENT": t["on_accent"], "C_UP": t["up"], "C_DOWN": t["down"],
+        "C_ON_ACCENT": t["on_accent"], "C_GOLD": t["gold"], "C_GOLD_HOVER": t["gold_hover"],
+        "C_UP": t["up"], "C_DOWN": t["down"],
         "C_INFO": t["info"], "C_WARN": t["warn"],
     })
     globals()["COLORS"].update({
@@ -158,6 +165,37 @@ set_theme(DEFAULT_THEME)
 # ──────────────────────────────────────────────────────────────
 #  Scaling helpers
 # ──────────────────────────────────────────────────────────────
+
+# ──────────────────────────────────────────────────────────────
+#  Type hierarchy — contrast-corrected authoring scale
+# ──────────────────────────────────────────────────────────────
+#  Panels author labels/values with a small "design" int (e.g. 8..18).
+#  tr(size) maps that authoring size to a RENDERED point size through a
+#  contrast curve, so the UI actually reads on screen: tiny authoring
+#  sizes get a readability floor (no more 10px illegible labels), large
+#  authoring sizes get a boost (headline numbers dominate). fs() then
+#  pixels it. This is the single lever that restores 大小对比 across
+#  every panel that already calls label_ss()/value_ss().
+def tr(size: int) -> int:
+    """Type-resolve an authoring size to a logical size (hierarchy offsets only).
+
+    Returns a *logical* size; fs() converts it to px (the single scaling step).
+    Offsets build contrast: tiny authoring sizes get a readability floor, large
+    ones get a boost — so captions are legible and headline numbers dominate.
+    """
+    if size <= 9:    return max(11, size + 3)          # captions/labels: legible floor
+    if size <= 12:   return size + 2                   # body
+    if size <= 15:   return size + 3                   # numbers / emphasis
+    return size + 6                                    # hero / headline
+
+# Semantic tiers (authoring sizes) — panels may use these names directly.
+TIER = {"cap": 8, "label": 10, "body": 13, "num": 15, "h1": 17, "hero": 21}
+
+
+def tier(name: str) -> int:
+    """Resolve a semantic tier name to a rendered point size."""
+    return tr(TIER.get(name, 13))
+
 
 def fs(size: int) -> str:
     return f"{round(size * FONT_BASE / 13)}px"
@@ -515,13 +553,13 @@ def _ivory_spinbox() -> str:
 
 def qss_table() -> str:
     return (f"QTableWidget{{background:{_t('bg')};color:{_t('text')};border:1px solid {_t('border')};"
-            f"border-radius:{dps(7)};gridline-color:{_t('border_soft')};font-size:{fs(11)};}}"
+            f"border-radius:{dps(7)};gridline-color:{_t('border_soft')};font-size:{fs(13)};}}"
             f"QTableWidget::item{{padding:{dps(4)} {dps(9)};border-bottom:1px solid {_t('border_soft')};}}"
             f"QTableWidget::item:selected{{background:{_t('sel_bg')};color:{_t('sel_fg')};}}"
             f"QTableWidget::item:hover:!selected{{background:{_t('raised')};}}"
             f"QHeaderView::section{{background:{_t('panel')};color:{_t('sub')};border:none;"
-            f"border-bottom:1px solid {_t('border')};padding:{dps(5)} {dps(9)};font-weight:600;"
-            f"font-size:{fs(10)};letter-spacing:0.5px;}}")
+            f"border-bottom:1px solid {_t('border')};padding:{dps(6)} {dps(9)};font-weight:600;"
+            f"font-size:{fs(12)};letter-spacing:0.5px;}}")
 
 
 def qss_list() -> str:
@@ -533,23 +571,29 @@ def qss_list() -> str:
 
 
 def style_h1() -> str:
-    return f"color:{_t('text')};font-size:{fs(15)};font-weight:700;background:transparent;"
+    return f"color:{_t('text')};font-size:{fs(tr(15))};font-weight:700;background:transparent;"
 
 
 def style_h2() -> str:
-    return f"color:{_t('text')};font-size:{fs(13)};font-weight:600;background:transparent;"
+    return f"color:{_t('text')};font-size:{fs(tr(13))};font-weight:600;background:transparent;"
 
 
 def style_label() -> str:
-    return f"color:{_t('sub')};font-size:{fs(11)};background:transparent;"
+    return f"color:{_t('sub')};font-size:{fs(tr(11))};background:transparent;"
 
 
 def style_caption() -> str:
-    return f"color:{_t('faint')};font-size:{fs(10)};background:transparent;"
+    return f"color:{_t('faint')};font-size:{fs(tr(10))};background:transparent;"
+
+
+def style_title() -> str:
+    """Page-level headline (h1 tier), letter-spaced, from the accent."""
+    return (f"color:{_t('text')};font-size:{fs(tr(15))};font-weight:600;"
+            f"letter-spacing:{dp(1)}px;background:transparent;")
 
 
 def style_num(color: str = None, size: int = 15) -> str:
-    return (f"color:{color or _t('text')};font-size:{fs(size)};font-weight:700;"
+    return (f"color:{color or _t('text')};font-size:{fs(tr(size))};font-weight:700;"
             f"background:transparent;font-family:'Consolas','Segoe UI','Microsoft YaHei';")
 
 
@@ -613,7 +657,7 @@ QTableWidget::item {{ padding: $dp4 $dp9; border-bottom: 1px solid {t['border_so
 QTableWidget::item:selected {{ background: {t['sel_bg']}; color: {t['sel_fg']}; }}
 QTableWidget::item:hover:!selected {{ background: {t['raised']}; }}
 QHeaderView::section {{ background: {t['panel']}; color: {t['sub']}; border:none;
-    border-bottom: 1px solid {t['border']}; padding: $dp5 $dp9; font-weight:600; font-size: $fs10; letter-spacing: 0.5px;}}
+    border-bottom: 1px solid {t['border']}; padding: $dp6 $dp9; font-weight:600; font-size: $fs12; letter-spacing: 0.5px;}}
 QHeaderView::section:horizontal {{ border-right: 1px solid {t['border_soft']}; }}
 QTableCornerButton::section {{ background: {t['panel']}; border:none; }}
 QLineEdit {{ background: {t['panel']}; color: {t['text']}; border: 1px solid {t['border']};
@@ -673,10 +717,10 @@ QPushButton:checked {{ background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {
 QPushButton#refreshBtn {{ background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {t['accent_grad'][0]}, stop:1 {t['accent_grad'][1]}); color: {t['on_accent']}; border: 1px solid {t['accent_border']}; font-weight:600; }}
 QPushButton#navBtn {{ background: transparent; color: {t['sub']}; border:none; border-radius: $dp8; font-weight:500; }}
 QPushButton#navBtn:hover {{ background: {t['raised']}; color: {t['text']}; }}
-QPushButton#navBtn:checked {{ background: {t['raised']}; color: {t['sel_fg']}; border-left: 2px solid {t['accent']}; font-weight:600; }}
+QPushButton#navBtn:checked {{ background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 {t['gold_dim']}, stop:1 rgba(0,0,0,0)); color: {t['gold']}; border-left: 3px solid {t['gold']}; font-weight:600; }}
 QPushButton#indBtn {{ background: {t['panel']}; color: {t['sub']}; border: 1px solid {t['border']}; border-top: 1px solid {t['border_top']}; border-radius: $dp4; padding: $dp3 $dp12; font-size: $fs11; }}
-QPushButton#indBtn:hover {{ color: {t['text']}; border-top-color: {t['accent']}; }}
-QPushButton#indBtn:checked {{ background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {t['accent_grad'][0]}, stop:1 {t['accent_grad'][1]}); color: {t['on_accent']}; border-color: {t['accent_border']}; font-weight:600; }}
+QPushButton#indBtn:hover {{ color: {t['text']}; border-top-color: {t['gold']}; }}
+QPushButton#indBtn:checked {{ background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {t['gold_hover']}, stop:1 {t['gold']}); color: #14110B; border-color: {t['gold']}; font-weight:600; }}
 """
 
 
@@ -757,7 +801,7 @@ QHeaderView::section {{
     color: {t['sub']}; border: none;
     border-bottom: 1px solid #000;
     border-right: 1px solid #050607;
-    padding: $dp5 $dp9; font-weight: 600; font-size: $fs10; letter-spacing: 0.5px;
+    padding: $dp6 $dp9; font-weight: 600; font-size: $fs12; letter-spacing: 0.5px;
 }}
 QHeaderView::section:hover {{ color: {t['text']}; border-bottom-color: {t['accent']}; }}
 QTableCornerButton::section {{ background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {t['panel']}, stop:1 {t['bg']}); border: none; border-bottom: 1px solid #000; }}
