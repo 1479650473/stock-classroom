@@ -10,7 +10,7 @@
 结果写入 data/update_marker.json + logs/update_daily_YYYYMMDD.log
 """
 import os, sys, json, time, logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -21,6 +21,37 @@ LOGDIR = os.path.join(ROOT, 'logs')
 os.makedirs(LOGDIR, exist_ok=True)
 
 MARKER = os.path.join(DATA, 'update_marker.json')
+CAL_FILE = os.path.join(DATA, 'trade_calendar.json')
+
+
+def _trade_calendar(reload=False):
+    """交易日集合(缓存到 data/trade_calendar.json, 离线可用). 失败返回 None."""
+    import pandas as pd
+    if os.path.exists(CAL_FILE) and not reload:
+        try:
+            with open(CAL_FILE, encoding='utf-8') as f:
+                return set(json.load(f))
+        except Exception:
+            pass
+    try:
+        import akshare as ak
+        df = ak.tool_trade_date_hist_sina()
+        dates = {str(d)[:10] for d in df['trade_date']}
+        with open(CAL_FILE, 'w', encoding='utf-8') as f:
+            json.dump(sorted(dates), f, ensure_ascii=False)
+        return dates
+    except Exception as e:
+        return None
+
+
+def _is_trading_day(d=None, cal=None):
+    """d(YYYY-MM-DD) 是否交易日; 无日历缓存时默认 True(不误跳过)."""
+    d = d or datetime.now().strftime('%Y-%m-%d')
+    if cal is None:
+        cal = _trade_calendar()
+    if cal is None:
+        return True
+    return d in cal
 
 
 def _log():
@@ -67,6 +98,19 @@ def run(pool_only=False, skip_paper=False):
     t0 = time.time()
     lg.info('══ update_daily 开始 %s ══', datetime.now().isoformat(timespec='seconds'))
     out = {'started': datetime.now().isoformat(timespec='seconds'), 'steps': {}}
+
+    # 交易日检查(节假日/周末空跑幂等, 但跳过更干净)
+    cal = _trade_calendar()
+    today = datetime.now().strftime('%Y-%m-%d')
+    if cal is not None and today not in cal:
+        lg.info('  今日 %s 非交易日 → 跳过(日历 %d 天)', today, len(cal))
+        out['skipped'] = True
+        out['finished'] = datetime.now().isoformat(timespec='seconds')
+        out['elapsed'] = round(time.time() - t0, 1)
+        out['ok'] = True
+        with open(MARKER, 'w', encoding='utf-8') as f:
+            json.dump(out, f, ensure_ascii=False, indent=2)
+        return out
 
     from backend.strategy.factor_selector import build_wide_pool
     pool = build_wide_pool() or []

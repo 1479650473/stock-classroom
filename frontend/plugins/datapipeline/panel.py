@@ -71,6 +71,12 @@ class PipelinePanel(QWidget):
         self._last_status.setStyleSheet(
             f"color:{C_SUBTEXT};font-size:{fs(tr(12))};background:transparent")
         cl.addWidget(self._last_status)
+
+        # ── 每日自动更新状态 ──
+        self._auto_status = QLabel("每日自动更新: --")
+        self._auto_status.setStyleSheet(
+            f"color:{C_SUBTEXT};font-size:{fs(tr(12))};background:transparent")
+        cl.addWidget(self._auto_status)
         lo.addWidget(self._status_card)
 
         # ── Step table ──
@@ -147,6 +153,7 @@ class PipelinePanel(QWidget):
         if not self.db_path:
             return
         self._load_last_status()
+        self._load_auto_status()
         self._check_auto_update()
 
     def _load_last_status(self):
@@ -172,6 +179,56 @@ class PipelinePanel(QWidget):
                 self._last_status.setStyleSheet(f"color:{C_SUBTEXT};font-size:{fs(12)};background:transparent")
         except Exception:
             pass
+
+    def _load_auto_status(self):
+        """读 Windows 计划任务 + update_marker.json, 显示每日自动更新状态."""
+        # 计划任务(下一触发/是否启用)
+        task = ""
+        try:
+            import subprocess
+            r = subprocess.run(["schtasks", "/Query", "/TN", "StockClassroom-DailyUpdate", "/FO", "LIST"],
+                               capture_output=True, timeout=8)
+            # 中文 Windows 输出为 GBK; 抓日期(ASCII 数字, 不依赖中文)
+            raw = r.stdout
+            try:
+                out = raw.decode("gbk", errors="replace")
+            except Exception:
+                out = raw.decode("utf-8", errors="replace")
+            if r.returncode == 0:
+                import re
+                m = re.search(r"(\d{4}/\d{1,2}/\d{1,2}\s+\d{1,2}:\d{2}:\d{2})", out)
+                if m:
+                    task = "下次自动更新 " + m.group(1).replace("/", "-")
+                else:
+                    task = "自动更新已注册"
+            else:
+                task = "自动更新未注册"
+        except Exception:
+            task = "自动更新状态未知"
+        # marker 最近结果
+        marker = ""
+        try:
+            import json as _json
+            # self.db_path = <root>/data/kline.db → dirname×2 = 项目根
+            root = os.path.dirname(os.path.dirname(self.db_path))
+            mp = os.path.join(root, "data", "update_marker.json")
+            with open(mp, encoding="utf-8") as f:
+                m = _json.load(f)
+            dt = str(m.get("finished", ""))[:10]
+            if m.get("skipped"):
+                marker = f"· 最近 {dt} 非交易日跳过"
+            else:
+                marker = f"· 最近 {dt} {'完成' if m.get('ok') else '失败'}"
+        except Exception:
+            pass
+        if task:
+            self._auto_status.setText(f"每日自动更新: {task} {marker}")
+            self._auto_status.setStyleSheet(
+                f"color:{C_ACCENT};font-size:{fs(tr(12))};background:transparent")
+        else:
+            self._auto_status.setText("每日自动更新: 未注册")
+            self._auto_status.setStyleSheet(
+                f"color:{C_SUBTEXT};font-size:{fs(tr(12))};background:transparent")
 
     def _check_auto_update(self):
         try:
