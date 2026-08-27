@@ -410,6 +410,7 @@ def run_paper_multi(hp=20, top_k_pct=0.2, fwd_start="2024-01-01",
     names = list(contracts)
     sel = selected if selected in contracts else names[0]
     runs = {}
+    import gc
     for i, name in enumerate(names):
         if progress:
             progress(f"纸面盘 {i+1}/{len(names)} · {name}", round(12 + (i / len(names)) * 56, 0))
@@ -434,6 +435,12 @@ def run_paper_multi(hp=20, top_k_pct=0.2, fwd_start="2024-01-01",
             }
         except Exception as e:
             runs[name] = {"error": str(e)}
+        # 释放本策略大对象, 降低连续跑多策略的内存峰值(OOM 防: 小分配也失败)
+        try:
+            del fw
+            gc.collect()
+        except Exception:
+            pass
     if progress:
         progress("计算等权买持基准...", 78.0)
     grid = next((r['dates'] for r in runs.values()
