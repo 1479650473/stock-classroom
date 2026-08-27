@@ -10,6 +10,13 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QTimer, QRectF
 from PyQt5.QtGui import QPainter, QColor, QLinearGradient
 
+try:
+    import ctypes
+    from ctypes import wintypes
+    _HAS_CTYPES = True
+except Exception:
+    _HAS_CTYPES = False
+
 from .theme import (
     STYLE, dp, dps, fs, tr,
     C_BG, C_PANEL, C_BORDER, C_BORDER_SOFT, C_TEXT, C_SUBTEXT, C_FAINT,
@@ -109,6 +116,11 @@ class PlatformShell(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("stock-classroom")
+        # 自定义标题栏: 去掉系统蓝条边框(难看), 自绘主题化标题栏 + 原生拖拽/边缘缩放
+        self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, False)
+        self._drag_pos = None
+        self._win_resizing = False
 
         ws = "large"
         self._font_size = 13
@@ -161,6 +173,7 @@ class PlatformShell(QMainWindow):
         self._bus.status_message.connect(lambda msg: self.status.showMessage(msg))
         self._bus.log_message.connect(self._log_window.append)
         self._bus.navigate_plugin.connect(self._on_navigate)
+        self._bus.open_kline.connect(self._on_kline_request)
 
         # ── Plugin manager ──
         self._plugin_mgr = PluginManager(CONFIG_PATH, PLUGINS_DIR)
@@ -181,10 +194,9 @@ class PlatformShell(QMainWindow):
 
     def _activate_defaults(self):
         default_left = self._config.get("default_left", "market")
-        default_right = self._config.get("default_right", "kline")
-        for pid in [default_left, default_right]:
-            if pid in self._plugin_mgr.all_plugins():
-                self._activate_plugin(pid)
+        if default_left in self._plugin_mgr.all_plugins():
+            self._activate_plugin(default_left)
+        # 不默认启动 kline —— 右栏抽屉默认收起(左插件全屏), 点K线/双击股票才滑出
 
     # ──────────────────────────────────────────────────────────
     #  UI
@@ -227,7 +239,7 @@ class PlatformShell(QMainWindow):
 
         layout.addWidget(self._build_topbar())
 
-        # ── Main Splitter ──
+        # ── Main Splitter (右栏=抽屉, 默认收起; 开K线/手动展开才滑出) ──
         outer = QSplitter(Qt.Horizontal)
         outer.setHandleWidth(2)
 
@@ -242,6 +254,7 @@ class PlatformShell(QMainWindow):
         outer.addWidget(left_widget)
 
         right_widget = QWidget()
+        right_widget.setMinimumWidth(0)
         rl = QVBoxLayout(right_widget)
         rl.setContentsMargins(6, 6, 6, 6)
         rl.setSpacing(0)
@@ -249,9 +262,11 @@ class PlatformShell(QMainWindow):
         rl.addWidget(self._right_stack)
         outer.addWidget(right_widget)
 
-        outer.setSizes([360, 840])
+        self._outer = outer
+        self._drawer_visible = False
+        self._drawer_w = 780          # 展开宽度(小窗口取较窄)
         outer.setCollapsible(0, False)
-        outer.setCollapsible(1, False)
+        outer.setCollapsible(1, True)
         layout.addWidget(outer)
 
         # ── Watermark ──
@@ -333,6 +348,29 @@ class PlatformShell(QMainWindow):
                                 if self._log_window.isHidden()
                                 else self._log_window.hide())
         tl.addWidget(log_btn)
+
+        # 右栏抽屉(K线)开合开关 —— 平时左插件全屏, 点K线/双击股票才滑出
+        self._drawer_btn = QPushButton("K线")
+        self._drawer_btn.setObjectName("indBtn")
+        self._drawer_btn.setCheckable(True)
+        self._drawer_btn.setFixedHeight(dp(30))
+        self._drawer_btn.setCursor(Qt.PointingHandCursor)
+        self._drawer_btn.setToolTip("打开/收起右侧K线抽屉")
+        self._drawer_btn.clicked.connect(self._toggle_drawer)
+        tl.addWidget(self._drawer_btn)
+
+        # ── 窗口控制(自绘标题栏: 最小化/最大化/关闭) ──
+        tl.addSpacing(dp(4))
+        for txt, tip, slot in [("—", "最小化", self._win_minimize),
+                               ("□", "最大化/还原", self._win_maximize),
+                               ("✕", "关闭", self.close)]:
+            b = QPushButton(txt)
+            b.setObjectName("winBtn")
+            b.setFixedSize(dp(26), dp(26))
+            b.setCursor(Qt.PointingHandCursor)
+            b.setToolTip(tip)
+            b.clicked.connect(slot)
+            tl.addWidget(b)
         return topbar
 
     def _build_nav_rail(self) -> QWidget:
@@ -427,7 +465,9 @@ class PlatformShell(QMainWindow):
             self._place_in_stack(boundary, self._left_stack)
             self._route_companion(plugin)
         else:
+            # RIGHT区域(K线等): 放进右栏 + 展开抽屉
             self._place_in_stack(boundary, self._right_stack)
+            self._set_drawer(True)
 
     def _place_in_stack(self, widget, stack):
         for i in range(stack.count()):
@@ -438,21 +478,141 @@ class PlatformShell(QMainWindow):
         stack.setCurrentWidget(widget)
 
     def _route_companion(self, plugin):
+        """落地左插件后决定右栏(抽屉): 有companion→展开并显示; 无→收起(左插件全屏, 无死区).
+        默认永远不塞"空的 kline 占位" —— 只有真正点了股票/点了K线按钮才滑出."""
         companion = None
         try:
             companion = plugin.create_companion_widget()
         except Exception:
             companion = None
-
         if companion is not None:
             self._place_in_stack(companion, self._right_stack)
+            self._set_drawer(True)
             return
+        # 无 companion → 收起右栏, 左插件全屏
+        self._set_drawer(False)
 
+    def _ensure_kline(self):
+        """把 kline 插件放进右栏并激活."""
         right_id = self._config.get("default_right", "kline")
         self._plugin_mgr.activate(right_id)
         boundary = self._plugin_mgr.get_widget(right_id)
         if boundary:
             self._place_in_stack(boundary, self._right_stack)
+        return boundary
+
+    def _set_drawer(self, visible, kline=False):
+        """控制右栏抽屉: visible=True 展开(宽度 _drawer_w), False 收起(0)."""
+        self._drawer_visible = visible
+        if visible and kline:
+            self._ensure_kline()
+        total = max(self._outer.width(), 100)
+        if visible:
+            w = min(self._drawer_w, max(320, total - 420))
+            self._outer.setSizes([max(total - w, 60), w])
+        else:
+            self._outer.setSizes([total, 0])
+
+    def _toggle_drawer(self):
+        """顶部'K线'按钮: 展开显示kline / 收起."""
+        if self._drawer_visible:
+            self._set_drawer(False)
+        else:
+            self._set_drawer(True, kline=True)
+        self._update_drawer_btn()
+
+    def _update_drawer_btn(self):
+        try:
+            self._drawer_btn.setChecked(self._drawer_visible)
+        except Exception:
+            pass
+
+    def _on_kline_request(self, code, name):
+        """任意插件打开股票K线 → 展开右栏显示 kline."""
+        self._set_drawer(True, kline=True)
+        self._update_drawer_btn()
+
+    # ── 自绘标题栏: 窗口控制 + 拖拽 + 边缘缩放 ──
+    def _win_minimize(self):
+        self.showMinimized()
+
+    def _win_maximize(self):
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+
+    def _titlebar_hit_test(self, pos):
+        """返回标题栏可拖拽区(顶部 ~48px, 不含右上窗口控制钮). True=可拖拽."""
+        return pos.y() <= dp(48)
+
+    # WM_NCHITTEST —— 让无边框窗仍支持边缘/角缩放手柄(更像正经软件)
+    def nativeEvent(self, etype, message):
+        if _HAS_CTYPES and etype == b"windows_generic_MSG":
+            try:
+                msg = ctypes.cast(int(message), ctypes.POINTER(wintypes.MSG)).contents
+                if msg.message == 0x0084:  # WM_NCHITTEST
+                    gx, gy = msg.lParam & 0xFFFF, (msg.lParam >> 16) & 0xFFFF
+                    gx = ctypes.c_short(gx).value
+                    gy = ctypes.c_short(gy).value
+                    # 屏幕坐标 → 本窗口坐标
+                    local = self.mapFromGlobal(Qt.QPoint(gx, gy))
+                    # 边缘判定(8 方向)
+                    bw = 6
+                    if local.y() <= dp(48) and not self.isMaximized():
+                        # 标题栏 → HTCAPTION(可拖拽, 自动吸附)
+                        return True, 2  # HTCAPTION
+                    on_left = local.x() < bw
+                    on_right = local.x() > self.width() - bw
+                    on_top = local.y() < bw
+                    on_bottom = local.y() > self.height() - bw
+                    if on_top and on_left: return True, 13   # HTTOPLEFT
+                    if on_top and on_right: return True, 14  # HTTOPRIGHT
+                    if on_bottom and on_left: return True, 16  # HTBOTTOMLEFT
+                    if on_bottom and on_right: return True, 17  # HTBOTTOMRIGHT
+                    if on_left: return True, 10   # HTLEFT
+                    if on_right: return True, 11  # HTRIGHT
+                    if on_top: return True, 12    # HTTOP
+                    if on_bottom: return True, 15 # HTBOTTOM
+            except Exception:
+                pass
+        return super().nativeEvent(etype, message)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self._titlebar_hit_test(event.pos()):
+            win = self.windowHandle()
+            if win is not None and not self.isMaximized():
+                self._drag_pos = event.globalPos() - self.frameGeometry().topLeft()
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_pos is not None and event.buttons() & Qt.LeftButton and not self.isMaximized():
+            self.move(event.globalPos() - self._drag_pos)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_pos = None
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        # 双击标题栏空白区 → 最大化/还原
+        if self._titlebar_hit_test(event.pos()):
+            self._win_maximize()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # 窗口真正显示、宽高就绪后, 把右栏抽屉压到初始态(默认收起, 左插件全屏)
+        try:
+            QTimer.singleShot(50, lambda: self._set_drawer(self._drawer_visible))
+        except Exception:
+            pass
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

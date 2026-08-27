@@ -633,6 +633,16 @@ def _shared_parts(t: dict) -> str:
     selection-background-color: {t['sel_bg']};
     selection-color: {t['sel_fg']};
 }}
+QMainWindow {{
+    border: 1px solid {t['border']};
+    border-top: 1px solid {t['border_top']};
+}}
+QPushButton#winBtn {{
+    background: transparent; color: {t['sub']}; border: none; border-radius: $dp3;
+    font-size: $fs12; font-weight: 600;
+}}
+QPushButton#winBtn:hover {{ background: rgba(255,255,255,0.06); color: {t['text']}; }}
+QPushButton#winBtn:pressed {{ background: rgba(255,255,255,0.10); }}
 QFrame#card {{
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
         stop:0 {t['card_stops'][0]}, stop:0.5 {t['card_stops'][1]}, stop:1 {t['card_stops'][2]});
