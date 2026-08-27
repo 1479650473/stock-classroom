@@ -190,8 +190,11 @@ class PluginManager:
 
     def get_nav_items(self) -> List[Tuple[str, str, str, PluginRegion]]:
         """Return nav items in configured order: (id, name, icon, region)."""
+        hidden = set(self._config.get("nav_hidden", []))
         items = []
         for pid in self._nav_order:
+            if pid in hidden:
+                continue
             if pid in self._plugins:
                 p = self._plugins[pid]
                 if p.region != PluginRegion.TOPBAR:
@@ -208,17 +211,20 @@ class PluginManager:
             return [{"label": "", "items": self.get_nav_items()}]
         by_pid = {pid: (pid, p.name, p.icon, p.region)
                   for pid, p in self._plugins.items() if p.region != PluginRegion.TOPBAR}
+        hidden = set(self._config.get("nav_hidden", []))
         groups = []
         seen = set()
         for g in groups_cfg:
             items = []
             for pid in g.get("items", []):
+                if pid in hidden:
+                    continue
                 if pid in by_pid:
                     items.append(by_pid[pid])
                     seen.add(pid)
             groups.append({"label": g.get("label", ""), "items": items})
         # 未分组(在 nav_order 但没在 nav_groups 里) → '其它'
-        leftover = [v for k, v in by_pid.items() if k not in seen]
+        leftover = [v for k, v in by_pid.items() if k not in seen and k not in hidden]
         if leftover:
             groups.append({"label": "其它", "items": leftover})
         return groups
