@@ -14,7 +14,8 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
     QInputDialog, QMessageBox, QComboBox, QLineEdit, QGridLayout)
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QFont, QColor
+from PyQt5.QtGui import QFont, QColor, QPainter, QPainterPath, QPen
+from PyQt5.QtCore import QRectF
 
 from frontend.platform.theme import (
     dp, dps, fs, tr,
@@ -25,6 +26,50 @@ from frontend.platform.premium import PAL, card_qss, value_ss, label_ss, hero_ss
 from frontend.platform.local_worker import LocalWorker
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+
+class MiniNavSpark(QWidget):
+    """账户净值 mini 曲线(纯色折线, 无 QLinearGradient, 防 DLL 硬崩)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._nav = []
+        self.setMinimumHeight(dp(26))
+        self.setMinimumWidth(dp(180))
+
+    def set_nav(self, nav):
+        self._nav = [float(x) for x in (nav or []) if x is not None]
+        self.update()
+
+    def paintEvent(self, _e):
+        if len(self._nav) < 2:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        lo, hi = min(self._nav), max(self._nav)
+        rng = (hi - lo) or 1.0
+        pad = 3.0
+        n = len(self._nav)
+        pts = []
+        for i, v in enumerate(self._nav):
+            x = pad + (w - 2 * pad) * i / (n - 1)
+            y = h - pad - (h - 2 * pad) * ((v - lo) / rng)
+            pts.append((x, y))
+        # 折线
+        up = self._nav[-1] >= self._nav[0]
+        color = QColor(PAL['up'] if up else PAL['down'])
+        pen = QPen(color); pen.setWidthF(1.6); pen.setCosmetic(True)
+        p.setPen(pen)
+        path = QPainterPath()
+        path.moveTo(pts[0][0], pts[0][1])
+        for x, y in pts[1:]:
+            path.lineTo(x, y)
+        p.drawPath(path)
+        # 末点
+        p.setPen(Qt.NoPen); p.setBrush(color)
+        p.drawEllipse(QRectF(pts[-1][0] - 2, pts[-1][1] - 2, 4, 4))
+        p.end()
 
 
 class OverviewPanel(QWidget):
@@ -148,7 +193,7 @@ class OverviewPanel(QWidget):
         self._clear(self._acct_row)
         self._acct_cards = {}
         for s in summaries[:2]:
-            card = self._acct_card(s)
+            card = self._acct_card(s, nav=self._nav_of(s["account_id"]))
             self._acct_row.addWidget(card)
             self._acct_cards[s["account_id"]] = card
         if not summaries:
@@ -183,7 +228,16 @@ class OverviewPanel(QWidget):
             self._acct_combo.addItem(f"[{s['account_id']}] {s['name']}", s["account_id"])
         self._acct_combo.blockSignals(False)
 
-    def _acct_card(self, s):
+    def _nav_of(self, account_id):
+        """取账户真实净值曲线(snapshot_nav 累计). 无快照→[]."""
+        try:
+            from trade_engine.engine import TradeEngine
+            h = TradeEngine().get_nav_history(account_id)
+            return h.get("nav", [])
+        except Exception:
+            return []
+
+    def _acct_card(self, s, nav=None):
         card = well("card"); card.setMinimumHeight(dp(84))
         lo = QVBoxLayout(card); lo.setContentsMargins(dp(12), dp(8), dp(12), dp(8)); lo.setSpacing(dp(2))
         nm = QLabel(s["name"]); nm.setStyleSheet(label_ss(size=9) + f"color:{C_FAINT};")
@@ -194,6 +248,16 @@ class OverviewPanel(QWidget):
         col = C_RISE if s["total_profit"] >= 0 else C_FALL
         pnl.setStyleSheet(label_ss(size=8) + f"color:{col};")
         lo.addWidget(pnl)
+        # 净值 mini 曲线(有真实快照才画; 单点/无→显示平线+提示)
+        if nav is not None:
+            spark = MiniNavSpark()
+            if len(nav) >= 2:
+                spark.set_nav(nav)
+                lo.addWidget(spark)
+            else:
+                hint = QLabel("净值曲线自今日起记录")
+                hint.setStyleSheet(label_ss(size=8) + f"color:{C_FAINT};")
+                lo.addWidget(hint)
         return card
 
     def _new_account(self):

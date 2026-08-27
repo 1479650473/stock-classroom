@@ -153,6 +153,19 @@ def run(pool_only=False, skip_paper=False):
                 out['steps']['paper'] = {'error': str(err)[:120]}
                 lg.warning('  纸面盘失败: %s', str(err)[:120])
 
+        # ④ 账户净值快照(每日收盘记账, 累计真实净值曲线)
+        try:
+            from trade_engine.engine import TradeEngine
+            _eng = TradeEngine()
+            for _a in _eng.list_accounts():
+                _snap = _eng.snapshot_nav(_a['id'])
+                if _snap:
+                    lg.info('  账户净值快照 [%s] %s: nav=%s', _a['id'], _a['name'], _snap['nav'])
+            out['steps']['nav_snapshot'] = 'ok'
+        except Exception as e:
+            out['steps']['nav_snapshot'] = str(e)[:80]
+            lg.warning('  净值快照失败: %s', str(e)[:60])
+
     out['finished'] = datetime.now().isoformat(timespec='seconds')
     out['elapsed'] = round(time.time() - t0, 1)
     out['ok'] = True

@@ -333,6 +333,40 @@ class TradeEngine:
             'total_trades': len(self.get_trades(account_id)),
         }
 
+    def snapshot_nav(self, account_id, date=None):
+        """记录账户当日净值快照(幂等: 同日覆盖). 供每日收盘/操盘后调用, 累计真实净值曲线."""
+        from datetime import datetime
+        s = self.get_summary(account_id)
+        if s is None:
+            return None
+        day = date or datetime.now().strftime("%Y-%m-%d")
+        initial = float(s['initial_capital']) or 1.0
+        conn = self._conn()
+        conn.execute(
+            "INSERT INTO account_nav (account_id, date, nav, total_assets, balance, market_value) "
+            "VALUES (?,?,?,?,?,?) "
+            "ON CONFLICT(account_id, date) DO UPDATE SET nav=excluded.nav, total_assets=excluded.total_assets, "
+            "balance=excluded.balance, market_value=excluded.market_value",
+            (account_id, day, round(s['total_assets'] / initial, 5),
+             s['total_assets'], s['balance'], s['market_value']))
+        conn.commit()
+        conn.close()
+        return {"date": day, "nav": round(s['total_assets'] / initial, 5)}
+
+    def get_nav_history(self, account_id):
+        """已记录的每日净值曲线(真实快照, 升序). 无快照→空(由总览提示'尚未记录', 不伪造历史).
+
+        Returns {dates: [YYYY-MM-DD], nav: [倍数], total_assets: [float]}. """
+        conn = self._conn()
+        rows = conn.execute(
+            "SELECT date, nav, total_assets FROM account_nav WHERE account_id=? ORDER BY date",
+            (account_id,)).fetchall()
+        conn.close()
+        if not rows:
+            return {"dates": [], "nav": [], "total_assets": []}
+        return {"dates": [r[0] for r in rows], "nav": [float(r[1]) for r in rows],
+                "total_assets": [float(r[2]) for r in rows]}
+
     # ═══════════════════════════════════════════════════════════════
     #  Internal: validation
     # ═══════════════════════════════════════════════════════════════

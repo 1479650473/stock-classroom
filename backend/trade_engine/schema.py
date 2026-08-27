@@ -73,6 +73,17 @@ CREATE TABLE IF NOT EXISTS trades (
     stamp_tax REAL DEFAULT 0,
     traded_at TEXT DEFAULT (datetime('now','localtime'))
 );
+
+CREATE TABLE IF NOT EXISTS account_nav (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id INTEGER NOT NULL,
+    date TEXT NOT NULL,
+    nav REAL NOT NULL,
+    total_assets REAL NOT NULL,
+    balance REAL NOT NULL,
+    market_value REAL NOT NULL,
+    UNIQUE(account_id, date)
+);
 """
 
 
