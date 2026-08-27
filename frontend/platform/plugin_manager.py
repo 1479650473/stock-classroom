@@ -198,6 +198,31 @@ class PluginManager:
                     items.append((pid, p.name, p.icon, p.region))
         return items
 
+    def get_nav_groups(self) -> List[tuple]:
+        """返回分组导航: [{'label': 组名, 'items': [(pid,name,icon,region),...]}, ...].
+
+        按 plugins.json 的 nav_groups 声明分组; 没在组内的 LEFT/RIGHT 插件落到最后一组'其它'.
+        """
+        groups_cfg = self._config.get("nav_groups", [])
+        if not groups_cfg:
+            return [{"label": "", "items": self.get_nav_items()}]
+        by_pid = {pid: (pid, p.name, p.icon, p.region)
+                  for pid, p in self._plugins.items() if p.region != PluginRegion.TOPBAR}
+        groups = []
+        seen = set()
+        for g in groups_cfg:
+            items = []
+            for pid in g.get("items", []):
+                if pid in by_pid:
+                    items.append(by_pid[pid])
+                    seen.add(pid)
+            groups.append({"label": g.get("label", ""), "items": items})
+        # 未分组(在 nav_order 但没在 nav_groups 里) → '其它'
+        leftover = [v for k, v in by_pid.items() if k not in seen]
+        if leftover:
+            groups.append({"label": "其它", "items": leftover})
+        return groups
+
     def activate(self, plugin_id: str):
         """Activate a plugin by ID. Deactivates current in same region first."""
         if plugin_id not in self._plugins:

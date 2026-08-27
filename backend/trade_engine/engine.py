@@ -39,6 +39,12 @@ class TradeEngine:
         conn.close()
         return aid
 
+    def rename_account(self, account_id, name):
+        conn = self._conn()
+        conn.execute("UPDATE accounts SET name=? WHERE id=?", (name, account_id))
+        conn.commit()
+        conn.close()
+
     def get_account(self, account_id):
         conn = self._conn()
         row = conn.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
@@ -51,6 +57,15 @@ class TradeEngine:
             "SELECT * FROM accounts WHERE is_active=1 ORDER BY id").fetchall()
         conn.close()
         return [make_account(r) for r in rows]
+
+    def list_account_summaries(self):
+        """所有账户 + 各自完整摘要(余额/市值/总资产/盈亏/持仓数). 供账户中心/总览复用."""
+        out = []
+        for a in self.list_accounts():
+            s = self.get_summary(a['id'])
+            if s:
+                out.append(s)
+        return out
 
     def delete_account(self, account_id):
         conn = self._conn()

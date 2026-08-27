@@ -1,20 +1,22 @@
 {
   "nav_order": [
-    "search",
-    "settings",
-    "agent",
-    "agentops",
-    "market",
+    "overview",
+    "research",
     "picks",
     "holdings",
-    "research",
     "trade",
-    "datapipeline",
+    "agentops",
+    "market",
     "datacenter",
+    "datapipeline",
     "trainer",
     "flow",
     "kline"
   ],
-  "default_left": "market",
+  "nav_groups": [
+    {"label": "核心工作流", "items": ["overview", "research", "picks", "holdings", "trade", "agentops"]},
+    {"label": "数据工具", "items": ["market", "datacenter", "datapipeline", "trainer", "flow", "kline"]}
+  ],
+  "default_left": "overview",
   "default_right": "kline"
 }

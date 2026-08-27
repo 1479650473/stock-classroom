@@ -160,6 +160,7 @@ class PlatformShell(QMainWindow):
         )
         self._bus.status_message.connect(lambda msg: self.status.showMessage(msg))
         self._bus.log_message.connect(self._log_window.append)
+        self._bus.navigate_plugin.connect(self._on_navigate)
 
         # ── Plugin manager ──
         self._plugin_mgr = PluginManager(CONFIG_PATH, PLUGINS_DIR)
@@ -339,14 +340,32 @@ class PlatformShell(QMainWindow):
         nav_panel.setFixedWidth(dp(64))
         nav_panel.setStyleSheet(f"border-right:1px solid {C_BORDER_SOFT};")
         nav_lo = QVBoxLayout(nav_panel)
-        nav_lo.setContentsMargins(dp(5), dp(10), dp(5), dp(10))
-        nav_lo.setSpacing(dp(4))
+        nav_lo.setContentsMargins(dp(5), dp(8), dp(5), dp(8))
+        nav_lo.setSpacing(dp(2))
 
         self._nav_btns = {}
-        for pid, name, icon, region in self._plugin_mgr.get_nav_items():
-            btn = self._make_nav_btn(pid, name, icon)
-            nav_lo.addWidget(btn)
-            self._nav_btns[pid] = btn
+        try:
+            groups = self._plugin_mgr.get_nav_groups()
+        except Exception:
+            groups = [{"label": "", "items": self._plugin_mgr.get_nav_items()}]
+        first = True
+        for g in groups:
+            label = g.get("label", "")
+            items = g.get("items", [])
+            if label and items:
+                if not first:
+                    nav_lo.addSpacing(dp(8))
+                head = QLabel(label)
+                head.setStyleSheet(
+                    f"color:{C_FAINT};font-size:{fs(tr(8))};letter-spacing:1px;"
+                    f"border:none;background:transparent;padding-left:{dps(4)};")
+                head.setFixedHeight(dp(14))
+                nav_lo.addWidget(head)
+            for pid, name, icon, region in items:
+                btn = self._make_nav_btn(pid, name, icon)
+                nav_lo.addWidget(btn)
+                self._nav_btns[pid] = btn
+            first = False
 
         nav_lo.addStretch()
         return nav_panel
@@ -367,6 +386,11 @@ class PlatformShell(QMainWindow):
     # ──────────────────────────────────────────────────────────
     #  Plugin activation
     # ──────────────────────────────────────────────────────────
+
+    def _on_navigate(self, plugin_id: str):
+        """总览主功能入口等触发跨插件跳转."""
+        if plugin_id in self._plugin_mgr.all_plugins():
+            self._activate_plugin(plugin_id)
 
     def _activate_plugin(self, plugin_id: str):
         """Activate a plugin and show its widget in the correct region."""
