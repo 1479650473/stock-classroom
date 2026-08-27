@@ -335,7 +335,8 @@ def update_codes(codes, end_date: str = None, catch_up_days: int = None, workers
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as _TE
     if end_date is None:
-        end_date = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
+        # 目标日期应为"今天"(或最新交易日), 让窗口覆盖到最新; 抓取上限由源决定.
+        end_date = datetime.now().strftime("%Y%m%d")
     # 自动算抓取窗口: 从 DB 最新日到 end_date 的日历缺口 + warmup 缓冲
     if catch_up_days is None:
         try:

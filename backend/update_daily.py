@@ -123,6 +123,16 @@ def run(pool_only=False, skip_paper=False):
     rk = update_pool(pool=pool, workers=16, progress=_plog)
     out['steps']['kline'] = {k: rk[k] for k in ('updated', 'skipped', 'errors', 'rows_added', 'total', 'elapsed') if k in rk}
     lg.info('  K线池: %s', out['steps']['kline'])
+    try:
+        _c = get_kline_db()
+        _latest = _c.execute("SELECT MAX(date) FROM kline_daily").fetchone()[0]
+        _c.close()
+        if _latest and _latest < today.replace('-', ''):
+            lg.warning('  ⚠ 源未覆盖最新交易日: DB max=%s, 今日=%s — 源可能尚未发布当日数据, 请稍后重跑', _latest, today.replace('-', ''))
+        else:
+            lg.info('  K线最新=%s ✓', _latest)
+    except Exception as e:
+        lg.warning('  最新日校验失败: %s', str(e)[:60])
     # 同步写 data_update_log(让数据管道面板'上次更新'对齐今日; 表里 update_date 用 YYYY-MM-DD)
     try:
         _log_update(datetime.now().strftime('%Y-%m-%d'),
