@@ -677,9 +677,10 @@ class HoldingsPanel(QWidget):
             if it.widget(): it.widget().deleteLater()
         t = QLabel("持仓"); t.setStyleSheet(style_title() + f"color:{PAL['text']};")
         self._cards_lo.addWidget(t)
-        cap = QLabel("实时持仓(模拟盘) · 历史持仓(纸面盘回测) 可切换")
-        cap.setStyleSheet(label_ss(size=10) + f"color:{PAL['sub']};")
-        self._cards_lo.addWidget(cap)
+        # 数据截至标签(时效性)
+        self._asof_lbl = QLabel("数据截至 --")
+        self._asof_lbl.setStyleSheet(label_ss(size=10) + f"color:{PAL['faint']};")
+        self._cards_lo.addWidget(self._asof_lbl)
         # 实时/历史 切换(分段, 不占满宽)
         mode_row = QHBoxLayout(); mode_row.setSpacing(dp(6))
         self._mode_group = QButtonGroup(self); self._mode_group.setExclusive(True)
@@ -825,6 +826,9 @@ class HoldingsPanel(QWidget):
     def load(self):
         self._data = _load_paper_runs()
         runs = self._data.get('runs') or {}
+        as_of = self._data.get('as_of')
+        if as_of:
+            self._asof_lbl.setText(f"数据截至 {_fmt_date(as_of)}")
         # 重建策略卡片
         while self._chip_row.count():
             it = self._chip_row.takeAt(0)

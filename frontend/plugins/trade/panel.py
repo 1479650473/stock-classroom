@@ -23,7 +23,7 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
     QComboBox, QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView,
     QSpinBox, QDoubleSpinBox, QFrame, QScrollArea, QListWidget, QListWidgetItem,
-    QAbstractItemView, QSizePolicy,
+    QAbstractItemView, QSizePolicy, QTabWidget,
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtGui import QColor
@@ -684,47 +684,66 @@ class TradePanel(QWidget):
         container = QWidget()
         container.setStyleSheet(f"background:{C_BG}")
         lo = QVBoxLayout(container)
-        lo.setContentsMargins(dp(10), dp(8), dp(10), dp(8))
-        lo.setSpacing(dp(8))
+        lo.setContentsMargins(dp(14), dp(12), dp(14), dp(12))
+        lo.setSpacing(dp(10))
 
-        title = QLabel("模拟交易")
+        # 页头
+        title = QLabel("交易")
         title.setStyleSheet(style_title() + f"color:{C_TEXT};")
         lo.addWidget(title)
 
+        # 顶部固定: 账户切换 + 总览摘要卡
         self._account_bar = _AccountBar(self._engine)
         self._account_bar.account_changed.connect(self._on_account_changed)
         lo.addWidget(self._account_bar)
-
         self._cards = _SummaryCards()
         lo.addWidget(self._cards)
 
+        # ── 核心 3 个页签: 下单 / 持仓 / 成交记录 (一次只见一块) ──
+        self._tabs = QTabWidget()
+        self._tabs.setStyleSheet(
+            f"QTabWidget::pane{{border:1px solid {C_BORDER_SOFT};border-radius:{dps(6)};margin-top:{dps(4)};}}"
+            f"QTabBar::tab{{background:transparent;color:{C_SUBTEXT};padding:{dps(6)} {dps(18)};"
+            f"border:none;border-bottom:2px solid transparent;font-size:{fs(tr(12))};font-weight:600;}}"
+            f"QTabBar::tab:hover{{color:{C_TEXT};}}"
+            f"QTabBar::tab:selected{{color:{C_GOLD};border-bottom:2px solid {C_GOLD};}}")
+
+        # Tab1 下单: 搜索 + 下单面板 + 挂单
+        tab_order = QWidget(); tab_order.setStyleSheet(f"background:{C_BG}")
+        olo = QVBoxLayout(tab_order)
+        olo.setContentsMargins(dp(12), dp(10), dp(12), dp(10)); olo.setSpacing(dp(10))
+        olo.addWidget(QLabel("买卖下单"))
         self._search = _StockSearch()
         self._search.stock_selected.connect(self._on_stock_selected)
-        lo.addWidget(self._search)
-
+        olo.addWidget(self._search)
         self._order = _OrderPanel()
         self._order.order_placed.connect(self._on_place_order)
-        lo.addWidget(self._order)
-
+        olo.addWidget(self._order)
         self._pending = _PendingOrders()
-        lo.addWidget(self._pending)
+        olo.addWidget(self._pending)
+        olo.addStretch()
+        self._tabs.addTab(tab_order, "下单")
 
-        pos_title = QLabel("持仓")
-        pos_title.setStyleSheet(style_title() + f"color:{C_TEXT};")
-        lo.addWidget(pos_title)
-
+        # Tab2 持仓: 持仓表
+        tab_pos = QWidget(); tab_pos.setStyleSheet(f"background:{C_BG}")
+        plo = QVBoxLayout(tab_pos)
+        plo.setContentsMargins(dp(12), dp(10), dp(12), dp(10)); plo.setSpacing(dp(10))
         self._pos_table = _PositionTable()
         self._pos_table.row_clicked.connect(self._on_position_clicked)
-        lo.addWidget(self._pos_table)
+        plo.addWidget(self._pos_table)
+        plo.addStretch()
+        self._tabs.addTab(tab_pos, "持仓")
 
-        trade_title = QLabel("成交记录")
-        trade_title.setStyleSheet(style_title() + f"color:{C_TEXT};")
-        lo.addWidget(trade_title)
-
+        # Tab3 成交记录
+        tab_hist = QWidget(); tab_hist.setStyleSheet(f"background:{C_BG}")
+        hlo = QVBoxLayout(tab_hist)
+        hlo.setContentsMargins(dp(12), dp(10), dp(12), dp(10)); hlo.setSpacing(dp(10))
         self._trade_hist = _TradeHistory()
-        self._trade_hist.setMaximumHeight(dp(160))
-        lo.addWidget(self._trade_hist)
+        hlo.addWidget(self._trade_hist)
+        hlo.addStretch()
+        self._tabs.addTab(tab_hist, "成交记录")
 
+        lo.addWidget(self._tabs)
         lo.addStretch()
 
         scroll.setWidget(container)
