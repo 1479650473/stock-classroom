@@ -68,7 +68,10 @@
 | `factors.py` | 逐 bar 因子(技术 + 研究因子 + 价值/质量) |
 | `factor_research.py` | 截面因子研究：IC/ICIR/IC正率/滚动IC/5档分组/多空/单调性/相关性/稳定性 |
 | `factor_data.py` / `factor_selector.py` | 因子数据加载 + 选择器(ICIR 阈值**自动选参** + 分档置信度) |
-| `metrics.py` | 回测指标(收益/回撤/胜率统一**小数**口径，0.05=5%) |
+| `metrics.py` | 回测指标(收益/回撤/胜率统一**小数**口径，0.05=5%)；`full_metrics`/`compute_full_metrics`(多维: α/年化CAGR/夏普/sortino/Calmar/最大回撤/波动/β/超额/基准，供 LLM 优化闭环 + 持仓页) |
+| `describe.py` | `describe_contract(contract)` 把单标的 DSL 契约 / 组合多因子 SelectionContract 渲染成中文**买入/持有/卖出条件原理** |
+| `optimize_loop.py` | **自主策略进化闭环** `run_optimize_loop()`: 5家族精确指标→LLM/Stub 提新因子契约→回测→裁决(不盲从AI, 收益更高才 accept)→写入模拟盘+每日交易记录 |
+| `portfolio_rebalance.py` | SelectionContract + composite_score + reconcile_holdings + RebalancePlanner(组合级重平衡, 接 portfolio_value_alloc) |
 | `prefetch_value_pool.py` / `verify_value_wide.py` | 基本面预抓 + 跨板块价值研究验证 |
 
 ### `backend/` — 数据层
@@ -269,6 +272,13 @@ C:/Python314/python.exe backend/agent/verify_portfolio_tilt_alloc.py    # 组合
   (宽度 28.4%→弱市/价值顺风 vs 指数 risk-on→价值逆风)。报告必须说明用的是哪路信号，不能混为一谈。
 - **LLM key** 存 `backend/configs/settings.json`(非 git 跟踪)。
 - 财报/估值注意披露时点；本实现用**东财每日估值**天然点时间(某日 PE/PB 即该日成交)，规避披露滞后。
+
+## 八、数据时效 & 每日自动化 (2026-08-27)
+
+- **as_of 取「kline + 价值因子(BP) 都齐备」日**：基本面(BP/PE)点时间滞后 1 天披露，故 as_of 与 kline 最新日可能差 1 天。`research/worker._as_of(close, n_pool, bp)` 额外要求该日 BP 覆盖 ≥30% 池 → 取 kline+估值都齐的交集日，避免 value 因子在最新日消失退化到 n=1。
+- **每日自动更新**：`backend/update_daily.py` + Windows 计划任务 `StockClassroom-DailyUpdate`（周一至五 **17:00**，app 关闭也跑），用项目固定 venv `.update-venv/`。4 步：① 量化池K线(update_pool ~287只) ② 基本面EP/BP/ROE ③ 纸面盘(paper_runs) ④ 账户净值快照(snapshot_nav)。
+- **源新鲜度**：新浪当日收盘 15:30 后逐步到位（15:40 太早可能只到最新前一日）→ 调度改 17:00；K线池刷新后校验 DB max <今日 会明确警告，防"静默空转成功"。
+- **多策略回测内存**：`run_paper_multi`/`optimize_loop` 连续跑5策略时为各因子建 287×1516 panel，系统内存紧张时可 OOM —— 每策略后 del+gc.collect 缓解；单策略可单独跑再 merge。
 
 ---
 *任务进度见 [TASK_LOG.md](TASK_LOG.md)。*

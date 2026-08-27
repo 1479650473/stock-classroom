@@ -129,6 +129,7 @@
 - **图表**：`kline/widget.py` 硬编码色走主题 token（保留 MA5/10/20/60 指标色）；`resync_theme()` 用 `current_theme()` 实时读（勿用 import 冻结 `C_*`）。
 - **机加工框**：表/列表/树容器 = `#000`/深色边框 + `card_border_top` 顶边（`_obsidian_template` 等）。
 - **外壳**：顶栏/导航/左右栈的背景已交给全局 `QWidget` 背景，切主题即跟。
+- **无边框自绘标题栏 (v4.3)**：`platform_shell` 用 `Qt.FramelessWindowHint` + 顶栏右侧自绘窗口控制钮 `QPushButton#winBtn`(transparent→hover 高亮)；`QMainWindow{border:1px solid border;border-top:1px solid border_top}` 给无边框窗描边。拖动/边缘缩放走 `nativeEvent(WM_NCHITTEST)` → 标题栏 HTCAPTION / 边缘 HTLEFT..BOTTOM(8方向)。
 
 ---
 

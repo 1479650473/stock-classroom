@@ -33,6 +33,14 @@
 | — | 组合级价值tilt+市场宽度第三路信号+多因子分层 | `7b2c333` | 价值升级为组合层(权重tilt) + 破年线宽度信号 + 分层而非独立回测 | pf/tilt_alloc |
 | — | 重平衡选股器+NET计成本+全局寻优+多窗口 | `b6aa4c9` | portfolio_rebalance(接portfolio_value_alloc) + ResearchLoop.portfolio_paper 挂进主闭环 + NET分层保留/tilt不增价值(修正) + 训练/验证分离 + hp多窗口 + HP=5断点机制(纯成本) + 框架/优化脚本彻底对齐 | pfopt/paper/hp5/loop |
 | — | 按持有期自适应配置器+多期forward+降频结论 | `9d09f29` | adaptive_config_for_hp(HP_LAYER_MIN=20, 规则化) + forward_paper_run(多期调仓循环) + 分层HP20>HP5>价值HP5→保持分层+慢调仓 | aft/fwd |
+| — | **数据时效三层根治** | `2dae4fa` | 三源回退+硬超时 / update_codes 缺口窗口 / _as_of 基本面感知(取kline+BP齐备日) | as_of 07-03→08-24 |
+| — | **每日数据自动化** | `740f19b` | update_daily.py + Windows 计划任务(15:40); 项目固定venv; 交易日跳过; 数据管道面板显示自动更新状态 | schtasks 跑通 |
+| — | **精确回测指标 + 策略条件原理** | `70a04b2`/`f169048` | metrics.full_metrics(α/年化/夏普/sortino/Calmar/胜率/β) + describe.describe_contract(中文买卖条件) | 5策略带精确指标 |
+| — | **自主策略进化闭环** | `5a92e84` | optimize_loop: 家族指标→LLM/Stub提新因子契约→回测→裁决(不盲从AI)→模拟盘+每日交易 | 真实LLM闭环跑通 |
+| — | **前端可用性重构** | `bd8db84` | 导航分组(核心工作流/数据工具) + 总览landing页 + 账户中心(改名/重置/删除) | 渲染目检通过 |
+| — | **账户净值曲线 + 主功能带参跳转** | `57ab58a`/`64b783d` | account_nav快照表 + MiniNavSpark + navigate(payload)带参跳转 | 净值快照真实累计 |
+| — | **K线右栏抽屉 + 无边框标题栏** | `a9fee71` | 右栏=按需抽屉(非常驻) + WM_NCHITTEST无边框自绘标题栏 | 截图目检通过 |
+| — | **调度修正(17:00)+源新鲜度校验+多策略OOM** | `ff17c59`/`a91770e` | 新浪当日数据15:40常未到→改17:00; K线未覆盖当日→警告; 多策略循环del+gc防OOM | as_of 08-27 5/5策略OK |
 
 ## 关键验证汇总(2026-08-24，工作区干净)
 
@@ -64,19 +72,21 @@
 
 ## 当前状态
 
-- ✅ **全市场基本面建库完成**：5164/5191 只(99.5%，145 分钟，仅 27 只新股/停牌无估值)。全市场价值研究**终验 4/4**。
-- 数据已本地化(读路径只读缓存)，见 `verify_local_cache.py` 4/4。
+- ✅ **全市场基本面建库完成**：5164/5191 只(99.5%)。全市场价值研究**终验 4/4**。
+- ✅ **数据时效已根治**：as_of 从 2026-07-03 → **2026-08-27**（数据最新）。三源回退+硬超时+update_codes 缺口窗口+_as_of 基本面感知（提交 `2dae4fa`）。
+- ✅ **每日自动更新落地**：`update_daily.py` + Windows 计划任务 `StockClassroom-DailyUpdate`（周一至五 **17:00**，app 关闭也跑），项目固定 venv `.update-venv/`。4 步：量化池K线/基本面/纸面盘/账户净值快照。
+- ✅ 数据已本地化(读路径只读缓存)，见 `verify_local_cache.py` 4/4。
 
 ## 数据库库存 & 数据打理 (2026-08-25)
 
 **6 库**（均 `data/`，`integrity_check` 全 ok）：
 | 库 | 内容 | 截止 |
 |---|---|---|
-| `kline.db` (1.09 GB) | 日线年度分区 `kline_2000..2026` + `kline_daily` **视图**（UNION ALL 分区）；周线/筹码/龙虎榜/北向/板块/涨停/涨跌家数 | 2026-08-24 (5,206 只) |
-| `fundamental.db` (706 MB) | `fundamental` 单表：code/date/pe_ttm/pb | 2026-08-24 (5,165 只, 7.35M 行) |
+| `kline.db` (1.09 GB) | 日线年度分区 `kline_2000..2026` + `kline_daily` **视图**（UNION ALL 分区）；周线/筹码/龙虎榜/北向/板块/涨停/涨跌家数 | **2026-08-26** (5,206 只, 08-27 池 287 只已补) |
+| `fundamental.db` (706 MB) | `fundamental` 单表：code/date/pe_ttm/pb | 2026-08-27 (池 287 只, 全市场 08-24 5,165 只) |
 | `macro.db` | `series` 10 指标 + `regime`（仅最新日） | 2026-08-24 |
 | `stock_cache.db` (908 KB) | `stock_spot` 实时快照 | ⚠️ 2026-07-23（刷不动） |
-| `sim_trade.db` / `agent.db` | 模拟账户 / Agent 任务 | — |
+| `sim_trade.db` / `agent.db` | 模拟账户(含 account_nav 净值快照) / Agent 任务 | — |
 
 **本次打理**：
 - 删弃用死表 `kline_daily_legacy`（3.41M 行，纯冗余；代码里 `datacenter/panel.py:225` 早已跳过它、视图/写入路径均不含它）。**删前**把分区缺失的 **4,235 条**日线（含平安银行 `000001` 全历史 2000-2024 缺口）无损迁入分区，验证 0 条丢失。

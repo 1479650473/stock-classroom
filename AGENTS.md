@@ -65,7 +65,7 @@ Nav 分两组 (plugins.json `nav_groups`): **核心工作流** + **数据工具*
 `plugins.json` → `nav_groups` = [核心工作流(overview/research/picks/holdings/trade/agentops), 数据工具(market/datacenter/datapipeline/trainer/flow/kline)]. `default_left=overview`, `default_right=kline`.
 
 ## Theme (v4.2)
-- Dark: `#0D1117` (bg) / `#161B22` (panel) / `#D4A574` (accent gold) — graphite
+- Dark: `#0B0D11` (bg) / `#14171C` (panel) / `#D4A574` (accent gold) — graphite
 - 3 themes: graphite / obsidian / ivory. `theme.py: build_style(base_fs)` + `premium.PAL`(live, 挂 signals.changed 自刷)
 - `fs()` font scaling, `dp()`/`dps()` dimension scaling
 

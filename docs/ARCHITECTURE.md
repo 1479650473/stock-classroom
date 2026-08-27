@@ -165,11 +165,14 @@ stock-classroom/
 │   │   ├── default_scorecard.json  # 5组26条件因子评分卡
 │   │   └── settings.json           # font_size + window_size + agent
 │   ├── factor_engine/          # 多因子评分引擎
-│   └── trade_engine/           # 模拟交易引擎 (v4.2)
-│       ├── engine.py           # TradeEngine — 账户/下单/撮合/持仓结算
-│       ├── models.py           # 数据模型
-│       ├── schema.py           # sim_trade.db 建表
-│       └── test_shell.py       # 50项端到端测试
+│   ├── trade_engine/           # 模拟交易引擎 (v4.2)
+│   │   ├── engine.py           # TradeEngine — 账户/下单/撮合/持仓结算
+│   │   ├── models.py           # 数据模型
+│   │   ├── schema.py           # sim_trade.db 建表
+│   │   └── test_shell.py       # 50项端到端测试
+│   ├── strategy/               # metrics/describe/optimize_loop/portfolio_rebalance (v4.3)
+│   ├── agent/                  # research_loop/llm_client/decision_gate (v4.3)
+│   └── update_daily.py         # 每日自动化 (Windows 计划任务 17:00)
 │
 ├── frontend/
 │   ├── platform/
@@ -180,8 +183,24 @@ stock-classroom/
 │   │   ├── log_window.py       # 日志终端
 │   │   └── local_worker.py     # 统一 QThread
 │   │
-│   └── plugins/                # 11 个插件
-│       ├── plugins.json
+│   └── plugins/                # 15 个插件 (nav 分两组: 核心工作流 / 数据工具)
+│       ├── plugins.json        # nav_order + nav_groups + default_left/right
+│       ├── overview/           # 总览 (LEFT·核心) — v4.3 landing 页
+│       ├── research/           # 研究 (LEFT·核心) — 因子研究 + 闭环入口
+│       ├── picks/              # 选股 (LEFT·核心)
+│       ├── holdings/           # 持仓 (LEFT·核心) — 纸面盘账本 + 精确指标/买卖条件
+│       ├── trade/              # 模拟交易 (LEFT·核心) — v4.2
+│       │   ├── panel.py        # 账户/下单/持仓/成交记录
+│       │   └── styles.py
+│       ├── agentops/           # AI操盘 (LEFT·核心) — v4.3 单标的闭环/组合重平衡
+│       ├── market/             # 市场 (LEFT·数据)
+│       ├── datacenter/         # 数据中心 (LEFT·数据)
+│       ├── datapipeline/       # 数据管道 (LEFT·数据)
+│       ├── trainer/            # 回测训练 (LEFT·数据) — v4.2 瘦身为占位
+│       │   ├── engine.py       # TrainingEngine (保留, 供独立开发)
+│       │   └── db.py           # 训练记录 SQLite (保留)
+│       ├── flow/               # 流程 (LEFT·数据) — 全流程指挥舱
+│       ├── kline/              # K线 (RIGHT·数据) — 右栏抽屉按需滑出
 │       ├── search/             # 搜索 (TOPBAR)
 │       ├── settings/           # 设置 (TOPBAR)
 │       ├── agent/              # AI助手 (TOPBAR) — v4.2 支持工具调用
@@ -190,23 +209,12 @@ stock-classroom/
 │       │   ├── chat_worker.py  # QThread + 工具调用循环
 │       │   ├── llm_client.py   # OpenAI 兼容客户端 + chat_with_tools()
 │       │   └── config.py       # agent 配置
-│       ├── market/             # 市场 (LEFT)
-│       ├── picks/              # 选股 (LEFT)
-│       ├── holdings/           # 持仓 (LEFT)
-│       ├── trade/              # 模拟交易 (LEFT) — v4.2 新增
-│       │   ├── panel.py        # 账户/下单/持仓/成交记录面板
-│       │   └── styles.py
-│       ├── datapipeline/       # 数据管道 (LEFT)
-│       ├── datacenter/         # 数据中心 (LEFT)
-│       ├── trainer/            # 回测训练 (LEFT) — v4.2 瘦身为占位
-│       │   ├── engine.py       # TrainingEngine (保留, 供独立开发)
-│       │   └── db.py           # 训练记录 SQLite (保留)
-│       └── kline/              # K线 (RIGHT)
 │
 ├── data/                       # SQLite 数据库 (gitignored)
 │   ├── kline.db
+│   ├── fundamental.db
 │   ├── stock_cache.db
-│   └── sim_trade.db            # 模拟交易账户 (v4.2)
+│   └── sim_trade.db            # 模拟交易账户 (v4.2, 含 account_nav 净值)
 │
 ├── docs/
 │   ├── ARCHITECTURE.md
