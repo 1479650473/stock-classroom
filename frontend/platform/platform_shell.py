@@ -238,6 +238,7 @@ class PlatformShell(QMainWindow):
         layout.setSpacing(0)
 
         layout.addWidget(self._build_topbar())
+        layout.addWidget(self._build_stepbar())
 
         # ── Main Splitter (右栏=抽屉, 默认收起; 开K线/手动展开才滑出) ──
         outer = QSplitter(Qt.Horizontal)
@@ -285,6 +286,63 @@ class PlatformShell(QMainWindow):
         self._status_dot.setStyleSheet(f"color:{C_DOWN};font-size:{fs(9)};border:none;padding-right:2px;")
         self.status.addPermanentWidget(self._status_dot)
         self.setStatusBar(self.status)
+
+    def _build_stepbar(self) -> QFrame:
+        """方案B · 顶层工作流步骤条: 看盘→研究→选股→交易→持仓 (每步=激活对应插件).
+
+        5 步是产品的"主流程", 放顶栏正下方一条独立横条, 清晰不挤占顶栏.
+        高亮当前步; 点步 = 跳转插件(复用 _activate_plugin).
+        """
+        strip = QFrame()
+        strip.setFixedHeight(dp(44))
+        strip.setStyleSheet(f"background:{C_PANEL};border-bottom:1px solid {C_BORDER_SOFT};")
+        stl = QHBoxLayout(strip)
+        stl.setContentsMargins(dp(14), 0, dp(10), 0)
+        stl.setSpacing(dp(4))
+
+        # 5 个主步骤: (插件id, 显示名, 可选payload)
+        self._steps = [
+            ("market",   "看盘", None),
+            ("research", "研究", None),
+            ("picks",    "选股", None),
+            ("trade",    "交易", None),
+            ("holdings", "持仓", None),
+        ]
+        self._step_btns = {}
+        for pid, label, payload in self._steps:
+            if pid not in self._plugin_mgr.all_plugins():
+                continue
+            b = QPushButton(label)
+            b.setObjectName("stepBtn")
+            b.setCheckable(True)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setFixedHeight(dp(34))
+            b.clicked.connect(lambda _=False, p=pid, pl=payload: self._on_step(p, pl))
+            stl.addWidget(b)
+            self._step_btns[pid] = b
+
+        stl.addStretch()
+
+        # 步骤条右侧: 次要功能的快捷入口(数据工具等), 不打扰主流程
+        self._drawer_btn_step = self._drawer_btn  # 已有K线开合钮, 放顶栏了; 这里留个占位
+        hint = QLabel("主流程 · 点步骤跳转")
+        hint.setStyleSheet(f"color:{C_FAINT};font-size:{fs(tr(9))};letter-spacing:1px;")
+        hint.setToolTip("看盘→研究→选股→交易→持仓")
+        stl.addWidget(hint)
+        return strip
+
+    def _on_step(self, pid, payload=None):
+        """点步骤条 → 激活对应插件 + (可带 payload)."""
+        self._activate_plugin(pid)
+        if payload:
+            w = self._plugin_mgr.get_widget(pid)
+            if w is not None:
+                fn = getattr(w, "apply_navigation", None)
+                if callable(fn):
+                    try:
+                        fn(payload)
+                    except Exception:
+                        pass
 
     def _build_topbar(self) -> QFrame:
         topbar = QFrame()
@@ -451,6 +509,10 @@ class PlatformShell(QMainWindow):
 
         for pid, btn in self._nav_btns.items():
             btn.setChecked(pid == plugin_id)
+
+        # 同步高亮顶部步骤条(当前步对应插件)
+        for spid, sbtn in getattr(self, "_step_btns", {}).items():
+            sbtn.setChecked(spid == plugin_id)
 
         if region == PluginRegion.TOPBAR:
             return

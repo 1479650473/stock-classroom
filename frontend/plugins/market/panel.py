@@ -40,14 +40,11 @@ class MarketPanel(QWidget):
         lo.setContentsMargins(dp(14), dp(12), dp(14), dp(12))
         lo.setSpacing(dp(12))
 
-        # ── Page header: title + subtitle ──
+        # ── Page header: 标题(无冗余说明) ──
         head = QHBoxLayout(); head.setSpacing(dp(10))
-        title = QLabel("市场全景")
+        title = QLabel("看盘")
         title.setStyleSheet(style_title())
         head.addWidget(title)
-        cap = QLabel("大盘指数 · 板块热度 · 涨跌分布")
-        cap.setStyleSheet(label_ss(size=10) + f"color:{C_FAINT};padding-top:{dp(4)}px;")
-        head.addWidget(cap)
         head.addStretch()
         lo.addLayout(head)
 
@@ -56,13 +53,13 @@ class MarketPanel(QWidget):
         self.card_row.setSpacing(dp(10))
         lo.addLayout(self.card_row)
 
-        # ── Breadth glass: 今日涨跌分布 ──
+        # ── Breadth: 涨跌分布(去文字标签, 大数字+比例条) ──
         bar = well("card")
         bl = QVBoxLayout(bar)
-        bl.setContentsMargins(dp(16), dp(12), dp(16), dp(12))
-        bl.setSpacing(dp(8))
+        bl.setContentsMargins(dp(14), dp(10), dp(14), dp(10))
+        bl.setSpacing(dp(6))
         bt = QHBoxLayout(); bt.setSpacing(dp(8))
-        btL = SectionTitle("今日涨跌分布")
+        btL = SectionTitle("今日涨跌")
         bt.addWidget(btL); bt.addStretch()
         self._date_lbl = QLabel("--")
         self._date_lbl.setStyleSheet(label_ss(size=10) + f"color:{C_FAINT};")
@@ -70,28 +67,27 @@ class MarketPanel(QWidget):
         bl.addLayout(bt)
 
         stats_row = QHBoxLayout()
-        stats_row.setSpacing(dp(24))
+        stats_row.setSpacing(dp(26))
+        # 只用两个主数字: 上涨 / 下跌 (小红绿, 不带文字, 数字大)
         self.bar_widgets = {}
-        for key, text in [("up", "上涨"), ("dn", "下跌"), ("flat", "平盘"),
-                          ("cnt", "总数"), ("vol", "成交额")]:
-            col = QVBoxLayout(); col.setSpacing(2)
-            lbl = QLabel(text)
-            lbl.setStyleSheet(label_ss(size=10, gold=True))
-            col.addWidget(lbl)
+        for key, colorize in [("up", True), ("dn", True)]:
+            col = QVBoxLayout(); col.setSpacing(0)
             w = QLabel("--")
-            w.setStyleSheet(value_ss(size=15))
-            self.bar_widgets[key] = w
+            w.setStyleSheet(value_ss(size=19, gold=colorize))
             col.addWidget(w)
             stats_row.addLayout(col)
+            self.bar_widgets[key] = w
         stats_row.addStretch()
         bl.addLayout(stats_row)
+
         self._split = SplitBar()
-        self._split.setMinimumHeight(dp(20))
+        self._split.setMinimumHeight(dp(18))
         bl.addWidget(self._split)
-        bl.addSpacing(dp(2))
-        cap2 = QLabel("上涨 / 下跌 / 平盘 家数占比")
-        cap2.setStyleSheet(label_ss(size=9) + f"color:{C_FAINT};")
-        bl.addWidget(cap2)
+        # 平盘/总数/成交额 收进一行小字(角落, 不抢视觉)
+        small = QLabel("--")
+        small.setStyleSheet(label_ss(size=9) + f"color:{C_FAINT};")
+        self._small_stat = small
+        bl.addWidget(small)
         lo.addWidget(bar)
 
         # ── 板块 Tabs ──
@@ -144,7 +140,7 @@ class MarketPanel(QWidget):
         try:
             rows = conn.execute(
                 'SELECT name, rank, latest_price, change_pct, up_count, dn_count, leader, leader_chg '
-                'FROM sector_board WHERE type = ? ORDER BY rank LIMIT 30', (stype,)
+                'FROM sector_board WHERE type = ? ORDER BY rank LIMIT 12', (stype,)
             ).fetchall()
             return {"code": 0, "sectors": [
                 {"name": r[0], "rank": r[1], "price": r[2], "change_pct": r[3],
@@ -314,17 +310,15 @@ class MarketPanel(QWidget):
         fmt_vol = lambda v: "{:.0f}亿".format(v / 1e8) if v else "--"
         self._date_lbl.setText(str(stats.get("date", "--")))
         self.bar_widgets["up"].setText(str(stats.get("up", 0)))
-        self.bar_widgets["up"].setStyleSheet(value_ss(size=15, gold=True))
+        self.bar_widgets["up"].setStyleSheet(value_ss(size=19, gold=True))
         self.bar_widgets["dn"].setText(str(stats.get("dn", 0)))
-        self.bar_widgets["dn"].setStyleSheet(value_ss(size=15, gold=True))
-        self.bar_widgets["flat"].setText(str(stats.get("flat", 0)))
-        self.bar_widgets["flat"].setStyleSheet(value_ss(size=15))
-        self.bar_widgets["cnt"].setText(str(stats.get("count", 0)))
-        self.bar_widgets["cnt"].setStyleSheet(value_ss(size=15))
-        self.bar_widgets["vol"].setText(fmt_vol(stats.get("volume", 0)))
-        self.bar_widgets["vol"].setStyleSheet(value_ss(size=15))
-        # 今日涨跌分布图
-        self._split.set_data(stats.get("up", 0), stats.get("dn", 0), stats.get("flat", 0))
+        self.bar_widgets["dn"].setStyleSheet(value_ss(size=19, gold=True))
+        # 平盘/总数/成交额 → 右上角一行小字
+        sm = "平盘 {} · 共 {} · 成交 {}".format(
+            stats.get("flat", 0), stats.get("count", 0), fmt_vol(stats.get("volume", 0)))
+        self._small_stat.setText(sm)
+        # 今日涨跌分布(只有涨/跌两段, 平盘忽略)
+        self._split.set_data(stats.get("up", 0), stats.get("dn", 0), 0)
 
         if self.on_status:
             self.on_status(f"市场数据已加载 - {stats.get('date', '')}")

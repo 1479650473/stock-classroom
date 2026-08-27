@@ -17,6 +17,6 @@
     {"label": "核心工作流", "items": ["overview", "research", "picks", "holdings", "trade", "agentops"]},
     {"label": "数据工具", "items": ["market", "datacenter", "datapipeline", "trainer", "flow", "kline"]}
   ],
-  "default_left": "overview",
+  "default_left": "market",
   "default_right": "kline"
 }

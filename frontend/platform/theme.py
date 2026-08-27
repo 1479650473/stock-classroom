@@ -728,6 +728,9 @@ QPushButton#navBtn:checked {{ background: qlineargradient(x1:0,y1:0,x2:1,y2:0, s
 QPushButton#indBtn {{ background: {t['panel']}; color: {t['sub']}; border: 1px solid {t['border']}; border-top: 1px solid {t['border_top']}; border-radius: $dp4; padding: $dp3 $dp12; font-size: $fs11; }}
 QPushButton#indBtn:hover {{ color: {t['text']}; border-top-color: {t['gold']}; }}
 QPushButton#indBtn:checked {{ background: {t['gold']}; color: #14110B; border-color: {t['gold']}; font-weight:600; }}
+QPushButton#stepBtn {{ background: transparent; color: {t['sub']}; border: 1px solid transparent; border-radius: $dp6; padding: $dp4 $dp18; font-size: $fs13; font-weight:600; letter-spacing: $dp1; }}
+QPushButton#stepBtn:hover {{ color: {t['text']}; background: {t['raised']}; border-top-color: {t['gold']}; }}
+QPushButton#stepBtn:checked {{ background: {t['gold']}; color: #14110B; border-color: {t['gold']}; }}
 """
 
 
