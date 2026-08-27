@@ -35,7 +35,7 @@ from .worker import STRATEGY_LABELS
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton, QFrame,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QScrollArea,
-    QButtonGroup, QSizePolicy, QComboBox, QDateEdit,
+    QButtonGroup, QSizePolicy, QComboBox, QDateEdit, QTabWidget,
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QDate
 from PyQt5.QtGui import QColor, QFont
@@ -197,14 +197,10 @@ class ResearchPanel(QWidget):
         lo.setContentsMargins(dp(14), dp(14), dp(14), dp(14))
         lo.setSpacing(dp(12))
 
-        # 标题(金色) + 说明
-        title = QLabel("量化研究")
+        # 标题(金色) — 无冗余标语
+        title = QLabel("研究")
         title.setStyleSheet(style_title() + f"color:{_PAL['text']};")
         lo.addWidget(title)
-        cap = QLabel("LLM-IN-THE-LOOP · 价值因子 · 多因子分层 · 组合纸面盘")
-        cap.setStyleSheet(
-            f"color:{_PAL['faint']};font-size:{fs(tr(10))};letter-spacing:{dp(1)}px;background:transparent;")
-        lo.addWidget(cap)
 
         # 控制条
         ctrl = QHBoxLayout()
@@ -234,8 +230,20 @@ class ResearchPanel(QWidget):
         ctrl.addWidget(self._btn_run)
         lo.addLayout(ctrl)
 
-        # 研究代理 · 市场环境 (2x2 高级卡)
-        lo.addWidget(_sec_title("市场环境  ·  研究代理信号"))
+        # ── 3 个页签: 信号环境 / 因子研究 / 多因子选股 (一次只见一块) ──
+        self._tabs = QTabWidget()
+        self._tabs.setStyleSheet(
+            f"QTabWidget::pane{{border:1px solid {_PAL['border_lo']};border-radius:{dps(6)};margin-top:{dps(4)};}}"
+            f"QTabBar::tab{{background:transparent;color:{_PAL['sub']};padding:{dps(6)} {dps(16)};"
+            f"border:none;border-bottom:2px solid transparent;font-size:{fs(tr(12))};font-weight:600;}}"
+            f"QTabBar::tab:hover{{color:{_PAL['text']};}}"
+            f"QTabBar::tab:selected{{color:{_PAL['gold']};border-bottom:2px solid {_PAL['gold']};}}")
+
+        # ── Tab 1: 信号环境 (市场环境 2x2 + 宽度仪表) ──
+        self._tab_env = QWidget(); self._tab_env.setStyleSheet(f"background:{C_BG}")
+        env_lo = QVBoxLayout(self._tab_env)
+        env_lo.setContentsMargins(dp(12), dp(10), dp(12), dp(10)); env_lo.setSpacing(dp(10))
+        env_lo.addWidget(_sec_title("市场环境"))
         env_grid = QGridLayout()
         env_grid.setSpacing(dp(8))
         self._card_mkt = _StatCard("市场状态")
@@ -246,9 +254,7 @@ class ResearchPanel(QWidget):
         for i, card in enumerate(env_cards):
             card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
             env_grid.addWidget(card, i // 2, i % 2)
-        lo.addLayout(env_grid)
-
-        # 市场宽度仪表 (研究信号可视化: 破年线占比 + 弱市/强市分区)
+        env_lo.addLayout(env_grid)
         self._gauge_card = well("rstat")
         gl = QVBoxLayout(self._gauge_card)
         gl.setContentsMargins(dp(12), dp(10), dp(12), dp(8))
@@ -262,19 +268,29 @@ class ResearchPanel(QWidget):
         self._gauge_cap.setAlignment(Qt.AlignCenter)
         self._gauge_cap.setWordWrap(True)
         gl.addWidget(self._gauge_cap)
-        lo.addWidget(self._gauge_card)
+        env_lo.addWidget(self._gauge_card)
+        env_lo.addStretch()
+        self._tabs.addTab(self._tab_env, "信号环境")
 
-        # 价值因子研究 (纵向堆叠高级卡)
-        lo.addWidget(_sec_title("价值因子研究  ·  截面 IC / ICIR"))
+        # ── Tab 2: 因子研究 (BP/EP/ROE 三卡) ──
+        self._tab_fac = QWidget(); self._tab_fac.setStyleSheet(f"background:{C_BG}")
+        fac_lo = QVBoxLayout(self._tab_fac)
+        fac_lo.setContentsMargins(dp(12), dp(10), dp(12), dp(10)); fac_lo.setSpacing(dp(10))
+        fac_lo.addWidget(_sec_title("价值因子研究"))
         self._card_bp = _SecCard("BP  账面市值比")
         self._card_ep = _SecCard("EP  盈利收益率")
         self._card_roe = _SecCard("ROE  净资产收益率")
         for c in (self._card_bp, self._card_ep, self._card_roe):
             c.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-            lo.addWidget(c)
+            fac_lo.addWidget(c)
+        fac_lo.addStretch()
+        self._tabs.addTab(self._tab_fac, "因子研究")
 
-        # 多因子选股
-        lo.addWidget(_sec_title("多因子选股  ·  z(BP)+z(REV20)−z(VOL20) 综合分"))
+        # ── Tab 3: 多因子选股 (选股控制条 + 排名表) ──
+        self._tab_pick = QWidget(); self._tab_pick.setStyleSheet(f"background:{C_BG}")
+        pick_lo = QVBoxLayout(self._tab_pick)
+        pick_lo.setContentsMargins(dp(12), dp(10), dp(12), dp(10)); pick_lo.setSpacing(dp(10))
+        pick_lo.addWidget(_sec_title("多因子选股"))
         # 回测选股控制条: 策略 + 日期 + 查看按钮 (选'该日'截面选股)
         pick_row = QHBoxLayout(); pick_row.setSpacing(dp(8))
         pick_row.addWidget(QLabel("策略"))
@@ -303,12 +319,12 @@ class ResearchPanel(QWidget):
         self._btn_sim_buy.clicked.connect(self._on_sim_buy)
         pick_row.addWidget(self._btn_sim_buy)
         pick_row.addStretch()
-        lo.addLayout(pick_row)
+        pick_lo.addLayout(pick_row)
         # 选股/买入结果 caption(独立一行, 避免窄窗口被裁)
         self._pick_cap = QLabel("")
         self._pick_cap.setStyleSheet(_label_ss(size=9) + f"color:{_PAL['faint']};")
         self._pick_cap.setWordWrap(True)
-        lo.addWidget(self._pick_cap)
+        pick_lo.addWidget(self._pick_cap)
         self._rank_table = QTableWidget()
         self._rank_table.setStyleSheet(self._table_qss())
         self._rank_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -317,8 +333,11 @@ class ResearchPanel(QWidget):
         self._rank_table.horizontalHeader().setStretchLastSection(True)
         self._rank_table.cellClicked.connect(self._on_row_click)
         self._rank_table.setMinimumHeight(dp(320))
-        lo.addWidget(self._rank_table)
+        pick_lo.addWidget(self._rank_table)
+        pick_lo.addStretch()
+        self._tabs.addTab(self._tab_pick, "多因子选股")
 
+        lo.addWidget(self._tabs)
         lo.addWidget(_sec_caption("研究池 = 跨板块均衡池(≈287只, 板块中性化)。权威口径(全市场/2500池)见 backend verify_*.py。"))
         lo.addStretch()
 
