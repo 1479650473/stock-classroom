@@ -1,6 +1,6 @@
 # stock-classroom — 架构设计
 
-> 版本: v4.2 | 最后更新: 2026-07-27
+> 版本: v4.3 | 最后更新: 2026-08-27
 
 ---
 
@@ -38,20 +38,25 @@
 ├──────────────────────────────────────────┤
 │   plugin_base.py  (接口协议)              │  IPlugin / PlatformServices / PlatformBus / PluginRegion
 ├───────────────────┬──────────────────────┤
-│   plugins/        │   backend/           │
-│   search          │   app.py (Flask)     │
-│   settings        │   data_manager       │
-│   agent           │   factor_engine      │
-│   market          │   trade_engine       │
-│   picks           │   indicators         │
-│   holdings        │   akshare_source     │
-│   trade           │   ...                │
-│   datapipeline    │                      │
-│   datacenter      │                      │
-│   trainer         │                      │
-│   kline           │                      │
+│   plugins/ (15)   │   backend/           │
+│   overview        │   app.py (Flask)     │
+│   research        │   data_manager       │
+│   picks           │   factor_engine      │
+│   holdings        │   trade_engine       │
+│   trade           │   strategy/          │
+│   agentops        │     metrics/describe/│
+│   market          │     optimize_loop/   │
+│   datacenter      │     portfolio_rebal  │
+│   datapipeline    │   agent/ (research_loop)│
+│   trainer         │   indicators         │
+│   flow            │   akshare_source     │
+│   kline           │   update_daily.py    │
+│   agent/search/   │   ...                │
+│   settings        │                      │
 └───────────────────┴──────────────────────┘
 ```
+
+> 右栏 = 可折叠抽屉(platform_shell `_set_drawer`): 平时收起(左插件全屏), 只有打开 K线 或某插件有 companion 才滑出; 无死区空间。
 
 ### 各层职责
 

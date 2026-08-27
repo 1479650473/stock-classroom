@@ -1,7 +1,7 @@
 ﻿# stock-classroom — 技术手册
 
 > 项目路径: `D:\小光工作区\projects\stock-classroom`
-> 版本: v4.2 | 最后更新: 2026-07-27
+> 版本: v4.3 | 最后更新: 2026-08-27
 > 主题: 暗色 (#0D1117 / #161B22 / #D4A574)
 
 ---
@@ -27,21 +27,25 @@ A 股量化选股桌面应用。v4.2 在插件化架构上新增了**模拟交�
 
 ## 二、UI 架构
 
-### 2.1 插件清单 (11个)
+### 2.1 插件清单 (15个, 分两组: 核心工作流 / 数据工具)
 
-| 插件ID | 显示名 | 区域 | 说明 |
-|--------|--------|------|------|
-| search | 搜索 | TOPBAR | 顶栏搜索框 |
-| settings | 设置 | TOPBAR | 字体/窗口/供应商配置 |
-| agent | AI助手 | TOPBAR | ⭐ 浮动聊天窗 + 工具调用 |
-| market | 市场 | LEFT | 大盘指数 + 板块 |
-| picks | 选股 | LEFT | 43因子评分 Top 20 |
-| holdings | 持仓 | LEFT | 模拟持仓 |
-| trade | 交易 | LEFT | **模拟交易面板 (v4.2)** |
-| datapipeline | 数据管道 | LEFT | 11步数据更新 |
-| datacenter | 数据中心 | LEFT | 表浏览 + 股票分层 |
-| trainer | 回测训练 | LEFT | **占位 (外部独立开发)** |
-| kline | K线 | RIGHT | K线图 + 指标切换 |
+| 插件ID | 显示名 | 区域 | 组 | 说明 |
+|--------|--------|------|----|------|
+| overview | 总览 | LEFT | 核心 | landing 页: 账户卡/最近策略/市场速览/主功能/账户中心 |
+| research | 研究 | LEFT | 核心 | 因子研究 + 策略进化闭环入口 |
+| picks | 选股 | LEFT | 核心 | 43因子评分 Top 20 |
+| holdings | 持仓 | LEFT | 核心 | 纸面盘账本 (5策略曲线/持仓/调仓/精确指标) |
+| trade | 交易 | LEFT | 核心 | **模拟交易面板 (v4.2)** |
+| agentops | AI操盘 | LEFT | 核心 | AI操盘台 (单标的闭环/组合重平衡) |
+| market | 市场 | LEFT | 数据 | 大盘指数 + 板块 |
+| datacenter | 数据中心 | LEFT | 数据 | 表浏览 + 股票分层 |
+| datapipeline | 数据管道 | LEFT | 数据 | 数据更新步骤表 |
+| trainer | 回测训练 | LEFT | 数据 | **占位 (外部独立开发)** |
+| flow | 流程 | LEFT | 数据 | 全流程指挥舱 |
+| kline | K线 | RIGHT | 数据 | K线图 + 指标切换 (右栏抽屉) |
+| agent | AI助手 | TOPBAR | — | ⭐ 浮动聊天窗 + 工具调用 |
+| search | 搜索 | TOPBAR | — | 顶栏搜索框 |
+| settings | 设置 | TOPBAR | — | 字体/窗口/供应商配置 |
 
 ### 2.2 插件系统核心文件
 
