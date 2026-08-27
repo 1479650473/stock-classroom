@@ -387,10 +387,21 @@ class PlatformShell(QMainWindow):
     #  Plugin activation
     # ──────────────────────────────────────────────────────────
 
-    def _on_navigate(self, plugin_id: str):
-        """总览主功能入口等触发跨插件跳转."""
-        if plugin_id in self._plugin_mgr.all_plugins():
-            self._activate_plugin(plugin_id)
+    def _on_navigate(self, plugin_id, payload=None):
+        """总览主功能入口等触发跨插件跳转. payload 透传给落地插件(如 research 带 hp)."""
+        if plugin_id not in self._plugin_mgr.all_plugins():
+            return
+        self._activate_plugin(plugin_id)
+        if payload:
+            w = self._plugin_mgr.get_widget(plugin_id)
+            if w is not None:
+                # 通用约定: 落地插件实现 apply_navigation(payload) 则调用
+                fn = getattr(w, "apply_navigation", None)
+                if callable(fn):
+                    try:
+                        fn(payload)
+                    except Exception:
+                        pass
 
     def _activate_plugin(self, plugin_id: str):
         """Activate a plugin and show its widget in the correct region."""

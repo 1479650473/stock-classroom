@@ -132,13 +132,15 @@ class OverviewPanel(QWidget):
         # 主功能入口
         lo.addWidget(SectionTitle("主功能", size=12))
         self._nav_row = QHBoxLayout(); self._nav_row.setSpacing(dp(8))
-        for pid, label in [("research", "研究"), ("picks", "选股"), ("holdings", "持仓"),
-                           ("trade", "交易"), ("agentops", "AI操盘")]:
+        for pid, label, payload in [
+            ("research", "研究", {"hp": 20}), ("picks", "选股", None),
+            ("holdings", "持仓", None), ("trade", "交易", None),
+            ("agentops", "AI操盘", None)]:
             btn = QPushButton(label)
             btn.setObjectName("navBtn")
             btn.setFixedHeight(dp(40))
             btn.setCursor(Qt.PointingHandCursor)
-            btn.clicked.connect(lambda _=False, p=pid: self._go(p))
+            btn.clicked.connect(lambda _=False, p=pid, pl=payload: self._go(p, pl))
             self._nav_row.addWidget(btn)
         lo.addLayout(self._nav_row)
 
@@ -177,9 +179,9 @@ class OverviewPanel(QWidget):
         self._load_strategy()
         self._load_market()
 
-    def _go(self, plugin_id):
+    def _go(self, plugin_id, payload=None):
         if self._services is not None:
-            self._services.navigate(plugin_id)
+            self._services.navigate(plugin_id, payload)
 
     # ── 账户 ────────────────────────────────────────────────
     def _load_accounts(self):

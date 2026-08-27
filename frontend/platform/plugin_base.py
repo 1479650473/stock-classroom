@@ -23,7 +23,7 @@ class PlatformBus(QObject):
     refresh_current = pyqtSignal()
     data_update_progress = pyqtSignal(str, object)
     settings_changed = pyqtSignal(dict)
-    navigate_plugin = pyqtSignal(str)
+    navigate_plugin = pyqtSignal(str, object)
 
 
 @dataclass
@@ -42,10 +42,10 @@ class PlatformServices:
     def open_kline(self, code: str, name: str):
         self.bus.open_kline.emit(code, name)
 
-    def navigate(self, plugin_id: str):
-        """跳转激活另一插件(总览主功能入口等复用)."""
+    def navigate(self, plugin_id, payload=None):
+        """跳转激活另一插件(总览主功能入口等复用). payload 透传给落地插件的处理函数."""
         try:
-            self.bus.navigate_plugin.emit(plugin_id)
+            self.bus.navigate_plugin.emit(plugin_id, payload or {})
         except Exception:
             pass
 

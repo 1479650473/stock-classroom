@@ -351,6 +351,28 @@ class ResearchPanel(QWidget):
             if b is btn:
                 self._hp = hp
 
+    def set_hp_and_run(self, hp):
+        """外部(总览主功能入口)设定持有期并立刻运行研究."""
+        try:
+            hp = int(hp)
+            if hp in self._segs:
+                self._segs[hp].setChecked(True)
+                self._hp = hp
+            self.load()
+        except Exception:
+            pass
+
+    def apply_navigation(self, payload):
+        """总览主功能入口跳转落地: payload 可含 hp(默认持有期)."""
+        hp = payload.get("hp") if isinstance(payload, dict) else None
+        try:
+            if hp:
+                self.set_hp_and_run(hp)
+            else:
+                self.load()
+        except Exception:
+            self.load()
+
     def set_kline_db(self, path):
         self.db_path = path
 
