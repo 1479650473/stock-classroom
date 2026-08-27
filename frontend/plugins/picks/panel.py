@@ -1,5 +1,5 @@
 import sys, os, traceback
-from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
+from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QCheckBox, QPushButton)
 from PyQt5.QtCore import Qt
 from frontend.platform.theme import (
@@ -28,9 +28,21 @@ class PicksPanel(QWidget):
 
         self.setStyleSheet("background:%s" % C_BG)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(10)
 
+        # ── 页头: 选股 + 数据截至标签 ──
+        head = QHBoxLayout(); head.setSpacing(10)
+        title = QLabel("选股")
+        title.setStyleSheet(f"color:{C_ACCENT};font-size:{fs(18)};font-weight:700;background:transparent;")
+        head.addWidget(title)
+        self._asof_lbl = QLabel("数据截至 --")
+        self._asof_lbl.setStyleSheet(f"color:#8B949E;font-size:{fs(11)};background:transparent;padding-top:4px;")
+        head.addWidget(self._asof_lbl)
+        head.addStretch()
+        layout.addLayout(head)
+
+        # ── 过滤条(简洁) + 一键模拟买入 ──
         filter_bar = QHBoxLayout()
         filter_bar.setSpacing(8)
         self._cb_st = QCheckBox("剔除ST")
@@ -58,8 +70,17 @@ class PicksPanel(QWidget):
         self._btn_apply.clicked.connect(self.load)
         filter_bar.addWidget(self._btn_apply)
 
+        # 一键模拟买入(醒目主按钮)
+        self._btn_sim_buy = QPushButton("一键模拟买入")
+        self._btn_sim_buy.setObjectName("refreshBtn")
+        self._btn_sim_buy.setCursor(Qt.PointingHandCursor)
+        self._btn_sim_buy.setFixedHeight(dp(28))
+        self._btn_sim_buy.setToolTip("把当前选股结果等权分配模拟账户资金市价买入")
+        self._btn_sim_buy.clicked.connect(self._on_sim_buy)
+        filter_bar.addWidget(self._btn_sim_buy)
         layout.addLayout(filter_bar)
 
+        # ── 选股结果表(核心6列) ──
         self.table = QTableWidget()
         self.table.setStyleSheet(qss_table())
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -69,6 +90,12 @@ class PicksPanel(QWidget):
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._on_right_click)
         layout.addWidget(self.table, 1)
+
+        # 模拟买入结果 caption
+        self._buy_cap = QLabel("")
+        self._buy_cap.setStyleSheet(f"color:#8B949E;font-size:{fs(10)};background:transparent;")
+        self._buy_cap.setWordWrap(True)
+        layout.addWidget(self._buy_cap)
 
     def _on_filter_change(self):
         self._filters["exclude_st"] = self._cb_st.isChecked()
@@ -101,7 +128,16 @@ class PicksPanel(QWidget):
             scores = scorer.score_batch(
                 self.db_path, top_n=20, min_klines=10, filters=filters
             )
-            return {"code": 0, "data": [s.to_api_dict() for s in scores]}
+            # 数据截至 = kline 最新日
+            as_of = None
+            try:
+                import sqlite3
+                conn = sqlite3.connect(self.db_path)
+                as_of = conn.execute("SELECT MAX(date) FROM kline_daily").fetchone()[0]
+                conn.close()
+            except Exception:
+                pass
+            return {"code": 0, "data": [s.to_api_dict() for s in scores], "as_of": as_of}
         except Exception as e:
             traceback.print_exc()
             return {"code": -1, "error": str(e)}
@@ -111,12 +147,17 @@ class PicksPanel(QWidget):
             return
         picks = data.get("data", [])
         self._last_results = picks
-        cols = ["#", "代码", "名称", "价格", "涨跌幅", "总分", "趋势", "动量", "量价", "形态", "稳定"]
+        # 数据截至标签
+        as_of = data.get("as_of")
+        if as_of:
+            s = str(as_of)
+            self._asof_lbl.setText(f"数据截至 {s[:4]}-{s[4:6]}-{s[6:8]}")
+        # 核心 6 列 (维度分收进 tooltip, 减少桌面文字)
+        cols = ["#", "代码", "名称", "现价", "涨跌幅", "总分"]
         self.table.setRowCount(len(picks))
         self.table.setColumnCount(len(cols))
         self.table.setHorizontalHeaderLabels(cols)
         for i, s in enumerate(picks):
-            groups = {g["id"]: g["weighted_score"] for g in s.get("groups", [])}
             chg = s.get("factors", {}).get("CHANGE_PCT", 0) or 0
             score = s.get("total_score", 0)
             items = [
@@ -126,11 +167,6 @@ class PicksPanel(QWidget):
                 ("{:.2f}".format(s.get("factors", {}).get("CLOSE", 0)), "#E6EDF3"),
                 ("{}{:.2f}%".format("+" if chg >= 0 else "", chg), C_RISE if chg >= 0 else C_FALL),
                 ("{:.1f}".format(score), C_ACCENT if score >= 70 else ("#8B949E" if score >= 50 else "#484F58")),
-                ("{:.0f}".format(groups.get("trend", 0)), "#E6EDF3"),
-                ("{:.0f}".format(groups.get("momentum", 0)), "#E6EDF3"),
-                ("{:.0f}".format(groups.get("volume", 0)), "#E6EDF3"),
-                ("{:.0f}".format(groups.get("price", 0)), "#E6EDF3"),
-                ("{:.0f}".format(groups.get("stability", 0)), "#E6EDF3"),
             ]
             for j, (text, color) in enumerate(items):
                 it = QTableWidgetItem(text)
@@ -170,6 +206,39 @@ class PicksPanel(QWidget):
         s = self._last_results[row]
         if self.on_status:
             self.on_status(self._make_tooltip(s)[:60] + "...")
+
+    def _on_sim_buy(self):
+        """把当前选股结果一键模拟买入(等权分配模拟账户资金)."""
+        codes = [{"code": s.get("code")} for s in self._last_results if s.get("code")]
+        if not codes:
+            if self.on_status:
+                self.on_status("无可买入的选股(先加载选股)")
+            return
+        if self.on_status:
+            self.on_status(f"模拟买入 {len(codes)} 只...")
+        w = LocalWorker(self._work_sim_buy, "sim_buy", args=[codes])
+        w.result.connect(self._on_sim_buy_data)
+        w.start()
+
+    def _work_sim_buy(self, codes):
+        try:
+            from frontend.plugins.research.worker import sim_buy_picks
+            return sim_buy_picks(codes)
+        except Exception as e:
+            traceback.print_exc()
+            return {"error": str(e)}
+
+    def _on_sim_buy_data(self, tag, data):
+        if not isinstance(data, dict) or data.get("error"):
+            if self.on_status:
+                self.on_status("模拟买入失败: %s" % (data.get("error") if data else "无数据"))
+            return
+        nb = len(data.get("bought", []))
+        nskip = len(data.get("skipped", []))
+        self._buy_cap.setText(
+            f"模拟买入 {nb} 只 / 跳过 {nskip} 只 · 花费 {data.get('total_cost', 0):,.0f} · 账户#{data.get('account_id')}")
+        if self.on_status:
+            self.on_status(f"模拟买入完成: {nb}只 花费 {data.get('total_cost', 0):,.0f} (跳过{nskip})")
 
     def _on_click(self, row, col):
         code = self.table.item(row, 1)
