@@ -66,6 +66,32 @@ class MarketPanel(QWidget):
         rl.addWidget(self._regime_risk)
         lo.addWidget(self._regime_card)
 
+        # ── 📰 今日事件驱动 (突发利好·短期观察, 不进长期策略) ──
+        self._news_card = well("card")
+        nl = QVBoxLayout(self._news_card)
+        nl.setContentsMargins(dp(14), dp(9), dp(14), dp(9))
+        nl.setSpacing(dp(5))
+        nrow = QHBoxLayout(); nrow.setSpacing(dp(8))
+        ntitle = SectionTitle("今日事件驱动")
+        nrow.addWidget(ntitle)
+        self._news_tag = QLabel("📰 突发利好 · 短期观察")
+        self._news_tag.setStyleSheet(label_ss(size=9) + f"color:{C_FALL};")
+        nrow.addWidget(self._news_tag)
+        nrow.addStretch()
+        self._news_asof = QLabel("")
+        self._news_asof.setStyleSheet(label_ss(size=9) + f"color:{C_FAINT};")
+        nrow.addWidget(self._news_asof)
+        nl.addLayout(nrow)
+        self._news_topics_lbl = QLabel("")
+        self._news_topics_lbl.setStyleSheet(label_ss(size=9) + f"color:{C_SUBTEXT};")
+        self._news_topics_lbl.setWordWrap(True)
+        self._news_topics_lbl.setMaximumHeight(dp(30))
+        nl.addWidget(self._news_topics_lbl)
+        # 事件股 chips(横向滚动)
+        self._news_chips = QHBoxLayout(); self._news_chips.setSpacing(dp(6))
+        nl.addLayout(self._news_chips)
+        lo.addWidget(self._news_card)
+
         # ── Index hero cards ──
         self.card_row = QHBoxLayout()
         self.card_row.setSpacing(dp(10))
@@ -342,6 +368,57 @@ class MarketPanel(QWidget):
             self.on_status(f"市场数据已加载 - {stats.get('date', '')}")
         self._load_sectors()
         self._load_regime()
+        self._load_news_driven()
+
+    def _load_news_driven(self):
+        """读 data/news_driven.json 填充'今日事件驱动'卡(突发利好·短期观察)."""
+        import os, json
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__))))), 'data', 'news_driven.json')
+        try:
+            with open(path, encoding='utf-8') as f:
+                nd = json.load(f)
+        except Exception:
+            return
+        if not isinstance(nd, dict) or not nd.get('entries') and not nd.get('hot_sectors'):
+            return
+        as_of = nd.get('as_of', '')
+        self._news_asof.setText(f"数据至 {str(as_of)[:4]}-{str(as_of)[4:6]}-{str(as_of)[6:8]}" if as_of else "")
+        # 热门话题(豆包搜到的当日消息)
+        topics = [t for t in (nd.get('topics') or []) if t][:3]
+        if topics:
+            self._news_topics_lbl.setText(" · ".join(topics))
+        # 事件股 chips (涨停/板板块领涨, 前8)
+        while self._news_chips.count():
+            w = self._news_chips.takeAt(0).widget()
+            if w: w.deleteLater()
+        entries = (nd.get('entries') or [])[:8]
+        btn_qss = ("QPushButton{{background:{bg};color:{fg};border:1px solid {bd};"
+                   "border-radius:{r};padding:{p};font-size:{fs};}}"
+                   "QPushButton:hover{{border-color:{acc};}}").format(
+                       bg="transparent", fg=C_SUBTEXT, bd=C_BORDER_SOFT, r=dps(5), p="2px 10px", fs=fs(tr(11)), acc=C_GOLD)
+        for e in entries:
+            name = e.get('name') or e.get('code')
+            chg = e.get('change_pct')
+            lbl = name
+            b = QPushButton(lbl)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setStyleSheet(btn_qss)
+            b.setToolTip(f"{name}({e.get('code')}) {f'{chg:+.1f}%' if chg is not None else ''}\n"
+                         f"来源: {e.get('source')} · {e.get('reason')}\n板块: {e.get('sector') or '—'}\n⚠ 突发利好·短期观察, 不进长期策略")
+            code = e.get('code', '')
+            b.clicked.connect(lambda _=False, c=code: self._open_news_kline(c))
+            self._news_chips.addWidget(b)
+        self._news_chips.addStretch()
+
+    def _open_news_kline(self, code):
+        """点事件股chip → 打开该股K线(若支持)."""
+        try:
+            if not code: return
+            if self.on_open_kline:
+                self.on_open_kline(code, "")
+        except Exception:
+            pass
 
     def _load_regime(self):
         """读 data/regime.json 填充市场环境条 (牛/熊/震荡 + 建议策略 + 系统风险)."""

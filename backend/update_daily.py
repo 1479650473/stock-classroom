@@ -173,7 +173,18 @@ def run(pool_only=False, skip_paper=False):
             out['steps']['regime'] = str(e)[:80]
             lg.warning('  市场环境 regime 失败: %s', str(e)[:60])
 
-        # ⑤ 账户净值快照(每日收盘记账, 累计真实净值曲线)
+        # ⑤ 事件驱动候选池 (🅱️ 新闻调研 → 突发利好·短期观察, 不进长期策略)
+        try:
+            from backend.strategy.news_driven import build_event_pool
+            _np = build_event_pool(use_news=True)
+            out['steps']['news_driven'] = {'as_of': _np.get('as_of'), 'entries': len(_np.get('entries', []))}
+            lg.info('  事件驱动池: as_of=%s 事件股=%d 热点板块=%d',
+                    _np.get('as_of'), len(_np.get('entries', [])), len(_np.get('hot_sectors', [])))
+        except Exception as e:
+            out['steps']['news_driven'] = str(e)[:80]
+            lg.warning('  事件驱动池失败: %s', str(e)[:60])
+
+        # ⑥ 账户净值快照(每日收盘记账, 累计真实净值曲线)
         try:
             from trade_engine.engine import TradeEngine
             _eng = TradeEngine()
