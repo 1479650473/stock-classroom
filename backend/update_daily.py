@@ -204,7 +204,18 @@ def run(pool_only=False, skip_paper=False):
             out['steps']['stock_deep'] = str(e)[:80]
             lg.warning('  个股深挖失败: %s', str(e)[:60])
 
-        # ⑦ 账户净值快照(每日收盘记账, 累计真实净值曲线)
+        # ⑦ 每日持仓守护(🅰️ 卖出条件: 保护优先于排名). 默认 dry_run 预览不真卖, 由用户确认.
+        try:
+            from backend.strategy.day_guard import run_day_guard
+            _dg = run_day_guard(dry_run=True)   # 预览: 只判定+记录, 不真卖(防自动清仓误伤)
+            out['steps']['day_guard'] = {'n_checked': _dg.get('n_checked'), 'n_sold_signal': _dg.get('n_sold')}
+            lg.info('  持仓守护(预览): 检查 %d 只 · 保护卖出信号 %d 只(待确认)',
+                    _dg.get('n_checked'), _dg.get('n_sold'))
+        except Exception as e:
+            out['steps']['day_guard'] = str(e)[:80]
+            lg.warning('  持仓守护失败: %s', str(e)[:60])
+
+        # ⑧ 账户净值快照(每日收盘记账, 累计真实净值曲线)
         try:
             from trade_engine.engine import TradeEngine
             _eng = TradeEngine()
