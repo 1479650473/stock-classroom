@@ -46,6 +46,19 @@ class SelectionContract:
     def start(self) -> str:
         return "2018-01-01"
 
+    def for_regime(self, regime_cn: str) -> "SelectionContract":
+        """按市场环境(牛/熊/震荡)返回调整了权重的新契约副本.
+
+        蓝图: 权重计算受大盘周期 + 策略周期控制. 相同的因子集合, 但基础权重随
+        regime 动态(牛市重动量/反转, 熊市重价值/低波, 震荡均衡). 多因子契约才有意义;
+        单因子契约(如纯BP)不动.
+        """
+        from .regime import regime_base_weights
+        import copy
+        new = copy.deepcopy(self)
+        new.base_weights = regime_base_weights(regime_cn, self.base_weights)
+        return new
+
 
 def _xs_z(panel: pd.DataFrame, date: pd.Timestamp):
     x = pd.to_numeric(panel.loc[date], errors="coerce")

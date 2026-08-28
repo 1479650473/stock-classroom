@@ -129,6 +129,40 @@ def suggest_strategy(regime_cn: str) -> str:
     return lst[0] if lst else DEFAULT_STRATEGY
 
 
+# ── ② 权重动态化: 因子权重随 market regime 调整 (蓝图"权重受大盘周期控制") ──
+# 基础多因子契约权重 (BP / REVERSAL_20 / VOLATILITY_20), 作为"中性均衡"基准
+NEUTRAL_WEIGHTS = {"BP": 1.0, "REVERSAL_20": 1.0, "VOLATILITY_20": -1.0}
+
+# 各 regime 的权重覆盖 (相对中性基准的偏移):
+#   牛市: 动量/反转更重(追击), 价值/低波略轻(风险偏好升) → 偏进攻
+#   震荡: 均衡 (趋势不明, 面面俱到)
+#   熊市: 价值/低波更重(防御), 动量/反转削弱(避免逆势追高) → 偏防守
+REGIME_WEIGHT_OVERRIDES = {
+    "牛市": {"BP": 0.8, "REVERSAL_20": 1.4, "VOLATILITY_20": -0.8},
+    "震荡": NEUTRAL_WEIGHTS,
+    "熊市": {"BP": 1.5, "REVERSAL_20": 0.4, "VOLATILITY_20": -1.5},
+}
+
+
+def regime_base_weights(regime_cn: str, base: dict = None) -> dict:
+    """按市场环境(牛/熊/震荡)动态生成多因子基础权重.
+
+    base: 契约定给的默认可选权重(如 {BP:1.0, REVERSAL_20:1.0, VOLATILITY_20:-1.0}),
+          缺省用 NEUTRAL_WEIGHTS. 只在有该 regime 覆盖时替换, 否则保留原权重.
+    返回: {factor: weight} 供 SelectionContract.base_weights.
+    """
+    base = dict(base) if base else dict(NEUTRAL_WEIGHTS)
+    over = REGIME_WEIGHT_OVERRIDES.get(regime_cn)
+    if over is None:
+        return base
+    # 合并: 覆盖表中有的因子用新权重, 表里没用到的保留原值
+    out = dict(base)
+    for f, w in over.items():
+        if f in out:
+            out[f] = w
+    return out
+
+
 def run() -> dict:
     """主入口: 读 hs300 → 分类 → 落库 data/regime.json → 返回结果."""
     data = _load_hs300()
@@ -136,12 +170,14 @@ def run() -> dict:
         return {"error": "hs300 数据不足"}
     cls = classify(data["closes"])
     regime_cn = cls["regime_cn"]
+    dyn_weights = regime_base_weights(regime_cn)
     out = {
         "as_of": data["dates"][-1] if data["dates"] else None,
         "regime": cls["regime"], "regime_cn": regime_cn,
         "score": cls["score"], "sys_risk": cls["sys_risk"],
         "suggest_strategy": suggest_strategy(regime_cn),
         "suggest_list": STRATEGY_ENV.get(regime_cn, [DEFAULT_STRATEGY]),
+        "dyn_weights": dyn_weights,   # 权重动态化: 当前环境的因子权重
         "generated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
     try:
