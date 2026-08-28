@@ -471,6 +471,10 @@ class ResearchLoop:
         import pandas as pd
 
         gw = gw or self.gw
+        # 无显式契约 → 判断器驱动轮换契约(按当前市场环境主策略); 回退默认
+        if contract is None:
+            from ..strategy.portfolio_rebalance import rotated_contract
+            contract = rotated_contract(20)   # 默认持有期 20 天
         contract = contract or SelectionContract()
         # ① 池 + 帧(带 warmup, 让 reversal/vol 预热)
         pool = (pool or build_wide_pool())[:max_pool]

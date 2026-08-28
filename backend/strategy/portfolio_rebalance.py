@@ -271,6 +271,51 @@ def adaptive_config_for_hp(rebalance_bars: int, top_k_pct: float = 0.2,
         top_k_pct=top_k_pct, rebalance_bars=bars, initial_balance=initial_balance)
 
 
+# 5 策略家族的因子/权重(数据驱动轮换用; 与 _strategy_contracts 同构)
+STRATEGY_FACTORS = {
+    "F价值Tilt": (["BP", "REVERSAL_20", "VOLATILITY_20"], {"BP": 1.0, "REVERSAL_20": 1.0, "VOLATILITY_20": -1.0}, True),
+    "D多因子": (["BP", "REVERSAL_20", "VOLATILITY_20"], {"BP": 1.0, "REVERSAL_20": 1.0, "VOLATILITY_20": -1.0}, False),
+    "A价值": (["BP"], {"BP": 1.0}, True),
+    "B反转": (["REVERSAL_20"], {"REVERSAL_20": 1.0}, False),
+    "C低波动": (["VOLATILITY_20"], {"VOLATILITY_20": -1.0}, False),
+}
+
+
+def rotated_contract(hp: int = 20, top_k_pct: float = 0.2, initial_balance: float = 100000.0,
+                     regime_cn: str = None) -> SelectionContract:
+    """判断器驱动的**轮换契约**(数据驱动): 按当前市场环境主策略构造 SelectionContract.
+
+    读 data/regime.json 的 rotation.primary(当前环境主策略), 用对应因子/权重构造契约;
+    读不到/环境不明/策略未知名 → 回退 adaptive_config_for_hp(现有规则).
+    供 portfolio_paper/agentops 在无显式 contract 时自动用当前环境主策略做组合重平衡
+    (架构图"周期性策略轮换"落地: 牛→B反转进攻 / 震荡→F价值Tilt / 熊→C低波动防守).
+
+    若显式传 regime_cn 则忽略文件(供测试/强制轮换).
+    """
+    if regime_cn is None:
+        try:
+            import os as _os, json as _json
+            _p = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))),
+                               "data", "regime.json")
+            if _os.path.exists(_p):
+                with open(_p, encoding="utf-8") as f:
+                    _j = _json.load(f)
+                regime_cn = _j.get("regime_cn")
+        except Exception:
+            regime_cn = None
+    if regime_cn:
+        from ..strategy.regime import rotate_strategy
+        primary = rotate_strategy(regime_cn).get("primary")
+        if primary and primary in STRATEGY_FACTORS:
+            factors, weights, use_tilt = STRATEGY_FACTORS[primary]
+            return SelectionContract(factors=factors, base_weights=dict(weights),
+                                     use_tilt=use_tilt, top_k_pct=top_k_pct,
+                                     rebalance_bars=max(1, int(hp)),
+                                     initial_balance=initial_balance)
+    # 回退: 现有规则(HP分层)
+    return adaptive_config_for_hp(hp, top_k_pct=top_k_pct, initial_balance=initial_balance)
+
+
 # ── ② 多期组合 forward paper(真调仓循环, paper-only) ──────────────────
 def forward_paper_run(frames: dict, contract: SelectionContract, start: str, end: str,
                       signal_fn: Optional[Callable] = None,
