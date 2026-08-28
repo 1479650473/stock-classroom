@@ -83,9 +83,10 @@ def _load_regime_field(key: str, default=None):
 
 
 def _search_hot_topics(n_queries: int = NEWS_QUERY_LIMIT) -> list:
-    """豆包搜索抓重大政策/宏观消息 → 提取热点板块词. 搜索失败/未配置返回 [].
+    """豆包搜索抓真正可用的财经/市场/政策消息 → 热点板块词.
 
     n_queries 限制每天搜索次数(节省额度); 只搜"全局市场"类 query, 不逐股搜.
+    提示词必须带金融语境限定词(央行/沪深/证券/A股/政策/业绩), 否则返回社会/娱乐杂讯.
     """
     topics = []
     try:
@@ -93,17 +94,30 @@ def _search_hot_topics(n_queries: int = NEWS_QUERY_LIMIT) -> list:
         c = SearchClient()
     except Exception:
         return topics
-    queries = ["今日A股 重大政策 板块 热点", "今日 宏观经济 重要消息 影响行业板块"]
+    # 财经语境的查询(经实测: 带 央行/沪深股市/政策/业绩 等词 → 返回真实财经/市场/政策消息;
+    #   "财经要闻"太宽泛 → 返回法拍别墅/娱乐杂讯)
+    queries = [
+        "央行 政策 今日 A股市场 影响 热点板块",
+        "沪深股市 今日 重大公告 业绩预增 政策利好",
+    ]
+    # 非财经关键词黑名单(过滤豆包返回的社会/娱乐杂讯)
+    _noise_kw = ["别墅", "马桶", "英伟达", "豪宅", "明星", "网红", "离婚", "拍卖", "撤拍",
+                 "房", "房价", "包包", "直播", "网红", "外卖", "房子", "彩礼"]
     for q in queries[:max(0, n_queries)]:
         try:
-            results = c.search_web(q, limit=3)
+            results = c.search_web(q, limit=6)
         except SearchError:
             continue
         for it in results:
             t = (it.get("title") or "").strip()
-            if t:
-                topics.append(t[:80])
-    return topics
+            if not t:
+                continue
+            if any(kw in t for kw in _noise_kw):
+                continue    # 跳过杂讯
+            topics.append(t[:80])
+        if len(topics) >= 5:
+            break
+    return topics[:5]
 
 
 def build_event_pool(use_news: bool = True, progress=None) -> dict:
