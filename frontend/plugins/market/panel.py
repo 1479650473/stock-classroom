@@ -48,6 +48,24 @@ class MarketPanel(QWidget):
         head.addStretch()
         lo.addLayout(head)
 
+        # ── 市场环境条 (牛/熊/震荡 + 建议策略 + 系统风险) ──
+        self._regime_card = well("card")
+        rl = QHBoxLayout(self._regime_card)
+        rl.setContentsMargins(dp(14), dp(9), dp(14), dp(9))
+        rl.setSpacing(dp(10))
+        self._regime_lbl = QLabel("市场环境 --")
+        self._regime_lbl.setStyleSheet(value_ss(size=15, gold=True))
+        rl.addWidget(self._regime_lbl)
+        self._regime_strat = QLabel("")
+        self._regime_strat.setStyleSheet(label_ss(size=10) + f"color:{C_SUBTEXT};")
+        rl.addWidget(self._regime_strat)
+        rl.addStretch()
+        self._regime_risk = QLabel("")
+        self._regime_risk.setStyleSheet(label_ss(size=9) + f"color:{C_FALL};")
+        self._regime_risk.setWordWrap(True)
+        rl.addWidget(self._regime_risk)
+        lo.addWidget(self._regime_card)
+
         # ── Index hero cards ──
         self.card_row = QHBoxLayout()
         self.card_row.setSpacing(dp(10))
@@ -323,6 +341,36 @@ class MarketPanel(QWidget):
         if self.on_status:
             self.on_status(f"市场数据已加载 - {stats.get('date', '')}")
         self._load_sectors()
+        self._load_regime()
+
+    def _load_regime(self):
+        """读 data/regime.json 填充市场环境条 (牛/熊/震荡 + 建议策略 + 系统风险)."""
+        import os, json
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__))))), 'data', 'regime.json')
+        try:
+            with open(path, encoding='utf-8') as f:
+                r = json.load(f)
+        except Exception:
+            return
+        if not isinstance(r, dict) or not r.get('regime_cn'):
+            return
+        rc = r.get('regime_cn', '--')
+        as_of = r.get('as_of', '')
+        self._regime_lbl.setText(f"市场环境 · {rc}")
+        strat = r.get('suggest_strategy')
+        lst = r.get('suggest_list') or []
+        if strat:
+            tip = " · ".join(lst) if lst else strat
+            self._regime_strat.setText(f"建议策略: {strat}")
+            self._regime_strat.setToolTip(f"当前环境适配: {tip} (数据至 {as_of})")
+        if not self._regime_risk.text():
+            sr = r.get('sys_risk') or {}
+            if sr.get('triggered'):
+                self._regime_risk.setText("⚠ " + sr['reason'])
+            else:
+                dd = sr.get('drawdown')
+                self._regime_risk.setText(f"回撤 {dd*100:.1f}%" if dd else "")
 
     def _build_sector_table(self, sectors):
         cols = ["板块", "排名", "价格", "涨跌幅", "领涨股", "领涨涨幅"]

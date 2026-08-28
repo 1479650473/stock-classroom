@@ -163,7 +163,17 @@ def run(pool_only=False, skip_paper=False):
                 out['steps']['paper'] = {'error': str(err)[:120]}
                 lg.warning('  纸面盘失败: %s', str(err)[:120])
 
-        # ④ 账户净值快照(每日收盘记账, 累计真实净值曲线)
+        # ④ 市场环境 regime (牛/熊/震荡 + 系统风险, 供看盘页显示)
+        try:
+            from backend.strategy.regime import run as _run_regime
+            _rr = _run_regime()
+            out['steps']['regime'] = {'regime': _rr.get('regime_cn'), 'as_of': _rr.get('as_of')}
+            lg.info('  市场环境: %s (as_of=%s) 建议=%s', _rr.get('regime_cn'), _rr.get('as_of'), _rr.get('suggest_strategy'))
+        except Exception as e:
+            out['steps']['regime'] = str(e)[:80]
+            lg.warning('  市场环境 regime 失败: %s', str(e)[:60])
+
+        # ⑤ 账户净值快照(每日收盘记账, 累计真实净值曲线)
         try:
             from trade_engine.engine import TradeEngine
             _eng = TradeEngine()
