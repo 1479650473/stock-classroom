@@ -78,6 +78,15 @@ class PicksPanel(QWidget):
         self._btn_sim_buy.setToolTip("把当前选股结果等权分配模拟账户资金市价买入")
         self._btn_sim_buy.clicked.connect(self._on_sim_buy)
         filter_bar.addWidget(self._btn_sim_buy)
+
+        # 🔍 资讯深挖(对选股前若干只查公司资讯, LLM 主观判断)
+        self._btn_deep = QPushButton("🔍 资讯深挖")
+        self._btn_deep.setObjectName("refreshBtn")
+        self._btn_deep.setCursor(Qt.PointingHandCursor)
+        self._btn_deep.setFixedHeight(dp(28))
+        self._btn_deep.setToolTip("对选股结果前8只逐一查公司资讯, LLM 独立主观判断(前置/后移/保持/剔名)")
+        self._btn_deep.clicked.connect(self._on_deep)
+        filter_bar.addWidget(self._btn_deep)
         layout.addLayout(filter_bar)
 
         # ── 选股结果表(核心6列) ──
@@ -96,6 +105,24 @@ class PicksPanel(QWidget):
         self._buy_cap.setStyleSheet(f"color:#8B949E;font-size:{fs(10)};background:transparent;")
         self._buy_cap.setWordWrap(True)
         layout.addWidget(self._buy_cap)
+
+        # ── 🔍 资讯深挖结果面板 ──
+        self._deep_panel = QWidget()
+        self._deep_panel.setStyleSheet(f"background:{C_BG};")
+        dp_lo = QVBoxLayout(self._deep_panel)
+        dp_lo.setContentsMargins(0, 0, 0, 0); dp_lo.setSpacing(4)
+        self._deep_title = QLabel("🔍 资讯深挖(LLM 主观判断)")
+        self._deep_title.setStyleSheet(f"color:#8B949E;font-size:{fs(11)};font-weight:600;letter-spacing:0.5px;background:transparent;")
+        dp_lo.addWidget(self._deep_title)
+        self._deep_rows = QVBoxLayout(); self._deep_rows.setSpacing(4)
+        dp_lo.addLayout(self._deep_rows)
+        self._deep_cap = QLabel("")
+        self._deep_cap.setStyleSheet(f"color:#8B949E;font-size:{fs(9)};background:transparent;")
+        self._deep_cap.setWordWrap(True)
+        self._deep_cap.setMaximumHeight(dp(16))
+        dp_lo.addWidget(self._deep_cap)
+        self._deep_panel.setVisible(False)
+        layout.addWidget(self._deep_panel)
 
     def _on_filter_change(self):
         self._filters["exclude_st"] = self._cb_st.isChecked()
@@ -206,6 +233,86 @@ class PicksPanel(QWidget):
         s = self._last_results[row]
         if self.on_status:
             self.on_status(self._make_tooltip(s)[:60] + "...")
+
+    def _on_deep(self):
+        """对选股结果前8只逐一查公司资讯, LLM 主观判断(前置/后移/保持/剔名)."""
+        cands = self._last_results[:8]
+        if not cands:
+            if self.on_status:
+                self.on_status("无可深挖的股票(先加载选股)")
+            return
+        if self.on_status:
+            self.on_status(f"资讯深挖 {len(cands)} 只(豆包搜索+LLM判断)...")
+        self._deep_panel.setVisible(True)
+        self._deep_cap.setText("深挖中...")
+        self._btn_deep.setEnabled(False)
+        w = LocalWorker(self._work_deep, "deep", args=[cands])
+        w.result.connect(self._on_deep_data)
+        w.start()
+
+    def _work_deep(self, cands):
+        try:
+            from backend.strategy.stock_deep import deep_analyze
+            # 给候选补 rank/pool 字段
+            pool = len(cands)
+            for i, c in enumerate(cands):
+                c["rank"] = i + 1
+                c["pool"] = pool
+            return deep_analyze(cands)
+        except Exception as e:
+            traceback.print_exc()
+            return {"error": str(e)}
+
+    def _on_deep_data(self, tag, data):
+        self._btn_deep.setEnabled(True)
+        if not isinstance(data, dict) or data.get("error"):
+            self._deep_cap.setText("深挖失败: %s" % (data.get("error") if data else "无数据"))
+            return
+        entries = data.get("entries", [])
+        # 清旧行
+        while self._deep_rows.count():
+            w = self._deep_rows.takeAt(0).widget()
+            if w: w.deleteLater()
+        self._deep_cap.setText(f"LLM 主观判断: {' · '.join(e['name'] + '→' + e['verdict'] for e in entries)}")
+        for e in entries:
+            row = self._make_deep_row(e)
+            self._deep_rows.addWidget(row)
+        if self.on_status:
+            self.on_status(f"资讯深挖完成: {len(entries)}只")
+
+    def _make_deep_row(self, e):
+        """一只股票深挖结果行: 名称 徽章[消息级] 理由 置信度."""
+        verdict = e.get("verdict", "保持")
+        color = {"前置": C_RISE, "剔名": C_FALL, "后移": "#D29922", "保持": "#8B949E"}.get(verdict, "#8B949E")
+        w = QWidget(); w.setStyleSheet(f"background:{C_BG};")
+        lo = QHBoxLayout(w); lo.setContentsMargins(0, 2, 0, 2); lo.setSpacing(8)
+        name = QLabel(f"{e.get('name','')}({e.get('code','')})")
+        name.setStyleSheet(f"color:{C_ACCENT};font-size:{fs(11)};font-weight:600;background:transparent;")
+        lo.addWidget(name)
+        badge = QLabel(verdict)
+        badge.setStyleSheet(f"background:rgba({self._hex2rgb(color)},0.13);color:{color};"
+                            f"border:1px solid rgba({self._hex2rgb(color)},0.42);border-radius:{dps(4)};"
+                            f"padding:1px 8px;font-size:{fs(10)};font-weight:600;background-color:transparent;")
+        lo.addWidget(badge)
+        reason = QLabel(e.get("reason", "")[:60])
+        reason.setStyleSheet(f"color:#8B949E;font-size:{fs(10)};background:transparent;")
+        reason.setToolTip(e.get("reason", ""))
+        lo.addWidget(reason)
+        conf = QLabel(f"{float(e.get('confidence', 0))*100:.0f}%")
+        conf.setStyleSheet(f"color:#8B949E;font-size:{fs(9)};background:transparent;")
+        lo.addWidget(conf)
+        lo.addStretch()
+        # 悬停看新闻标题
+        news = e.get("news", [])
+        if news:
+            tip = "\n".join(n.get("title", "") for n in news[:3])
+            w.setToolTip(tip)
+        return w
+
+    @staticmethod
+    def _hex2rgb(hcolor):
+        h = hcolor.lstrip("#")
+        return ", ".join(str(int(h[i:i+2], 16)) for i in (0, 2, 4))
 
     def _on_sim_buy(self):
         """把当前选股结果一键模拟买入(等权分配模拟账户资金)."""

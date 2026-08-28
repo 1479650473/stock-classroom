@@ -184,7 +184,27 @@ def run(pool_only=False, skip_paper=False):
             out['steps']['news_driven'] = str(e)[:80]
             lg.warning('  事件驱动池失败: %s', str(e)[:60])
 
-        # ⑥ 账户净值快照(每日收盘记账, 累计真实净值曲线)
+        # ⑥ 个股资讯深挖(🅰️ 选股前几只 → 豆包搜索+LLM主观判断补位)
+        try:
+            # 用当前选股 top_n 作为深挖候选
+            from frontend.plugins.picks.panel import PicksPanel
+            import os as _os
+            _db = _os.path.join(ROOT, 'data', 'kline.db')
+            from factor_engine import FactorScorer, DEFAULT_FILTERS
+            _sc = FactorScorer()
+            _picks = _sc.score_batch(_db, top_n=8, min_klines=10, filters=DEFAULT_FILTERS)
+            _cands = [{"code": s.code, "name": s.name, "total_score": s.total_score,
+                       "groups": [{"name": g.name, "weighted_score": g.weighted_score} for g in s.groups]}
+                      for s in _picks]
+            from backend.strategy.stock_deep import deep_analyze
+            _sd = deep_analyze(_cands)
+            out['steps']['stock_deep'] = {'as_of': _sd.get('as_of'), 'entries': len(_sd.get('entries', []))}
+            lg.info('  个股深挖: as_of=%s 深挖%d只', _sd.get('as_of'), len(_sd.get('entries', [])))
+        except Exception as e:
+            out['steps']['stock_deep'] = str(e)[:80]
+            lg.warning('  个股深挖失败: %s', str(e)[:60])
+
+        # ⑦ 账户净值快照(每日收盘记账, 累计真实净值曲线)
         try:
             from trade_engine.engine import TradeEngine
             _eng = TradeEngine()
