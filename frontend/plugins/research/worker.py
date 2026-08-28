@@ -47,7 +47,9 @@ def _load_frames():
         return _frames_cache
     try:
         codes = build_wide_pool()
-        frames = load_universe_frames(codes, start=WARM, end=now,
+        # limit 需覆盖到 WARM(2020-06) 之前还需 warmup 到 2018(250日均线/波动预热)
+        # 2020-06→now 约6年≈1516交易日 + 2018-2020约500根 ≈ 2200; 取 2600 保余量防2023前被截
+        frames = load_universe_frames(codes, start=WARM, end=now, limit=2600,
                                       with_fundamentals=True, fetch_missing=False)
     except Exception as e:  # noqa: BLE001
         _frames_cache, _cache_key = {}, now
