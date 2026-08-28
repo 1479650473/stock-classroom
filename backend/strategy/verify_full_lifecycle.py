@@ -51,6 +51,9 @@ def verify_full_lifecycle(frames, contract: SelectionContract,
 
     # 面板
     close = _panel(eng, frames, "close")
+    open_ = _panel(eng, frames, "open")
+    high = _panel(eng, frames, "high")
+    low = _panel(eng, frames, "low")
     bp = eng._factor_panel(frames, "BP", close)
     rev = eng._factor_panel(frames, "REVERSAL_20", close)
     vol = eng._factor_panel(frames, "VOLATILITY_20", close)
@@ -118,17 +121,21 @@ def verify_full_lifecycle(frames, contract: SelectionContract,
     bar_index_ctr = 0
     for dt in dates:
         row = close.loc[dt]
-        # ① 先判个股保护(每日, 保护优先)
+        # ① 先判个股保护(每日, 保护优先) —— 用真实当日 OHLC
         dead = []
         for c, gi in guard_states.items():
             if gi.get("break_hold"):
                 continue
             st = gi["state"]
             gi["bar_index"] += 1
-            # 用当日 bar (open/high/low)
-            bar = {"open": float(row.get(c, pd.NA)) if not pd.isna(row.get(c, pd.NA)) else st.entry_price,
-                   "high": 0, "low": 0}
-            # 取该股当日 OHLC (简化: 从 close 面板近似; 真实应读原始 kline —— 用 open 面板)
+            _o = _try_float(open_.loc[dt].get(c))
+            _h = _try_float(high.loc[dt].get(c))
+            _l = _try_float(low.loc[dt].get(c))
+            _c = _try_float(row.get(c))
+            bar = {"open": _o if _o else st.entry_price,
+                   "high": _h if _h else max(st.entry_price, _o or st.entry_price),
+                   "low": _l if _l else min(st.entry_price, _o or st.entry_price),
+                   "close": _c if _c else st.entry_price}
             decision = protect.evaluate_bar(st, bar=bar, bar_index=gi["bar_index"])
             if decision is not None:
                 dead.append((c, decision))
@@ -194,6 +201,16 @@ def price_of(row, c):
     if v is None or pd.isna(v):
         return 0.0
     return float(v)
+
+
+def _try_float(v):
+    """容错转 float, pd.NA/NaN/None → None."""
+    try:
+        if v is None or pd.isna(v):
+            return None
+        return float(v)
+    except Exception:
+        return None
 
 
 def _buyhold_nav(close, dates, initial_balance):

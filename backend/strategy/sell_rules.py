@@ -43,15 +43,25 @@ class SellRuleSet:
 
     @classmethod
     def build(cls, rebalance_bars: int = 20, top_k_pct: float = 0.2,
-              stop_loss_pct: float = 0.05, take_profit_pct: float = 0.12,
-              trailing_stop_pct: float = 0.0, enable_rebalance_exit: bool = True) -> "SellRuleSet":
-        """按策略参数构造一份卖出规则集. 时间止损缺省 = 持有期(重平衡周期)."""
-        tl = 0 if rebalance_bars <= 0 else int(rebalance_bars)
+              stop_loss_pct: float = 0.08, take_profit_pct: float = 0.0,
+              trailing_stop_pct: float = 0.10, trailing_activation_pct: float = 0.15,
+              enable_rebalance_exit: bool = True) -> "SellRuleSet":
+        """按策略参数构造一份卖出规则集. 时间止损缺省 = 持有期(重平衡周期).
+
+        用户策略哲学: **不加固定止盈(让利润奔跑)**, 用三驱动:
+          · 条件止损(stop_loss): 兜底防大亏(跌破止损即走)
+          · 移动止损(trailing): 利润奔跑后锁利(创新高则止损线随之上移, 回撤触发即走)
+          · 策略卖出/重平衡调出(rebalance_exit): 信号/排名失效才兑现
+        take_profit_pct 默认 0(不设固定止盈); trailing 默认 10%回撤/15%激活.
+        time_limit_bars 默认 0(不设时间止损): 用户策略坚持"条件止损+策略卖出"双驱动,
+        时间止损会与重平衡周期同长导致每期持仓被提前清掉(实测 rebalance_exit 永远不触发).
+        """
+        tl = 0
         prot = ProtectionSpec(
             stop_loss_pct=float(stop_loss_pct),
             take_profit_pct=float(take_profit_pct),
             trailing_stop_pct=float(trailing_stop_pct),
-            trailing_activation_pct=0.0,
+            trailing_activation_pct=float(trailing_activation_pct),
             intrabar_mode="conservative",
             time_limit_bars=tl,
         )
