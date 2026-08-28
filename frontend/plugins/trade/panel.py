@@ -463,9 +463,9 @@ class _PositionTable(QTableWidget):
     row_clicked = pyqtSignal(str, str)  # code, name
 
     def __init__(self):
-        super().__init__(0, 6)
+        super().__init__(0, 7)
         self.setHorizontalHeaderLabels([
-            "代码", "名称", "数量", "成本", "现价", "盈亏 / 市值",
+            "代码", "名称", "数量", "成本", "现价", "盈亏 / 市值", "卖出条件",
         ])
         self.setStyleSheet(qss_table())
         self.horizontalHeader().setStretchLastSection(True)
@@ -480,6 +480,11 @@ class _PositionTable(QTableWidget):
         self.setColumnWidth(3, dp(62))
         self.setColumnWidth(4, dp(62))
         self.cellClicked.connect(self._on_click)
+        self._guard = {}   # code -> {reason_cn, exec_price} (来自 day_guard_log)
+
+    def set_guard(self, guard_map):
+        """注入每日守护结果: {code: {reason_cn, exec_price, action}}."""
+        self._guard = guard_map or {}
 
     def _on_click(self, row, col):
         code = self.item(row, 0).text() if self.item(row, 0) else ""
@@ -491,19 +496,32 @@ class _PositionTable(QTableWidget):
         self.setRowCount(len(positions))
         for i, p in enumerate(positions):
             fp = p.get('float_pnl', 0)
+            code = p['code']
+            g = self._guard.get(code)
+            if g and g.get('reason_cn'):
+                sell_txt = g.get('reason_cn', '')
+                sell_clr = C_DOWN if g.get('reason_cn') in ('止损',) else (C_UP if g.get('reason_cn') in ('止盈',) else "#D29922")
+                sell_tip = f"触发{g.get('reason_cn')} @{g.get('exec_price') or p['current_price']}"
+            else:
+                sell_txt = "保护中"
+                sell_clr = C_SUBTEXT
+                sell_tip = "止损5%/止盈12%/时间止损=持有期 · 未触发, 继续持有"
             items = [
-                (p['code'], C_TEXT, Qt.AlignLeft),
+                (code, C_TEXT, Qt.AlignLeft),
                 (p['name'], C_TEXT, Qt.AlignLeft),
                 (str(p['qty']), C_TEXT, Qt.AlignRight),
                 ("%.2f" % p['cost_price'], C_SUBTEXT, Qt.AlignRight),
                 ("%.2f" % p['current_price'], C_TEXT, Qt.AlignRight),
                 ("{:+,.2f} / {:.0f}".format(fp, p.get('market_value', 0)),
                  C_UP if fp > 0 else (C_DOWN if fp < 0 else C_TEXT), Qt.AlignRight),
+                (sell_txt, sell_clr, Qt.AlignLeft),
             ]
             for j, (val, clr, align) in enumerate(items):
                 it = QTableWidgetItem(str(val))
                 it.setForeground(QColor(clr))
                 it.setTextAlignment(align | Qt.AlignVCenter)
+                if j == 6:
+                    it.setToolTip(sell_tip)
                 self.setItem(i, j, it)
 
 
@@ -880,6 +898,7 @@ class TradePanel(QWidget):
         self._cards.update_summary(summary)
 
         positions = self._engine.get_positions(self._cur_account)
+        self._pos_table.set_guard(self._load_guard_map())
         self._pos_table.load(positions)
 
         pending = self._engine.get_orders(self._cur_account, status='pending')
@@ -887,3 +906,20 @@ class TradePanel(QWidget):
 
         trades = self._engine.get_trades(self._cur_account, limit=30)
         self._trade_hist.load(trades)
+
+    def _load_guard_map(self):
+        """读 data/day_guard_log.json 返回 {code: {reason_cn, exec_price}} 供持仓表展示卖出条件."""
+        import os, json
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__))))), 'data', 'day_guard_log.json')
+        try:
+            with open(path, encoding='utf-8') as f:
+                d = json.load(f)
+        except Exception:
+            return {}
+        out = {}
+        for c in (d.get('checked') or []):
+            code = c.get('code')
+            if code and c.get('reason_cn'):
+                out[code] = {"reason_cn": c.get('reason_cn'), "exec_price": c.get('exec_price')}
+        return out
