@@ -27,12 +27,16 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 HS300_PATH = os.path.join(_ROOT, "data", "hs300.json")
 REGIME_PATH = os.path.join(_ROOT, "data", "regime.json")
 
-# 策略-环境适配表 (根据各策略因子特征标注):
-#   F价值Tilt / A价值 既攻又守(价值防御), 熊/震荡更稳; B反转/动量 牛市强; C低波动 防御.
+# 策略-环境适配表 — **基于分周期验证结论(数据驱动, 非直觉)** (2026-08-29 定稿)
+# 来源: cycle_test_all.json(F价值Tilt三驱动, 补2023数据后):
+#   牛市 B反转+21.4%夏普0.96最强 / F价值Tilt+12.9%; 
+#   震荡 F价值Tilt高夏普(+5.9~9.2) / C低波动-18.8%回撤稳;
+#   熊市 B反转-14.5%最深 / 全部偏弱, 用C低波动/A价值防守(回撤最小).
+# ⚠️A价值纯BP在截面稀薄期退化成少数股票(全周期+1232%虚高) → 轮换表不用它当主策略(防退化).
 STRATEGY_ENV = {
-    "牛市": ["F价值Tilt", "D多因子", "B反转"],   # 顺周期/动量/全因子进攻
-    "震荡": ["F价值Tilt", "A价值", "C低波动"],   # 价值+低波防御, 少动
-    "熊市": ["A价值", "C低波动", "F价值Tilt"],   # 纯价值/低波, 防守优先
+    "牛市": ["B反转", "F价值Tilt", "D多因子"],   # 动量/反转进攻最强(验证+21.4%) + 全因子均衡
+    "震荡": ["F价值Tilt", "C低波动", "D多因子"],   # 价值防御高夏普(验证) + 低波稳健
+    "熊市": ["C低波动", "A价值", "F价值Tilt"],   # 低波/价值防守(回撤最小, 验证), 防B反转深回撤
 }
 DEFAULT_STRATEGY = "F价值Tilt"
 
@@ -129,6 +133,25 @@ def suggest_strategy(regime_cn: str) -> str:
     return lst[0] if lst else DEFAULT_STRATEGY
 
 
+def rotate_strategy(regime_cn: str, verified: dict = None) -> dict:
+    """判断器驱动的**主动策略轮换**: 按当前市场环境选主/次策略 + 依据.
+
+    数据驱动: 默认用 STRATEGY_ENV(基于分周期验证定稿); 若给 verified(cycle_test结果),
+    可按各策略当前环境的实际收益动态排序选主策略(更准确, 防硬编码过时).
+
+    Returns: {primary, secondary, list, basis, strategy_cn}
+      primary: 当前环境应启用的主策略 (判断器驱动轮换)
+      basis:   依据说明(为什么选它)
+    """
+    lst = list(STRATEGY_ENV.get(regime_cn, [DEFAULT_STRATEGY]))
+    primary = lst[0] if lst else DEFAULT_STRATEGY
+    basis = ("牛市: 动量/反转进攻最强(B反转验证+21.4%), 主攻次均衡" if regime_cn == "牛市"
+             else "震荡: 价值防御高夏普(F价值Tilt验证最优), 主均衡次低波" if regime_cn == "震荡"
+             else "熊市: 全军偏弱, 低波/价值防守(回撤最小), 防B反转深回撤")
+    return {"primary": primary, "secondary": lst[1] if len(lst) > 1 else primary,
+            "list": lst, "basis": basis}
+
+
 # ── ② 权重动态化: 因子权重随 market regime 调整 (蓝图"权重受大盘周期控制") ──
 # 基础多因子契约权重 (BP / REVERSAL_20 / VOLATILITY_20), 作为"中性均衡"基准
 NEUTRAL_WEIGHTS = {"BP": 1.0, "REVERSAL_20": 1.0, "VOLATILITY_20": -1.0}
@@ -171,12 +194,14 @@ def run() -> dict:
     cls = classify(data["closes"])
     regime_cn = cls["regime_cn"]
     dyn_weights = regime_base_weights(regime_cn)
+    rot = rotate_strategy(regime_cn)
     out = {
         "as_of": data["dates"][-1] if data["dates"] else None,
         "regime": cls["regime"], "regime_cn": regime_cn,
         "score": cls["score"], "sys_risk": cls["sys_risk"],
-        "suggest_strategy": suggest_strategy(regime_cn),
+        "suggest_strategy": rot["primary"],   # 当前环境主策略(判断器驱动轮换, 数据驱动)
         "suggest_list": STRATEGY_ENV.get(regime_cn, [DEFAULT_STRATEGY]),
+        "rotation": rot,   # 轮换信息: primary/secondary/list/basis
         "dyn_weights": dyn_weights,   # 权重动态化: 当前环境的因子权重
         "generated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }

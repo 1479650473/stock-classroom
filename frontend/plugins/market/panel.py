@@ -437,6 +437,8 @@ class MarketPanel(QWidget):
         self._regime_lbl.setText(f"市场环境 · {rc}")
         strat = r.get('suggest_strategy')
         lst = r.get('suggest_list') or []
+        rot = r.get('rotation') or {}
+        basis = rot.get('basis', '')
         # 权重动态化展示
         dw = r.get('dyn_weights') or {}
         if dw:
@@ -447,11 +449,17 @@ class MarketPanel(QWidget):
                 parts.append(f"{nm}{w:+.1f}")
             self._regime_strat.setText(
                 f"建议策略: {strat} · 权重[{'  '.join(parts)}]" if strat else f"权重[{'  '.join(parts)}]")
-            self._regime_strat.setToolTip(
-                f"当前环境因子权重(BP价值/REV反转/VOL低波): 牛市重进攻、熊市重防守\n适配策略: {' · '.join(lst)}\n数据至 {as_of}")
+            tip = (f"当前环境因子权重(BP价值/REV反转/VOL低波): 牛市重进攻、熊市重防守\n"
+                   f"适配策略: {' · '.join(lst)}\n"
+                   + (f"轮换依据: {basis}\n" if basis else "")
+                   + f"数据至 {as_of}")
+            self._regime_strat.setToolTip(tip)
         elif strat:
             self._regime_strat.setText(f"建议策略: {strat}")
-            self._regime_strat.setToolTip(f"当前环境适配: {' · '.join(lst)} (数据至 {as_of})")
+            tip = f"当前环境适配: {' · '.join(lst)}"
+            if basis:
+                tip += f"\n轮换依据: {basis}"
+            self._regime_strat.setToolTip(tip + f" (数据至 {as_of})")
         if not self._regime_risk.text():
             sr = r.get('sys_risk') or {}
             if sr.get('triggered'):
