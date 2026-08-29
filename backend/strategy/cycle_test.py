@@ -83,9 +83,16 @@ def _run_cycle(frames, contract, rule_set, period, initial_balance) -> dict:
         return {"regime": period.get("regime", "?"), "start": str(period["start"]), "end": str(period["end"]),
                 "days": days, "error": r["error"]}
     m = r.get("metrics", {})
+    # 每段周期带完整回测报告(日期区间隔离 + α/β/γ + 交易统计)
     return {"regime": period.get("regime", "?"), "start": str(period["start"]), "end": str(period["end"]),
             "days": days, "total_return": m.get("total_return"),
-            "cagr": m.get("cagr"), "sharpe": m.get("sharpe"), "max_drawdown": m.get("max_drawdown"),
+            "cagr": m.get("cagr"), "sharpe": m.get("sharpe"), "sortino": m.get("sortino"),
+            "calmar": m.get("calmar"), "max_drawdown": m.get("max_drawdown"),
+            "volatility": m.get("volatility"),
+            "alpha": m.get("alpha"), "beta": m.get("beta"), "gamma": m.get("gamma"),
+            "excess_return": m.get("excess_return"), "bench_return": m.get("bench_return"),
+            "num_trades": m.get("num_trades"), "win_rate": m.get("win_rate"),
+            "profit_factor": m.get("profit_factor"), "turnover_yearly": m.get("turnover_yearly"),
             "final_equity": m.get("final_equity"), "guard_hits": r.get("guard_hits")}
 
 

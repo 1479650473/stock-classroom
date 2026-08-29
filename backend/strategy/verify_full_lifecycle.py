@@ -187,9 +187,11 @@ def verify_full_lifecycle(frames, contract: SelectionContract,
         nav.append(nv)
         bar_index_ctr += 1
 
-    # ④ 指标
-    metrics = compute_full_metrics(nav, freq_bars=contract.rebalance_bars)
+    # ④ 指标 (传 bench 才算出 α/β/γ; 传 trades 才统计交易次数/胜率/频率)
     bh = _buyhold_nav(close, dates, initial_balance)
+    bench_nav = bh.get("nav") if bh else None
+    metrics = compute_full_metrics(nav, bench=bench_nav, freq_bars=contract.rebalance_bars,
+                                   trades=trades, dates=[str(d) for d in dates])
     return {"dates": [str(d) for d in dates], "nav": [round(x, 4) for x in nav],
             "trades": trades, "metrics": metrics, "guard_hits": guard_hits,
             "buyhold": bh, "final_holdings": holdings, "final_cash": cash}

@@ -113,7 +113,7 @@ def _year_frac(n_bars):
     return n_bars / TRADING_DAYS if n_bars > 0 else 0.0
 
 
-def full_metrics(nav, bench=None, freq_bars=1, annual_period=TRADING_DAYS):
+def full_metrics(nav, bench=None, freq_bars=1, annual_period=TRADING_DAYS, dates=None):
     """从 nav 序列算全维绩效指标(year-over-year 归一化).
 
     nav: 权益/净值序列(升序). 若为相对倍数(起点=1)则 total_return 由末值直接给.
@@ -171,7 +171,10 @@ def full_metrics(nav, bench=None, freq_bars=1, annual_period=TRADING_DAYS):
         "calmar": round(calmar, 3),
         "max_drawdown": round(mdd, 4),                     # 小数(负)
         "volatility": round(ann_vol, 4),                   # 年化波动
-        "start": float(nav[0]), "end": float(nav[-1]),
+        "start_value": float(nav[0]), "end_value": float(nav[-1]),   # 净值(资产值)
+        "start_date": str(dates[0]) if dates and len(dates) == n else None,
+        "end_date": str(dates[-1]) if dates and len(dates) == n else None,
+        "start": float(nav[0]), "end": float(nav[-1]),     # 兼容旧键(净值) + 新增日期键
     }
 
     # 胜率/盈亏比(需逐笔成交明细; 有则填, 无则 None)
@@ -191,17 +194,31 @@ def full_metrics(nav, bench=None, freq_bars=1, annual_period=TRADING_DAYS):
             out["alpha"] = round(alpha_ann, 4)             # 年化 α 小数(超额)
             out["excess_return"] = round(total_return - b_ret, 4)
             out["bench_return"] = round(b_ret, 4)
+            # γ(信息比率) = 年化超额收益 / 年化跟踪误差(active risk)
+            active = [rets[i] - bret[i] for i in range(m)]
+            mu_a = sum(active) / m
+            var_a = sum((x - mu_a) ** 2 for x in active) / (m - 1) if m > 1 else 0.0
+            te_daily = var_a ** 0.5
+            info_ratio = (alpha_daily / te_daily) * _m.sqrt(annual_period / freq_bars) if te_daily > 0 else 0.0
+            out["gamma"] = round(info_ratio, 3)            # γ=信息比率(超额/跟踪误差)
         else:
             out["beta"] = None; out["alpha"] = None
+            out["gamma"] = None
             out["excess_return"] = round(total_return - b_ret, 4) if float(bench[0]) else None
             out["bench_return"] = round(b_ret, 4)
     else:
-        out["bench_return"] = None; out["alpha"] = None; out["beta"] = None; out["excess_return"] = None
+        out["bench_return"] = None; out["alpha"] = None; out["beta"] = None
+        out["gamma"] = None; out["excess_return"] = None
     return out
 
 
-def compute_full_metrics(nav, bench=None, dates=None, freq_bars=1):
-    """兼容 compute_metrics 键名 + 新增精确维度. nav/bench 为 List[float] 或 Series."""
+def compute_full_metrics(nav, bench=None, dates=None, freq_bars=1, trades=None):
+    """兼容 compute_metrics 键名 + 新增精确维度. nav/bench 为 List[float] 或 Series.
+
+    trades: 可选逐笔成交 [{side, pnl, ...}], 用于统计 num_trades/win_rate/profit_factor/turnover.
+    完整回测报告: 总收益/年化(CAGR)/夏普/索提诺/Calmar/最大回撤/波动/α/β/γ(信息比率)/超额/交易总次数/
+    胜率/盈亏比/交易频率(年均换手) + 日期区间(start/end/n_bars).
+    """
     import pandas as _pd
     if not hasattr(nav, "__len__") or len(nav) < 2:
         return {"error": "nav 太短"}
@@ -214,11 +231,28 @@ def compute_full_metrics(nav, bench=None, dates=None, freq_bars=1):
             bench = [float(x) for x in bench.tolist()]
         else:
             bench = [float(x) for x in bench]
-    fm = full_metrics(nav, bench, freq_bars=freq_bars)
-    # 复用 compute_metrics 的口径补 win_rate/profit_factor/trades(无明细时 None)
+    fm = full_metrics(nav, bench, freq_bars=freq_bars, dates=dates)
     if "error" in fm:
         return fm
     fm.update({"num_trades": None, "win_rate": None, "profit_factor": None,
                "buy_hold_return": fm.get("bench_return"),
                "buy_hold_max_drawdown": None})
+
+    # ── 交易明细统计(若给了 trades) — num_trades/胜率/盈亏比/交易频率 ──
+    if trades:
+        closed = [t for t in trades if t.get("side") == "sell" and t.get("pnl") is not None]
+        num = len(closed)
+        wins = [t for t in closed if t["pnl"] > 0]
+        losses = [t for t in closed if t["pnl"] <= 0]
+        gross_profit = sum(t["pnl"] for t in wins) or 0.0
+        gross_loss = abs(sum(t["pnl"] for t in losses)) or 0.0
+        fm["num_trades"] = num
+        fm["win_rate"] = round(len(wins) / num, 4) if num else 0.0
+        fm["profit_factor"] = round(gross_profit / gross_loss, 3) if gross_loss > 0 else (
+            float("inf") if gross_profit > 0 else 0.0)
+        # 交易频率: 年均完整换手次数(卖出笔数 / 年数)
+        years = fm.get("n_bars", 0) / 252.0 if fm.get("n_bars") else 1.0
+        fm["turnover_yearly"] = round(num / years, 2) if years > 0 else None
+        fm["total_trades"] = len(trades)   # 含买卖全部笔数
+
     return fm
