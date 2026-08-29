@@ -171,7 +171,24 @@ stock-classroom/
 │   │   ├── schema.py           # sim_trade.db 建表
 │   │   └── test_shell.py       # 50项端到端测试
 │   ├── strategy/               # metrics/describe/optimize_loop/portfolio_rebalance (v4.3)
+│   │   ├── metrics.py          # full_metrics (α/年化/夏普/胜率/回撤/β)
+│   │   ├── describe.py         # 策略契约→中文买卖条件
+│   │   ├── optimize_loop.py    # 自主策略进化闭环 (LLM提新契约→回测→裁决)
+│   │   ├── portfolio_rebalance.py # SelectionContract + forward_paper_run + rotated_contract(轮换)
+│   │   ├── regime.py           # A股牛/熊/震荡分类 + 风险截断 + 权重动态化 + rotate_strategy
+│   │   ├── sell_rules.py       # 卖出三驱动规约(止损/移动止损/策略卖出, 无止盈)
+│   │   ├── position_guard.py   # 持仓守护引擎(单持仓保护判定)
+│   │   ├── day_guard.py        # 每日持仓守护循环(读模拟账户→判定→预览/真卖)
+│   │   ├── verify_full_lifecycle.py # 完整生命周期验证(选股→买→持有带保护→卖→结算→净值)
+│   │   ├── cycle_test.py       # 分周期测试(牛/熊/震荡/全周期/样本内外防过拟合)
+│   │   ├── stock_deep.py       # 个股资讯深挖+LLM主观判断(选股剩几只后)
+│   │   ├── news_driven.py      # 事件驱动候选池(涨停+热点板块+豆包消息, isolated)
+│   │   └── protection.py       # 个股止损/止盈/移动止损引擎
 │   ├── agent/                  # research_loop/llm_client/decision_gate (v4.3)
+│   │   ├── research_loop.py    # ResearchLoop 单标的/组合重平衡(portfolio_paper 自动轮换)
+│   │   ├── llm_client.py       # LLMClient (DeepSeek)
+│   │   ├── search_client.py    # 豆包搜索客户端(资讯源, 财经语境)
+│   │   └── decision_gate.py    # 组合价值tilt分配器 + 市场宽度信号
 │   └── update_daily.py         # 每日自动化 (Windows 计划任务 17:00)
 │
 ├── frontend/
