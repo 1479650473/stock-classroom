@@ -344,6 +344,16 @@ def _strategy_contracts(hp, top_k_pct=0.2, initial_balance=1_000_000.0):
     }
 
 
+def _flatten_rebalance_trades(rebalance_log):
+    """把 forward_paper_run 的 rebalance_log 摊平为逐笔成交流(供 metrics 统计)."""
+    out = []
+    for entry in rebalance_log or []:
+        for t in (entry.get("trades") or []):
+            out.append({"side": t.get("side"), "pnl": t.get("pnl"),
+                        "code": t.get("code"), "qty": t.get("qty"), "price": t.get("price")})
+    return out
+
+
 def _build_buyhold(close, fwd_start, as_of, grid=None):
     """等权买持基准, 返回 {dates, nav}(nav=相对起点倍数).
 
@@ -422,7 +432,9 @@ def run_paper_multi(hp=20, top_k_pct=0.2, fwd_start="2024-01-01",
             mtr = {}
             try:
                 from backend.strategy.metrics import compute_full_metrics
-                mtr = compute_full_metrics(fw["nav_n"], freq_bars=contracts[name].rebalance_bars)
+                _trades = _flatten_rebalance_trades(fw.get("rebalance_log") or [])
+                mtr = compute_full_metrics(fw["nav_n"], freq_bars=contracts[name].rebalance_bars,
+                                           trades=_trades)
             except Exception:
                 mtr = {}
             runs[name] = {
@@ -466,7 +478,9 @@ def run_paper_multi(hp=20, top_k_pct=0.2, fwd_start="2024-01-01",
             nav = r.get("nav") or []
             # 对齐: 策略 nav 与基准 nav 同网格(重平衡日采样) → 直接同长即可
             b = bhnav if len(bhnav) == len(nav) else None
-            m = compute_full_metrics(nav, bench=b, freq_bars=contracts[name].rebalance_bars)
+            _tr = _flatten_rebalance_trades((r.get("rebalance_log") or []))
+            m = compute_full_metrics(nav, bench=b, freq_bars=contracts[name].rebalance_bars,
+                                     trades=_tr)
             r["metrics"] = m
         except Exception:
             pass

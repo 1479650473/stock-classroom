@@ -340,8 +340,9 @@ def forward_paper_run(frames: dict, contract: SelectionContract, start: str, end
     turnovers, cost_total = [], 0.0
     rebalances = 0
     daily_holdings = []   # 每调仓日持仓快照 {date, holdings, cash, nav}
-    rebalance_log = []    # 每调仓日买卖明细 {date, trades:[{code,side,qty,price}]}
+    rebalance_log = []    # 每调仓日买卖明细 {date, trades:[{code,side,qty,price,pnl}]}
     prev_set = set()
+    cost_basis = {}       # code -> 持仓成本单价(加权) 供卖出 pnl 计算
 
     def _mark(date):
         row = close.loc[date] if date in close.index else None
@@ -357,19 +358,34 @@ def forward_paper_run(frames: dict, contract: SelectionContract, start: str, end
     for dt in rebal:
         plan = planner.plan_at(dt, frames, holdings, cash)
         trades = plan.get("trades", [])
-        # apply trades(真实现金/持仓更新)
+        # apply trades(真实现金/持仓更新) + 记录每笔(含正确 pnl)
+        _all_t = []
         for t in trades:
             q, p, side = int(t["qty"]), float(t["price"]), t["side"]
             if side == "buy":
                 cost = q * p * (1.0 + contract.fee)
                 cash -= cost
-                holdings[t["code"]] = holdings.get(t["code"], 0) + q
+                old_q = holdings.get(t["code"], 0)
+                new_q = old_q + q
+                # 加权成本单价(含已持仓)
+                if new_q > 0:
+                    cost_basis[t["code"]] = ((cost_basis.get(t["code"], 0.0) * old_q) + (q * p)) / new_q
+                holdings[t["code"]] = new_q
+                _all_t.append({"code": t["code"], "side": "buy", "qty": q, "price": p, "pnl": None})
             else:
                 cash += q * p * (1.0 - contract.fee)
+                cb = cost_basis.get(t["code"], p)
+                pnl = (p - cb) * q   # 卖出盈亏(不含费用)
+                _all_t.append({"code": t["code"], "side": "sell", "qty": q, "price": p,
+                               "pnl": round(pnl, 2)})
                 holdings[t["code"]] = holdings.get(t["code"], 0) - q
                 if holdings[t["code"]] <= 0:
                     holdings.pop(t["code"], None)
+                    cost_basis.pop(t["code"], None)
+                else:
+                    pass  # 减仓后成本单价维持(加权已反映)
             cost_total += q * p * contract.fee
+        rebalance_log.append({"date": str(dt), "trades": _all_t})
         # mark-to-market(用调仓日 close 定价); GROSS≈净(已计fee现金), NET 另计换手成本
         nv = _mark(dt)
         dates.append(str(dt))
@@ -380,11 +396,8 @@ def forward_paper_run(frames: dict, contract: SelectionContract, start: str, end
         cost_total += turn * len(cur) * 0.0  # 换手成本已在 fee 内
         rebalances += 1
         prev_set = cur
-        # 记录每调仓日持仓快照 + 买卖明细(供持仓面板/收益曲线)
+        # 记录每调仓日持仓快照(供持仓面板/收益曲线)
         daily_holdings.append({"date": str(dt), "holdings": dict(holdings), "cash": cash, "nav": nv})
-        rebalance_log.append({"date": str(dt), "trades": [
-            {"code": t["code"], "side": t["side"], "qty": int(t["qty"]), "price": float(t["price"])}
-            for t in trades]})
     return {"dates": dates, "nav_n": nav_n, "final_holdings": holdings, "final_cash": cash,
             "turnover_avg": (sum(turnovers) / len(turnovers)) if turnovers else 0.0,
             "cost_total": cost_total, "rebalances": rebalances,

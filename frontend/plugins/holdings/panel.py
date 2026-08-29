@@ -449,10 +449,16 @@ class StrategyDetailDialog(QDialog):
         _f = lambda x, s="%": (f"{x*100:+.1f}{s}" if x is not None else "—")
         terms = [("累计收益", _f(m.get('total_return', ret))),
                  ("年化α", _f(m.get('alpha'), "%")),
+                 ("β", f"{m.get('beta', 0):.2f}" if m.get('beta') is not None else "—"),
+                 ("γ信息比", f"{m.get('gamma', 0):.2f}" if m.get('gamma') is not None else "—"),
                  ("年化收益", _f(m.get('cagr'), "%")),
                  ("夏普", f"{m.get('sharpe', 0):.2f}" if m else "—"),
+                 ("索提诺", f"{m.get('sortino', 0):.2f}" if m.get('sortino') is not None else "—"),
                  ("胜率", _f(m.get('win_rate')) if m.get('win_rate') is not None else "—"),
+                 ("盈亏比", f"{m.get('profit_factor', 0):.2f}" if m.get('profit_factor') is not None else "—"),
                  ("最大回撤", _f(m.get('max_drawdown'))),
+                 ("交易次数", str(m.get('num_trades')) if m.get('num_trades') is not None else "—"),
+                 ("年换手", f"{m.get('turnover_yearly', 0):.1f}" if m.get('turnover_yearly') is not None else "—"),
                  ("as_of", str(as_of or '—'))]
         sum_row = QHBoxLayout(); sum_row.setSpacing(dp(8))
         for k, val in terms:
