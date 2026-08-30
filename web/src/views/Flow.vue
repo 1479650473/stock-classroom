@@ -4,8 +4,8 @@ import PageHeader from '@/components/PageHeader.vue'
 import Card from '@/components/Card.vue'
 import Icon from '@/components/Icon.vue'
 import { useToastStore } from '@/stores/toast'
-import { getOverview, getPicks, getRegime, triggerPipelineUpdate } from '@/api'
-import type { JobHandle } from '@/api'
+import { getOverview, getPicks, getRegime, triggerPipelineUpdate, listAccounts, portfolioRebalance } from '@/api'
+import type { JobHandle, PortfolioSnapshot } from '@/api'
 
 const toast = useToastStore()
 const running = ref(false)
@@ -69,10 +69,21 @@ async function runPipeline() {
     steps.value[3].status = 'error'
   }
 
-  // step 5-6: trade + snapshot (placeholder — real execution would go through trade engine)
+  // step 5: trade execution (组合重平衡预览 — 真实计算 target weights + suggested trades)
   steps.value[4].status = 'running'
-  steps.value[4].detail = '待接入交易引擎'
-  steps.value[4].status = 'done'
+  try {
+    const accs = await listAccounts()
+    if (accs.length) {
+      const pf = await portfolioRebalance(accs[0].account_id) as PortfolioSnapshot
+      const trades = Object.keys((pf as unknown as { suggested_trades?: Record<string, unknown> }).suggested_trades || {}).length
+      steps.value[4].detail = trades ? `重平衡 ${trades} 笔` : '已平衡'
+    } else {
+      steps.value[4].detail = '无账户'
+    }
+    steps.value[4].status = 'done'
+  } catch (e) {
+    steps.value[4].status = 'error'; steps.value[4].detail = '重平衡失败'
+  }
 
   steps.value[5].status = 'running'
   try {
