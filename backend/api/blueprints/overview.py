@@ -62,14 +62,25 @@ def _best_strategy():
 
 
 def _market():
+    """大盘指数 — 优先本地快照(fetch_index_prices, 快速可靠), 避免 akshare 实时被反爬阻塞总览页."""
     out = []
     try:
+        from data_manager import fetch_index_prices
+        data = fetch_index_prices()
+        main_ids = ["sh000001", "sz399001", "sz399006"]
+        out = [d for d in data if d.get("code") in main_ids]
+        if out:
+            return out
+    except Exception:
+        pass
+    # 兜底: akshare 实时(带超时, 失败勿阻塞)- 仅当本地空
+    try:
+        import socket
+        socket.setdefaulttimeout(5)
         from akshare_source import ak_get_index_spot
         data = ak_get_index_spot()
         main_ids = ["sh000001", "sz399001", "sz399006"]
-        for d in data:
-            if d.get("code") in main_ids:
-                out.append(d)
+        out = [d for d in data if d.get("code") in main_ids]
     except Exception:
         pass
     return out

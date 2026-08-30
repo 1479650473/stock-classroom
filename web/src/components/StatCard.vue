@@ -35,6 +35,12 @@ defineProps<{
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
+  transition: transform var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+.stat-card:hover {
+  transform: translateY(-1px);
+  border-color: var(--border);
+  box-shadow: var(--shadow-card);
 }
 .hd {
   display: flex;
@@ -42,15 +48,15 @@ defineProps<{
   gap: var(--sp-2);
 }
 .ic { color: var(--text-faint); }
-.label { font-size: var(--fs-sm); color: var(--text-sub); }
+.label { font-size: var(--fs-sm); color: var(--text-sub); letter-spacing: 0.04em; }
 .val {
   font-size: var(--fs-2xl);
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text);
   margin: var(--sp-1) 0;
 }
 .unit { font-size: var(--fs-sm); color: var(--text-faint); margin-left: 2px; }
-.trend { font-size: var(--fs-sm); font-weight: 500; }
+.trend { font-size: var(--fs-sm); font-weight: 600; }
 .trend.up { color: var(--up); }
 .trend.down { color: var(--down); }
 .trend.flat { color: var(--text-faint); }

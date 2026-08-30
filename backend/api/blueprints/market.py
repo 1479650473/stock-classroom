@@ -12,13 +12,23 @@ _MAIN_INDEX = {"sh000001", "sz399001", "sz399006"}
 
 @bp.route("/indices")
 def indices():
+    """主要指数 — 优先本地快照(fetch_index_prices 快速可靠), 避免 akshare 实时反爬阻塞."""
     try:
+        from data_manager import fetch_index_prices
+        main = fetch_index_prices()
+        if main:
+            return ok(main, source=(main[0].get("source", "local") if main else "local"))
+    except Exception:
+        pass
+    try:
+        import socket
+        socket.setdefaulttimeout(5)
         from akshare_source import ak_get_index_spot
         data = ak_get_index_spot()
         main = [d for d in data if d.get("code") in _MAIN_INDEX]
-        if not main:
+        if main:
             from data_manager import fetch_index_prices
-            main = fetch_index_prices()
+            main = fetch_index_prices() or main
         return ok(main, source=(main[0].get("source", "sina") if main else "none"))
     except Exception as e:
         return err(502, "market_error", str(e), retriable=True)

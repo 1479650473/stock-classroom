@@ -38,6 +38,7 @@
   --sel-bg: rgba(122, 162, 247, 0.16);
   --sel-fg: #afc8ff;
   --row-alt: #12151a;
+  --bg-hover: #171b21;
 
   --scroll: #2a313b;
   --scroll-hover: #3a434f;
@@ -85,6 +86,7 @@
   --sel-bg: rgba(224, 160, 80, 0.16);
   --sel-fg: #f2d8ae;
   --row-alt: #0d0f11;
+  --bg-hover: #15181c;
 
   --scroll: #23272c;
   --scroll-hover: #4a3d2a;
@@ -132,6 +134,7 @@
   --sel-bg: rgba(142, 58, 47, 0.12);
   --sel-fg: #7a2f25;
   --row-alt: #f6f1e6;
+  --bg-hover: #eee8da;
 
   --scroll: #dcd3c2;
   --scroll-hover: #c3b79c;
@@ -151,7 +154,7 @@
 :root {
   --font-sans: 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', system-ui, sans-serif;
   --font-mono: 'SF Mono', 'JetBrains Mono', 'Cascadia Code', Consolas, 'Courier New', monospace;
-  --font-num: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-num: 'SF Mono', 'JetBrains Mono', 'Cascadia Code', Consolas, 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
 
   --fs-xs: 11px;
   --fs-sm: 12px;

@@ -51,10 +51,14 @@ onMounted(() => app.init())
 }
 .page-enter-active,
 .page-leave-active {
-  transition: opacity var(--dur) var(--ease);
+  transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
 }
-.page-enter-from,
+.page-enter-from {
+  opacity: 0;
+  transform: translateY(6px);
+}
 .page-leave-to {
   opacity: 0;
+  transform: translateY(-4px);
 }
 </style>

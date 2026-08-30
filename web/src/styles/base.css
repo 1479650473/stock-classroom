@@ -21,8 +21,12 @@ input, textarea, [contenteditable] { user-select: text; }
 a { color: var(--accent); text-decoration: none; }
 button { font-family: inherit; }
 
-/* numbers read better in a tabular/mono-ish face */
-.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+/* numbers read better in a tabular/mono-ish face (仪器感: 等宽+轻微字距) */
+.num {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
 
 /* scrollbars */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -52,6 +56,24 @@ button { font-family: inherit; }
 /* muted text */
 .muted { color: var(--text-sub); }
 .faint { color: var(--text-faint); }
+
+/* generic table polish (页面自建 .tbl 均受益: 财务数字 tabular 对齐) */
+.tbl th {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--text-sub);
+  border-bottom: 1px solid var(--border);
+}
+.tbl td {
+  font-variant-numeric: tabular-nums;
+}
+.tbl tbody tr {
+  transition: background var(--dur-fast) var(--ease);
+}
+.tbl tbody tr:hover {
+  background: var(--bg-hover);
+}
 
 /* focus ring */
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: var(--radius-sm); }
