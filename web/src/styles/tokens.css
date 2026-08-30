@@ -1,0 +1,184 @@
+/* ============================================================
+   Design tokens — stock-classroom v5.0
+   3 themes via [data-theme] on <html>. All components read these
+   CSS variables, so a theme switch restyles the whole app live.
+   A股配色约定: 涨=红(--up) 跌=绿(--down).
+   ============================================================ */
+
+:root,
+:root[data-theme='graphite'] {
+  color-scheme: dark;
+  --bg: #0b0d11;
+  --bg-panel: #14171c;
+  --bg-raised: #1a1e24;
+  --bg-overlay: #20252c;
+  --border: #232830;
+  --border-soft: #1d222a;
+  --border-strong: #2e343c;
+
+  --text: #e8eaed;
+  --text-sub: #9aa3b0;
+  --text-faint: #5c6670;
+
+  --accent: #7aa2f7;
+  --accent-hover: #8fb4ff;
+  --accent-dim: rgba(122, 162, 247, 0.14);
+  --on-accent: #0a0c10;
+
+  --gold: #d4a574;
+  --gold-hover: #e6c290;
+  --gold-dim: rgba(212, 165, 116, 0.16);
+  --on-gold: #14110b;
+
+  --up: #e5484d;
+  --down: #3fb950;
+  --warn: #d29922;
+  --info: #7aa2f7;
+
+  --sel-bg: rgba(122, 162, 247, 0.16);
+  --sel-fg: #afc8ff;
+  --row-alt: #12151a;
+
+  --scroll: #2a313b;
+  --scroll-hover: #3a434f;
+
+  --card-top: #15181d;
+  --card-mid: #12151a;
+  --card-bot: #0e1115;
+  --card-border: #232830;
+  --card-border-top: #2e343c;
+  --card-hover: #333b45;
+
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px rgba(0, 0, 0, 0.28);
+  --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+
+:root[data-theme='obsidian'] {
+  color-scheme: dark;
+  --bg: #060708;
+  --bg-panel: #0e1012;
+  --bg-raised: #14171a;
+  --bg-overlay: #191c1f;
+  --border: #000000;
+  --border-soft: #111316;
+  --border-strong: #2c3036;
+
+  --text: #e8e3da;
+  --text-sub: #9aa0a6;
+  --text-faint: #5e646b;
+
+  --accent: #e0a050;
+  --accent-hover: #edb97a;
+  --accent-dim: rgba(224, 160, 80, 0.14);
+  --on-accent: #1a120a;
+
+  --gold: #e0a96a;
+  --gold-hover: #f2c48c;
+  --gold-dim: rgba(224, 169, 106, 0.18);
+  --on-gold: #1a120a;
+
+  --up: #e0564d;
+  --down: #3fb950;
+  --warn: #e9b44c;
+  --info: #e0a050;
+
+  --sel-bg: rgba(224, 160, 80, 0.16);
+  --sel-fg: #f2d8ae;
+  --row-alt: #0d0f11;
+
+  --scroll: #23272c;
+  --scroll-hover: #4a3d2a;
+
+  --card-top: #111315;
+  --card-mid: #0d0f11;
+  --card-bot: #0a0b0d;
+  --card-border: #000000;
+  --card-border-top: #2a2f34;
+  --card-hover: #5c4630;
+
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.6);
+}
+
+:root[data-theme='ivory'] {
+  color-scheme: light;
+  --bg: #f3eee6;
+  --bg-panel: #fbf8f2;
+  --bg-raised: #ffffff;
+  --bg-overlay: #efeae0;
+  --border: #e2dbcc;
+  --border-soft: #ece5d8;
+  --border-strong: #d8cfbe;
+
+  --text: #1c1917;
+  --text-sub: #8a8177;
+  --text-faint: #b4ac9f;
+
+  --accent: #8e3a2f;
+  --accent-hover: #a04a3d;
+  --accent-dim: rgba(142, 58, 47, 0.1);
+  --on-accent: #f7f2ea;
+
+  --gold: #a9812e;
+  --gold-hover: #c29b45;
+  --gold-dim: rgba(169, 129, 46, 0.16);
+  --on-gold: #f7f2ea;
+
+  --up: #8e3a2f;
+  --down: #3f7d50;
+  --warn: #b07a2a;
+  --info: #8e3a2f;
+
+  --sel-bg: rgba(142, 58, 47, 0.12);
+  --sel-fg: #7a2f25;
+  --row-alt: #f6f1e6;
+
+  --scroll: #dcd3c2;
+  --scroll-hover: #c3b79c;
+
+  --card-top: #fdfbf5;
+  --card-mid: #fbf8f2;
+  --card-bot: #f6f1e6;
+  --card-border: #e4dcce;
+  --card-border-top: #d9cfbe;
+  --card-hover: #c7ba9f;
+
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.6) inset, 0 2px 10px rgba(90, 60, 30, 0.08);
+  --shadow-pop: 0 12px 40px rgba(90, 60, 30, 0.18);
+}
+
+/* ---- shared scales (theme-independent) ---- */
+:root {
+  --font-sans: 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', system-ui, sans-serif;
+  --font-mono: 'SF Mono', 'JetBrains Mono', 'Cascadia Code', Consolas, 'Courier New', monospace;
+  --font-num: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 15px;
+  --fs-xl: 18px;
+  --fs-2xl: 22px;
+  --fs-hero: 30px;
+
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+
+  --radius-sm: 6px;
+  --radius-md: 9px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  --nav-w: 208px;
+  --topbar-h: 56px;
+  --titlebar-h: 40px;
+
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --dur-fast: 0.15s;
+  --dur: 0.25s;
+}

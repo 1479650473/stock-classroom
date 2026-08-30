@@ -59,3 +59,12 @@ paper_run.json
 _gen_paper_multi.py
 paper_runs.json
 .update-venv/
+
+# Web frontend (node_modules / build output — never commit)
+web/node_modules/
+web/dist/
+web/src-tauri/target/
+
+# web 构建产物/临时
+_build/
+scripts/*.xml

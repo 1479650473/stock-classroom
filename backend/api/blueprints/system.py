@@ -1,0 +1,100 @@
+# -*- coding: utf-8 -*-
+"""System blueprint: health, first-run bootstrap, settings, LLM test."""
+import os
+
+from flask import Blueprint, request
+
+from ..envelope import ok, err
+from .. import settings_store
+from ..paths import KLINE_DB, CACHE_DB, FUND_DB, SIM_DB
+
+bp = Blueprint("system", __name__, url_prefix="/api/system")
+
+
+@bp.route("/health")
+def health():
+    return ok({"status": "ok", "service": "stock-classroom-web", "version": "5.0"})
+
+
+@bp.route("/bootstrap")
+def bootstrap():
+    """First-run gate: report data freshness so the SPA can show the
+    welcome/download screen instead of a wall of 'plugin failed' errors."""
+    import sqlite3
+
+    def _fresh(path, table, date_col="date"):
+        if not os.path.exists(path):
+            return {"exists": False, "max": None, "rows": 0}
+        try:
+            conn = sqlite3.connect(path, timeout=5)
+            conn.row_factory = sqlite3.Row
+            try:
+                rows = conn.execute(f"SELECT COUNT(*) c FROM {table}").fetchone()["c"]
+            except Exception:
+                rows = 0
+            try:
+                mx = conn.execute(f"SELECT MAX({date_col}) m FROM {table}").fetchone()["m"]
+            except Exception:
+                mx = None
+            conn.close()
+            return {"exists": True, "max": mx, "rows": rows}
+        except Exception:
+            return {"exists": True, "max": None, "rows": 0}
+
+    stock_rows = 0
+    try:
+        conn = sqlite3.connect(KLINE_DB, timeout=5)
+        stock_rows = conn.execute("SELECT COUNT(*) FROM stock_list").fetchone()[0]
+        conn.close()
+    except Exception:
+        stock_rows = 0
+
+    data = {
+        "kline": _fresh(KLINE_DB, "kline_daily"),
+        "stock_list_rows": stock_rows,
+        "cache": _fresh(CACHE_DB, "stock_spot", "updated_at"),
+        "fundamental": _fresh(FUND_DB, "fundamental_daily") if os.path.exists(FUND_DB) else {"exists": False, "max": None, "rows": 0},
+    }
+    data["needs_init"] = (not data["kline"]["exists"]) or data["kline"]["rows"] == 0 or stock_rows == 0
+    settings = settings_store.load_settings()
+    data["settings"] = {"theme": settings.get("theme"), "font_size": settings.get("font_size")}
+    data["ai_configured"] = bool((settings.get("agent") or {}).get("api_key"))
+    return ok(data)
+
+
+@bp.route("/settings", methods=["GET"])
+def get_settings():
+    s = settings_store.load_settings()
+    # never leak the raw key fully to list endpoints; UI edits it explicitly
+    return ok(s)
+
+
+@bp.route("/settings", methods=["POST"])
+def save_settings():
+    body = request.get_json(silent=True) or {}
+    current = settings_store.load_settings()
+    for key in ("theme", "font_size", "window_size"):
+        if key in body:
+            current[key] = body[key]
+    if "agent" in body and isinstance(body["agent"], dict):
+        current.setdefault("agent", {}).update(body["agent"])
+    settings_store.save_settings(current)
+    return ok(current, message="saved")
+
+
+@bp.route("/settings/test-llm", methods=["POST"])
+def test_llm():
+    body = request.get_json(silent=True) or {}
+    agent = dict((settings_store.load_settings().get("agent") or {}))
+    agent.update({k: v for k, v in body.items() if v is not None})
+    if not agent.get("api_key"):
+        return err(400, "no_api_key", "请先填写 API Key")
+    try:
+        from backend.agent.llm_client import LLMClient
+        client = LLMClient(api_base=agent.get("api_base"),
+                           api_key=agent.get("api_key"),
+                           model=agent.get("model"))
+        reply = client.complete("你是连通性测试助手", "ping，回复 pong", max_tokens=20)
+        return ok({"reply": (reply or "")[:120]}, message="连接成功")
+    except Exception as e:
+        return err(502, "llm_error", str(e), retriable=True)
