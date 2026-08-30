@@ -67,8 +67,8 @@ function fmtPct(v: number) { return (v >= 0 ? '+' : '') + v.toFixed(2) + '%' }
           <tbody>
             <tr v-for="(r, i) in north.slice(0, 15)" :key="i">
               <td>{{ r.date }}</td>
-              <td class="ar num" :class="(r.north_net as number) >= 0 ? 'up' : 'down'">
-                {{ ((r.north_net as number) / 1e8).toFixed(2) }}
+              <td class="ar num" :class="(r.net_flow as number) >= 0 ? 'up' : 'down'">
+                {{ ((r.net_flow as number) / 1e8).toFixed(2) }}
               </td>
             </tr>
           </tbody>
