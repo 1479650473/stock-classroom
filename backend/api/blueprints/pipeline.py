@@ -50,9 +50,15 @@ def pipeline_status():
         return jsonify({"code": 0, "data": {"last_update": None, "status": "读取失败"}, "message": "ok"})
 
 
+_stats_cache = {"t": 0, "data": None}
+
 @bp.route("/stats", methods=["GET"])
 def pipeline_stats():
-    """Database statistics for the pipeline overview (含各业务库分层统计)."""
+    """Database statistics (含各业务库分层统计). 加60s缓存避免全表COUNT每次都慢."""
+    import time as _t
+    now = _t.time()
+    if _stats_cache["data"] is not None and now - _stats_cache["t"] < 60:
+        return jsonify({"code": 0, "data": _stats_cache["data"], "message": "ok"})
     import sqlite3, os
     from backend.data_manager import KLINE_DB
     try:
@@ -85,6 +91,8 @@ def pipeline_stats():
                 data["tables"] = tbl_stats
             finally:
                 conn.close()
+        _stats_cache["t"] = now
+        _stats_cache["data"] = data
         return jsonify({"code": 0, "data": data, "message": "ok"})
     except Exception as e:
         return jsonify({"code": 500, "data": None, "error": {"code": 500, "message": str(e), "retriable": False}}), 500
