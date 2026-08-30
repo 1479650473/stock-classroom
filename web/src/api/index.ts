@@ -191,6 +191,36 @@ export const getStrategies = () => api.get<StrategyDef[]>('/api/research/strateg
 export const computeMetrics = (nav: number[], bench?: number[]) => api.post<Record<string, number>>('/api/research/metrics', { nav, bench })
 export const describeStrategy = (contract: Record<string, unknown>) => api.post<Record<string, unknown>>('/api/research/strategy/describe', contract)
 
+// ---- research v2 (回测/因子研究/纸面盘/对比) ----
+export interface BacktestResult {
+  name: string
+  dates: string[]
+  nav: number[]
+  metrics: {
+    total_return?: number; cagr?: number; sharpe?: number; sortino?: number
+    max_drawdown?: number; alpha?: number; beta?: number; gamma?: number
+    win_rate?: number; profit_factor?: number; num_trades?: number; turnover_yearly?: number
+  }
+  turnover_avg?: number; rebalances?: number; final_holdings?: Record<string, number>
+}
+export interface FactorStudyResult {
+  factor_id: string; ic?: number; icir?: number; ic_series?: number[]
+  group_returns?: Record<string, number[]>; longShortCurve?: { time: string; net: number }[]
+}
+export interface CompareResult {
+  strategies: Record<string, { metrics: Record<string, number>; nav: number[]; dates: string[] }>
+  start: string; end?: string
+}
+
+export const runBacktest = (contract: Record<string, unknown>, start?: string, end?: string) =>
+  api.post<JobHandle>('/api/research/backtest', { contract, start, end })
+export const runStudy = (factor_id: string, opts?: Record<string, unknown>) =>
+  api.post<JobHandle>('/api/research/study', { factor_id, ...opts })
+export const runPaper = (hp?: number, top_k_pct?: number, fwd_start?: string) =>
+  api.post<JobHandle>('/api/research/paper', { hp, top_k_pct, fwd_start })
+export const runCompare = (start?: string, end?: string) =>
+  api.post<JobHandle>('/api/research/compare', { start, end })
+
 // ---- agentops ----
 export interface ScanResult { code: string; triggered: boolean; price: number }
 export interface DeepEntry { code: string; name: string; verdict: string; reason: string; confidence: number; news: unknown[] }

@@ -64,34 +64,30 @@ def get_factors():
 
 @bp.route("/strategies", methods=["GET"])
 def get_strategies():
-    """List available strategy contracts with Chinese descriptions."""
-    strategies = [
-        {
-            "id": "a_value",
-            "name": "A价值",
-            "kind": "multi_factor",
-            "factors": ["BP", "EP", "REVERSAL_20"],
-            "desc": "多因子价值+反转策略，适合震荡市",
-            "rebalance_bars": 20,
-            "top_k_pct": 0.2,
-        },
-        {
-            "id": "b_momentum",
-            "name": "B动量",
-            "kind": "multi_factor",
-            "factors": ["REVERSAL_60", "VOLATILITY_20", "PRICE_POS"],
-            "desc": "趋势跟随+低波策略，适合牛市",
-            "rebalance_bars": 20,
-            "top_k_pct": 0.15,
-        },
-        {
-            "id": "c_defensive",
-            "name": "C防御",
-            "kind": "multi_factor",
-            "factors": ["BP", "VOLATILITY_20", "VOLUME_RATIO"],
-            "desc": "低波+高股息防御策略，适合熊市",
-            "rebalance_bars": 30,
-            "top_k_pct": 0.1,
-        },
-    ]
-    return jsonify({"code": 0, "data": strategies, "message": "ok"})
+    """List available strategy contracts with Chinese descriptions (真实5策略, 与桌面版一致)."""
+    try:
+        from frontend.plugins.research.worker import _strategy_contracts
+        from backend.strategy.describe import describe_contract
+        out = []
+        for name, c in _strategy_contracts(20).items():
+            desc = ""
+            try:
+                d = describe_contract(c)
+                desc = d.get("summary") or d.get("desc") or str(d)
+            except Exception:
+                try:
+                    desc = " + ".join(c.factors)
+                except Exception:
+                    desc = ""
+            # 安全转 str(避免前端收到 list/dict 无法渲染)
+            facs = [str(x) for x in (getattr(c, "factors", None) or [])]
+            out.append({
+                "id": name, "name": name, "kind": "multi_factor" if len(facs) > 1 else "single",
+                "factors": facs, "desc": desc or f"{' + '.join(facs)} 多因子策略",
+                "rebalance_bars": getattr(c, "rebalance_bars", 20),
+                "top_k_pct": getattr(c, "top_k_pct", 0.2),
+                "use_tilt": getattr(c, "use_tilt", False),
+            })
+        return jsonify({"code": 0, "data": out, "message": "ok"})
+    except Exception as e:
+        return jsonify({"code": 500, "data": None, "error": {"code": 500, "message": str(e), "retriable": False}}), 500
