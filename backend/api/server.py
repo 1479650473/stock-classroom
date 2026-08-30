@@ -50,6 +50,9 @@ def create_app():
     from .blueprints import system, jobs_bp, market, trade, kline, picks, overview, research, agentops, pipeline, trainer
     for mod in (system, jobs_bp, market, trade, kline, picks, overview, research, agentops, pipeline, trainer):
         app.register_blueprint(mod.bp)
+    # v2 研究交互(回测/因子研究/组合纸面盘/策略对比) — 复用桌面版研究能力
+    from .blueprints import research_v2
+    app.register_blueprint(research_v2.bp)
 
     @app.route("/")
     def root():
