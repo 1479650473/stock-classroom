@@ -173,6 +173,7 @@ class RebalancePlanner:
         self.c = contract
         self.signal_fn = signal_fn or self._real_signals
         self._engine = None
+        self._ls_cache = None   # 缓存 BP longShort 曲线(避免每调仓日重跑因子研究)
 
     def _engine_arg(self):
         if self._engine is None:
@@ -181,13 +182,40 @@ class RebalancePlanner:
         return self._engine
 
     def _real_signals(self, date: pd.Timestamp):
-        """真实三路信号: 指数regime(value_tilt_state) / 市场宽度(market_breadth) / 价值价差(BP多空动量)."""
+        """真实三路信号: 指数regime(value_tilt_state) / 市场宽度(market_breadth)."""
         from ..agent.decision_gate import value_tilt_state, market_breadth
         it = value_tilt_state()
         br = market_breadth()
-        # 价值价差: 用本池 BP 多空(懒加载)
-        # (真实场景常批量; 这里置 None → 分配器按中性处理)
         return {"index_tilt": it, "breadth": br, "value_spread": None}
+
+    def _calc_value_spread(self, frames: dict, date: pd.Timestamp):
+        """价值价差自指信号(BP 多空长短期价差): >0 顺风(价值跑赢)=1.0, <0 逆风=0.0, 数据不足=None.
+
+        用 BP 因子分组多空(longShort)曲线近 4 个重平衡周期价差判断"价值是否在工作",
+        与 research_loop.portfolio_paper 的 _value_spread 同逻辑(生产口径).
+        longShort 曲线整段缓存(仅首次算, 后续调仓日直接查, 避免逐日重跑因子研究).
+        """
+        try:
+            if self._ls_cache is None:
+                from .factor_research import FactorResearchEngine
+                eng = FactorResearchEngine()
+                r = eng.run(frames=frames, factor_id="BP", start_date="2023-01-01",
+                            end_date=str(date)[:10], groups=5,
+                            holding_period=self.c.rebalance_bars, compute_correlation=False)
+                self._ls_cache = sorted(
+                    (pd.Timestamp(p["time"]), float(p["net"])) for p in r.get("longShortCurve", [])
+                    if p.get("net") is not None)
+            ls_dates = [d for d, _ in self._ls_cache]
+            hist = [d for d in ls_dates if d <= pd.Timestamp(date)]
+            if len(hist) < 4:
+                return None
+            ls_map = dict(self._ls_cache)
+            c, p = ls_map[hist[-1]], ls_map[hist[-4]]
+            if c is None or p is None or p <= 0:
+                return None
+            return 1.0 if c / p - 1.0 > 0 else 0.0
+        except Exception:
+            return None
 
     def plan_at(self, date: pd.Timestamp, frames: dict, holdings: dict,
                 cash: float) -> dict:
@@ -203,9 +231,16 @@ class RebalancePlanner:
                 continue
             factor_z[f] = z
         sig = self.signal_fn(date)
+        vs = sig.get("value_spread")
+        # 若 value_spread 未给出(默认信号None) 且契约启用 tilt → 真实计算 BP 多空价差
+        if self.c.use_tilt and vs is None:
+            try:
+                vs = self._calc_value_spread(frames, date)
+            except Exception:
+                vs = None
         alloc = portfolio_value_alloc(index_tilt=sig.get("index_tilt"),
                                       breadth=sig.get("breadth"),
-                                      value_spread=sig.get("value_spread"))
+                                      value_spread=vs)
         w_value = alloc["w_value"] if self.c.use_tilt else 1.0
         score = composite_score(factor_z, self.c, w_value)
         if score is None:
