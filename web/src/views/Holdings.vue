@@ -1,25 +1,29 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, shallowRef, nextTick } from 'vue'
 import PageHeader from '@/components/PageHeader.vue'
 import Card from '@/components/Card.vue'
 import StatCard from '@/components/StatCard.vue'
 import Skeleton from '@/components/Skeleton.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import Icon from '@/components/Icon.vue'
-import { listAccounts, getPositions } from '@/api'
+import { listAccounts, getPositions, getNavHistory } from '@/api'
 import type { AccountSummary, Position } from '@/api'
+import * as echarts from 'echarts'
 
 const accounts = ref<AccountSummary[]>([])
 const selectedId = ref<number | null>(null)
 const positions = ref<Position[]>([])
 const loading = ref(true)
+const nav = ref<number[]>([])
+const navChartEl = ref<HTMLElement | null>(null)
+const navChart = shallowRef<echarts.ECharts | null>(null)
 
 onMounted(async () => {
   try {
     accounts.value = await listAccounts()
     if (accounts.value.length) {
       selectedId.value = accounts.value[0].account_id
-      await loadPositions()
+      await Promise.all([loadPositions(), loadNav()])
     }
   } finally { loading.value = false }
 })
@@ -28,6 +32,40 @@ async function loadPositions() {
   if (!selectedId.value) return
   loading.value = true
   try { positions.value = await getPositions(selectedId.value) } finally { loading.value = false }
+}
+
+async function loadNav() {
+  if (!selectedId.value) return
+  try {
+    const r = await getNavHistory(selectedId.value)
+    nav.value = r.nav || []
+    await nextTick()
+    drawNav()
+  } catch { nav.value = [] }
+}
+
+function drawNav() {
+  if (!navChartEl.value) return
+  if (!navChart.value) navChart.value = echarts.init(navChartEl.value)
+  const n = nav.value
+  const start = n[0] || 0
+  const idx = n.map((v) => start ? +(v / start * 100).toFixed(2) : 0)
+  navChart.value.setOption({
+    grid: { left: 50, right: 16, top: 16, bottom: 26 },
+    tooltip: { trigger: 'axis' },
+    xAxis: { type: 'category', data: idx.map((_, i) => i), axisLabel: { show: false } },
+    yAxis: { type: 'value', scale: true },
+    series: [{
+      type: 'line', data: idx, smooth: true, showSymbol: false,
+      lineStyle: { color: '#D4A574', width: 2 },
+      areaStyle: { color: 'rgba(212,165,116,0.12)' },
+    }],
+  })
+}
+
+async function switchAccount(id: number) {
+  selectedId.value = id
+  await Promise.all([loadPositions(), loadNav()])
 }
 
 function fmtMoney(v: number) {
@@ -40,9 +78,9 @@ function fmtPct(v: number) { return (v >= 0 ? '+' : '') + v.toFixed(2) + '%' }
 
 <template>
   <div>
-    <PageHeader title="持仓" subtitle="纸面盘账本">
+    <PageHeader title="持仓" subtitle="纸面盘账本 · 账户净值">
       <template #right>
-        <select v-if="accounts.length > 1" v-model="selectedId" class="sel" @change="loadPositions">
+        <select v-if="accounts.length > 1" v-model="selectedId" class="sel" @change="switchAccount(Number(selectedId))">
           <option v-for="a in accounts" :key="a.account_id" :value="a.account_id">{{ a.name }}</option>
         </select>
       </template>
@@ -64,6 +102,13 @@ function fmtPct(v: number) { return (v >= 0 ? '+' : '') + v.toFixed(2) + '%' }
         />
         <StatCard label="冻结股数" :value="String(positions.reduce((s, p) => s + p.frozen_qty, 0))" icon="alert" />
       </div>
+
+      <!-- 净值曲线 -->
+      <Card class="mt">
+        <template #header><span class="card-title">账户净值曲线</span></template>
+        <div v-if="nav.length > 1" ref="navChartEl" class="nav-chart"></div>
+        <EmptyState v-else message="暂无净值数据" />
+      </Card>
 
       <Card class="mt">
         <table class="tbl" v-if="positions.length">
@@ -107,6 +152,8 @@ function fmtPct(v: number) { return (v >= 0 ? '+' : '') + v.toFixed(2) + '%' }
 <style scoped>
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--sp-3); margin-bottom: var(--sp-4); }
 .mt { margin-top: var(--sp-4); }
+.card-title { font-weight: 600; }
+.nav-chart { height: 280px; }
 .sel {
   background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm);
   padding: 6px 10px; color: var(--text); font-size: var(--fs-sm);

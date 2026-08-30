@@ -117,7 +117,7 @@ export interface PickItem {
   change_pct: number
   volume: number
   score: number
-  groups?: Record<string, number>
+  groups?: { id: string; name?: string; max_score?: number; score?: number; indicators?: unknown[] }[]
 }
 
 export interface Bootstrap {
