@@ -7,7 +7,7 @@ import Skeleton from '@/components/Skeleton.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import Icon from '@/components/Icon.vue'
 import { useToastStore } from '@/stores/toast'
-import { streamJob, type JobHandle } from '@/api/client'
+import { api, type JobHandle } from '@/api/client'
 import {
   getRegime, getFactors, getStrategies,
   runBacktest, runStudy, runPaper, runCompare,
@@ -45,7 +45,6 @@ const regimeLabel: Record<string, string> = { bull: '牛市', bear: '熊市', ra
 
 // ──── 策略回测 ────
 const btContractName = ref('F价值Tilt')
-const btContract = computed<Record<string, unknown>>(() => ({ id: btContractName.value }))
 const btStart = ref('2024-01-01')
 const btEnd = ref('2026-08-27')
 const btRunning = ref(false)
@@ -71,18 +70,37 @@ function drawBtChart() {
   })
 }
 
+// 轮询 job 状态(替代 SSE, 避开 vite proxy 对 event-stream 的缓冲问题)
+function pollJob<T>(job: JobHandle, onDone: (res: T) => void, onErr: (m: string) => void) {
+  const id = job.job_id
+  let tries = 0
+  const timer = setInterval(async () => {
+    tries++
+    try {
+      const rec = await api.get<{ status: string; result: T | null; error: string | null }>(`/api/jobs/${id}`)
+      if (rec.status === 'succeeded' && rec.result) {
+        clearInterval(timer); onDone(rec.result)
+      } else if (rec.status === 'failed') {
+        clearInterval(timer); onErr(rec.error || '任务失败')
+      } else if (tries > 200) {
+        clearInterval(timer); onErr('任务超时')
+      }
+    } catch { /* 忽略瞬时错误 */ }
+  }, 1500)
+}
+
 async function doBacktest() {
-  if (!btContract.value) { toast.error('请选择策略'); return }
+  if (!btContractName.value) { toast.error('请选择策略'); return }
   btRunning.value = true
   btResult.value = null
   toast.info('回测排队中…')
   try {
-    const job = await runBacktest(btContract.value, btStart.value, btEnd.value)
-    streamJob((job as JobHandle).job_id, {
-      onProgress: (f) => { toast.info((f as { msg?: string }).msg || '回测中…') },
-      onResult: (res) => { btResult.value = res as BacktestResult; setTimeout(() => drawBtChart(), 100); toast.success('回测完成') },
-      onError: (m) => toast.error(m),
-    })
+    const job = await runBacktest({ id: btContractName.value }, btStart.value, btEnd.value)
+    pollJob<BacktestResult>(job, (res) => {
+      btResult.value = res
+      setTimeout(() => drawBtChart(), 50)
+      toast.success('回测完成')
+    }, (m) => toast.error(m))
   } catch (e) {
     toast.error('回测失败：' + (e instanceof Error ? e.message : String(e)))
   } finally { btRunning.value = false }
@@ -96,11 +114,7 @@ async function doStudy() {
   studyRunning.value = true; studyResult.value = null; toast.info('因子研究排队…')
   try {
     const job = await runStudy(studyFactor.value, { holding_period: 20, start: '2023-01-01' })
-    streamJob((job as JobHandle).job_id, {
-      onProgress: (f) => toast.info((f as { msg?: string }).msg || '研究中…'),
-      onResult: (res) => { studyResult.value = res as Record<string, unknown>; toast.success('研究完成') },
-      onError: (m) => toast.error(m),
-    })
+    pollJob<Record<string, unknown>>(job, (res) => { studyResult.value = res; toast.success('研究完成') }, (m) => toast.error(m))
   } catch (e) { toast.error('研究失败：' + (e instanceof Error ? e.message : String(e))) }
   finally { studyRunning.value = false }
 }
@@ -112,11 +126,7 @@ async function doCompare() {
   cmpRunning.value = true; cmpResult.value = null; toast.info('策略对比排队…')
   try {
     const job = await runCompare('2024-01-01', '2026-08-27')
-    streamJob((job as JobHandle).job_id, {
-      onProgress: (f) => toast.info((f as { msg?: string }).msg || '对比中…'),
-      onResult: (res) => { cmpResult.value = (res as { strategies: typeof cmpResult.value }).strategies; toast.success('对比完成') },
-      onError: (m) => toast.error(m),
-    })
+    pollJob<{ strategies: typeof cmpResult.value }>(job, (res) => { cmpResult.value = res.strategies; toast.success('对比完成') }, (m) => toast.error(m))
   } catch (e) { toast.error('对比失败：' + (e instanceof Error ? e.message : String(e))) }
   finally { cmpRunning.value = false }
 }
