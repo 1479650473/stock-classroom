@@ -48,8 +48,8 @@ function streamJob(job: JobHandle) {
     try {
       const frame = JSON.parse(ev.data)
       if (frame.type === 'progress') {
-        progress.value = Math.min(95, progress.value + 8)
-        progressMsg.value = frame.data?.message || '更新中…'
+        progress.value = typeof frame.pct === 'number' ? frame.pct : Math.min(95, progress.value + 8)
+        progressMsg.value = frame.msg || frame.message || '更新中…'
       } else if (frame.type === 'result') {
         progress.value = 100
         progressMsg.value = '更新完成'
@@ -58,12 +58,21 @@ function streamJob(job: JobHandle) {
         evtSource?.close()
         refreshStats()
       } else if (frame.type === 'error') {
-        progressMsg.value = '出错：' + (frame.data?.message || '未知错误')
+        progressMsg.value = '出错：' + (frame.message || '未知错误')
         updating.value = false
         toast.error('更新失败')
         evtSource?.close()
       } else if (frame.type === 'done') {
-        updating.value = false
+        if (frame.status === 'failed') {
+          updating.value = false
+          toast.error('更新失败')
+        } else {
+          progress.value = 100
+          progressMsg.value = '更新完成'
+          updating.value = false
+          toast.success('数据更新完成')
+          refreshStats()
+        }
         evtSource?.close()
       }
     } catch { /* ignore parse errors */ }

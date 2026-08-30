@@ -236,7 +236,11 @@ export const getAgentStrategies = () => api.get<StrategyDef[]>('/api/agentops/st
 
 // ---- pipeline ----
 export interface PipelineStatus { last_update: string | null; status: string; steps?: Record<string, unknown> }
-export interface PipelineStats { stock_count: number; kline_rows: number; latest_date: string | null; db_size: string }
+export interface PipelineStats {
+  stock_count: number; kline_rows: number; latest_date: string | null; db_size: string
+  active_stocks: number
+  tables?: Record<string, { rows: number | null; latest: string | null }>
+}
 
 export const triggerPipelineUpdate = (pool_only = false) => api.post<JobHandle>('/api/pipeline/update', { pool_only })
 export const getPipelineStatus = () => api.get<PipelineStatus>('/api/pipeline/status')

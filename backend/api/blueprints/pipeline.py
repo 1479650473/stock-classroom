@@ -52,11 +52,12 @@ def pipeline_status():
 
 @bp.route("/stats", methods=["GET"])
 def pipeline_stats():
-    """Database statistics for the pipeline overview."""
+    """Database statistics for the pipeline overview (含各业务库分层统计)."""
     import sqlite3, os
     from backend.data_manager import KLINE_DB
     try:
-        data = {"stock_count": 0, "kline_rows": 0, "latest_date": None, "db_size": "—", "active_stocks": 0}
+        data = {"stock_count": 0, "kline_rows": 0, "latest_date": None, "db_size": "—",
+                "active_stocks": 0, "tables": {}}
         if os.path.exists(KLINE_DB):
             data["db_size"] = f"{os.path.getsize(KLINE_DB) / 1024 / 1024:.0f} MB"
             conn = sqlite3.connect(KLINE_DB, timeout=3)
@@ -66,6 +67,22 @@ def pipeline_stats():
                 row = conn.execute("SELECT MAX(date) FROM kline_daily").fetchone()
                 data["latest_date"] = row[0] if row else None
                 data["active_stocks"] = conn.execute("SELECT COUNT(*) FROM stock_list WHERE status='active'").fetchone()[0]
+                # 各业务库统计(供数据中心分层展示; 日期列名不一: date/trade_date/updated_at, 无则只给行数)
+                tbl_stats = {}
+                for t in ("sector_board", "north_flow", "limit_up", "stock_sector", "fund_flow",
+                          "high_low", "lhb_daily", "chip_distribution", "stock_list"):
+                    try:
+                        n = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+                        # 找可用的日期列
+                        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({t})")]
+                        datecol = next((c for c in ("date", "trade_date", "updated_at", "last_date") if c in cols), None)
+                        mx = None
+                        if datecol:
+                            mx = conn.execute(f"SELECT MAX({datecol}) FROM {t}").fetchone()[0]
+                        tbl_stats[t] = {"rows": n, "latest": mx}
+                    except Exception:
+                        tbl_stats[t] = {"rows": None, "latest": None}
+                data["tables"] = tbl_stats
             finally:
                 conn.close()
         return jsonify({"code": 0, "data": data, "message": "ok"})
