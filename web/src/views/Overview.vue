@@ -4,20 +4,27 @@ import PageHeader from '@/components/PageHeader.vue'
 import Card from '@/components/Card.vue'
 import StatCard from '@/components/StatCard.vue'
 import Skeleton from '@/components/Skeleton.vue'
+import EmptyState from '@/components/EmptyState.vue'
 import Icon from '@/components/Icon.vue'
 import { getOverview } from '@/api'
 import type { OverviewData } from '@/api'
 
 const data = ref<OverviewData | null>(null)
 const loading = ref(true)
+const error = ref('')
 
-onMounted(async () => {
+async function load() {
+  loading.value = true
+  error.value = ''
   try {
     data.value = await getOverview()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '加载失败'
   } finally {
     loading.value = false
   }
-})
+}
+onMounted(load)
 
 function fmtMoney(v: number) {
   if (v >= 1e8) return (v / 1e8).toFixed(2) + '亿'
@@ -27,6 +34,8 @@ function fmtMoney(v: number) {
 function fmtPct(v: number) {
   return (v >= 0 ? '+' : '') + v.toFixed(2) + '%'
 }
+
+const reload = () => load()
 </script>
 
 <template>
@@ -34,6 +43,12 @@ function fmtPct(v: number) {
     <PageHeader title="总览" subtitle="您的量化教室仪表盘" />
 
     <Skeleton v-if="loading && !data" />
+
+    <EmptyState v-if="error && !data" :message="error">
+      <template #action>
+        <button class="retry" @click="reload">重试</button>
+      </template>
+    </EmptyState>
 
     <template v-if="data">
       <!-- accounts -->
@@ -118,4 +133,9 @@ function fmtPct(v: number) {
 .as-of { margin-top: var(--sp-6); font-size: var(--fs-xs); }
 .up { color: var(--up); }
 .down { color: var(--down); }
+.retry {
+  padding: 8px 16px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--bg-raised); color: var(--text-sub); font-size: var(--fs-sm); cursor: pointer;
+}
+.retry:hover { border-color: var(--gold); color: var(--gold); }
 </style>

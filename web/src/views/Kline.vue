@@ -14,13 +14,18 @@ const code = ref((route.query.code as string) || '')
 const name = ref((route.query.name as string) || '')
 const bars = ref<KlineBar[]>([])
 const loading = ref(false)
+const loadError = ref('')
 const days = ref(250)
 
 async function load() {
   if (!code.value) return
   loading.value = true
+  loadError.value = ''
   try {
     bars.value = await getKline(code.value, days.value)
+  } catch (e) {
+    bars.value = []
+    loadError.value = e instanceof Error ? e.message : '加载失败'
   } finally {
     loading.value = false
   }
@@ -53,6 +58,7 @@ function fmtPct(v: number) { return (v >= 0 ? '+' : '') + v.toFixed(2) + '%' }
     <Skeleton v-if="loading && !bars.length" />
 
     <EmptyState v-if="!code" message="输入股票代码查看K线图" />
+    <EmptyState v-if="code && loadError" :message="loadError" />
 
     <template v-if="code && bars.length">
       <KlineChart :bars="bars" />
@@ -71,7 +77,7 @@ function fmtPct(v: number) { return (v >= 0 ? '+' : '') + v.toFixed(2) + '%' }
             </tr>
           </thead>
           <tbody>
-            <tr v-for="b in bars.slice(0, 30)" :key="b.date">
+            <tr v-for="b in bars.slice(-30).reverse()" :key="b.date">
               <td>{{ b.date }}</td>
               <td class="ar num">{{ b.open.toFixed(2) }}</td>
               <td class="ar num">{{ b.high.toFixed(2) }}</td>

@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import PageHeader from '@/components/PageHeader.vue'
 import Card from '@/components/Card.vue'
 import Skeleton from '@/components/Skeleton.vue'
+import EmptyState from '@/components/EmptyState.vue'
 import { getIndices, getSectors, getNorthFlow } from '@/api'
 import type { IndexQuote } from '@/api'
 
@@ -10,17 +11,23 @@ const indices = ref<IndexQuote[]>([])
 const sectors = ref<Record<string, unknown>[]>([])
 const north = ref<Record<string, unknown>[]>([])
 const loading = ref(true)
+const error = ref('')
 
-onMounted(async () => {
+async function load() {
+  loading.value = true
+  error.value = ''
   try {
     const [i, s, n] = await Promise.all([getIndices(), getSectors('industry'), getNorthFlow(30)])
     indices.value = i
     sectors.value = s
     north.value = n
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '市场数据加载失败'
   } finally {
     loading.value = false
   }
-})
+}
+onMounted(load)
 
 function fmtPct(v: number) { return (v >= 0 ? '+' : '') + v.toFixed(2) + '%' }
 </script>
@@ -30,6 +37,12 @@ function fmtPct(v: number) { return (v >= 0 ? '+' : '') + v.toFixed(2) + '%' }
     <PageHeader title="看盘" subtitle="实时市场概览" />
 
     <Skeleton v-if="loading && !indices.length" />
+
+    <EmptyState v-if="error && !indices.length" :message="error">
+      <template #action>
+        <button class="retry" @click="load">重试</button>
+      </template>
+    </EmptyState>
 
     <!-- indices -->
     <section class="sec" v-if="indices.length">
@@ -94,4 +107,9 @@ function fmtPct(v: number) { return (v >= 0 ? '+' : '') + v.toFixed(2) + '%' }
 .mini-table th { padding: 8px var(--sp-3); text-align: left; color: var(--text-sub); border-bottom: 1px solid var(--border); }
 .mini-table .ar { text-align: right; }
 .mini-table td { padding: 8px var(--sp-3); border-bottom: 1px solid var(--border-soft); color: var(--text); }
+.retry {
+  padding: 8px 16px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--bg-raised); color: var(--text-sub); font-size: var(--fs-sm); cursor: pointer;
+}
+.retry:hover { border-color: var(--gold); color: var(--gold); }
 </style>

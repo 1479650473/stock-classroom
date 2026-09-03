@@ -7,7 +7,7 @@ import EmptyState from '@/components/EmptyState.vue'
 import KlineChart from '@/components/KlineChart.vue'
 import Icon from '@/components/Icon.vue'
 import { useToastStore } from '@/stores/toast'
-import { startTrainer, trainerStep, trainerStepBack, trainerGoto, trainerOrder, trainerBars } from '@/api'
+import { startTrainer, trainerStep, trainerStepBack, trainerGoto, trainerOrder, trainerBars, endTrainer } from '@/api'
 import type { TrainerSnapshot, KlineBar } from '@/api'
 
 const toast = useToastStore()
@@ -39,18 +39,24 @@ async function start() {
 
 async function step() {
   if (!sid.value) return
-  const r = await trainerStep(sid.value)
-  snap.value = r.snapshot
+  try {
+    const r = await trainerStep(sid.value)
+    snap.value = r.snapshot
+  } catch (e: unknown) { toast.error('前进失败：' + (e instanceof Error ? e.message : String(e))) }
 }
 async function stepBack() {
   if (!sid.value) return
-  const r = await trainerStepBack(sid.value)
-  snap.value = r.snapshot
+  try {
+    const r = await trainerStepBack(sid.value)
+    snap.value = r.snapshot
+  } catch (e: unknown) { toast.error('后退失败：' + (e instanceof Error ? e.message : String(e))) }
 }
 async function gotoIdx(idx: number) {
   if (!sid.value) return
-  const r = await trainerGoto(sid.value, idx)
-  snap.value = r.snapshot
+  try {
+    const r = await trainerGoto(sid.value, idx)
+    snap.value = r.snapshot
+  } catch (e: unknown) { toast.error('跳转失败：' + (e instanceof Error ? e.message : String(e))) }
 }
 async function buy() {
   if (!sid.value) return
@@ -67,6 +73,17 @@ async function sell() {
     snap.value = r.snapshot
     toast.success('卖出成功')
   } catch (e: unknown) { toast.error('卖出失败：' + (e instanceof Error ? e.message : String(e))) }
+}
+
+async function end() {
+  if (!sid.value) return
+  try {
+    await endTrainer(sid.value)
+    sid.value = null
+    snap.value = null
+    bars.value = []
+    toast.success('训练会话已结束')
+  } catch (e: unknown) { toast.error('结束失败：' + (e instanceof Error ? e.message : String(e))) }
 }
 
 function fmtMoney(v: number) {
@@ -106,6 +123,9 @@ function fmtMoney(v: number) {
             <button class="ctrl-btn" @click="step" :disabled="snap.cursor >= snap.total_bars - 1" title="前进一步"><Icon name="chevron-right" :size="16" /></button>
           </div>
           <div class="trade-btns">
+            <button class="ctrl-btn danger" @click="end" title="结束会话">
+              <Icon name="stop" :size="14" />
+            </button>
             <div class="qty-row">
               <label class="muted">数量</label>
               <input v-model.number="qty" type="number" class="inp num-inp" step="100" min="100" />
@@ -154,6 +174,7 @@ function fmtMoney(v: number) {
   transition: all var(--dur-fast);
 }
 .ctrl-btn:hover { border-color: var(--accent); color: var(--text); }
+.ctrl-btn.danger:hover { border-color: var(--up); color: var(--up); }
 .ctrl-btn:disabled { opacity: 0.3; cursor: not-allowed; }
 .buy-btn { background: var(--up); color: #fff; border-color: var(--up); }
 .sell-btn { background: var(--down); color: #fff; border-color: var(--down); }

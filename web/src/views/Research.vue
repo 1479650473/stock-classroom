@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, shallowRef, computed } from 'vue'
+import { onMounted, ref, shallowRef, computed, onBeforeUnmount } from 'vue'
 import PageHeader from '@/components/PageHeader.vue'
 import Card from '@/components/Card.vue'
 import StatCard from '@/components/StatCard.vue'
@@ -10,10 +10,10 @@ import { useToastStore } from '@/stores/toast'
 import { api, type JobHandle } from '@/api/client'
 import {
   getRegime, getFactors, getStrategies,
-  runBacktest, runStudy, runPaper, runCompare,
+  runBacktest, runStudy, runCompare,
   type RegimeData, type FactorDef, type StrategyDef, type BacktestResult,
 } from '@/api'
-import * as echarts from 'echarts'
+import { useEChart, cssVar } from '@/composables/useEChart'
 
 const toast = useToastStore()
 const regime = ref<RegimeData | null>(null)
@@ -36,6 +36,8 @@ onMounted(async () => {
     const [f, s] = await Promise.all([getFactors(), getStrategies()])
     factors.value = f
     strategies.value = s
+    // 默认策略取列表第一个可用契约
+    if (s.length) btContractName.value = s[0].name
   } finally { loading.value = false }
   try { regime.value = await getRegime() } finally { regimeLoading.value = false }
 })
@@ -43,34 +45,45 @@ onMounted(async () => {
 const regimeColor = (r: string) => r === 'bull' ? 'up' : r === 'bear' ? 'down' : 'flat'
 const regimeLabel: Record<string, string> = { bull: '牛市', bear: '熊市', range: '震荡' }
 
+// ──── 工具: 动态日期(结束=今天, 起始=2年前) ────
+function isoDate(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+function defaultRange(): { start: string; end: string } {
+  const end = new Date()
+  const start = new Date()
+  start.setFullYear(start.getFullYear() - 2)
+  return { start: isoDate(start), end: isoDate(end) }
+}
+
 // ──── 策略回测 ────
-const btContractName = ref('F价值Tilt')
-const btStart = ref('2024-01-01')
-const btEnd = ref('2026-08-27')
+const btContractName = ref('')
+const range = defaultRange()
+const btStart = ref(range.start)
+const btEnd = ref(range.end)
 const btRunning = ref(false)
 const btResult = shallowRef<BacktestResult | null>(null)
 const btChartEl = ref<HTMLElement | null>(null)
-const btChart = shallowRef<echarts.ECharts | null>(null)
 
-function drawBtChart() {
-  if (!btResult.value || !btChartEl.value) return
-  if (!btChart.value) btChart.value = echarts.init(btChartEl.value)
-  const nav = btResult.value.nav || []
-  const dates = btResult.value.dates || []
-  btChart.value.setOption({
-    grid: { left: 50, right: 16, top: 20, bottom: 28 },
-    tooltip: { trigger: 'axis' },
-    xAxis: { type: 'category', data: dates, axisLabel: { show: false } },
-    yAxis: { type: 'value', scale: true },
-    series: [{
-      type: 'line', data: nav, smooth: true, showSymbol: false,
-      lineStyle: { color: '#D4A574', width: 2 },
-      areaStyle: { color: 'rgba(212,165,116,0.12)' },
-    }],
-  })
-}
+const { draw: drawBtChart } = useEChart(btChartEl, () => ({
+  grid: { left: 50, right: 16, top: 20, bottom: 28 },
+  tooltip: { trigger: 'axis' },
+  xAxis: { type: 'category', data: btResult.value?.dates || [], axisLabel: { show: false } },
+  yAxis: { type: 'value', scale: true },
+  series: [{
+    type: 'line', data: btResult.value?.nav || [], smooth: true, showSymbol: false,
+    lineStyle: { color: cssVar('--gold'), width: 2 },
+    areaStyle: { color: cssVar('--gold-dim') },
+  }],
+}))
 
 // 轮询 job 状态(替代 SSE, 避开 vite proxy 对 event-stream 的缓冲问题)
+const pollTimers: ReturnType<typeof setInterval>[] = []
+onBeforeUnmount(() => pollTimers.forEach((t) => clearInterval(t)))
+
 function pollJob<T>(job: JobHandle, onDone: (res: T) => void, onErr: (m: string) => void) {
   const id = job.job_id
   let tries = 0
@@ -78,15 +91,18 @@ function pollJob<T>(job: JobHandle, onDone: (res: T) => void, onErr: (m: string)
     tries++
     try {
       const rec = await api.get<{ status: string; result: T | null; error: string | null }>(`/api/jobs/${id}`)
-      if (rec.status === 'succeeded' && rec.result) {
-        clearInterval(timer); onDone(rec.result)
-      } else if (rec.status === 'failed') {
-        clearInterval(timer); onErr(rec.error || '任务失败')
+      if (rec.status === 'succeeded') {
+        clearInterval(timer)
+        if (rec.result !== null && rec.result !== undefined) onDone(rec.result)
+        else onErr('任务完成但结果为空')
+      } else if (rec.status === 'failed' || rec.status === 'cancelled') {
+        clearInterval(timer); onErr(rec.error || (rec.status === 'cancelled' ? '任务已取消' : '任务失败'))
       } else if (tries > 200) {
         clearInterval(timer); onErr('任务超时')
       }
     } catch { /* 忽略瞬时错误 */ }
   }, 1500)
+  pollTimers.push(timer)
 }
 
 async function doBacktest() {
@@ -98,7 +114,7 @@ async function doBacktest() {
     const job = await runBacktest({ id: btContractName.value }, btStart.value, btEnd.value)
     pollJob<BacktestResult>(job, (res) => {
       btResult.value = res
-      setTimeout(() => drawBtChart(), 50)
+      btChartEl.value && drawBtChart()
       toast.success('回测完成')
     }, (m) => toast.error(m))
   } catch (e) {
@@ -125,7 +141,8 @@ const cmpResult = shallowRef<Record<string, { metrics: Record<string, number>; n
 async function doCompare() {
   cmpRunning.value = true; cmpResult.value = null; toast.info('策略对比排队…')
   try {
-    const job = await runCompare('2024-01-01', '2026-08-27')
+    const r = defaultRange()
+    const job = await runCompare(r.start, r.end)
     pollJob<{ strategies: typeof cmpResult.value }>(job, (res) => { cmpResult.value = res.strategies; toast.success('对比完成') }, (m) => toast.error(m))
   } catch (e) { toast.error('对比失败：' + (e instanceof Error ? e.message : String(e))) }
   finally { cmpRunning.value = false }
@@ -244,7 +261,7 @@ const fmtNum = (v: unknown, d = 2) => typeof v === 'number' ? v.toFixed(d) : '�
               <Icon v-if="cmpRunning" name="refresh" :size="14" class="spin" />
               {{ cmpRunning ? '对比中…' : '对比5策略' }}
             </button>
-            <span class="muted hint">2024-01 → 2026-08 完整买卖, 含 α/β/γ/胜率/交易</span>
+            <span class="muted hint">近两年完整买卖, 含 α/β/γ/胜率/交易</span>
           </div>
         </Card>
         <Card v-if="cmpRows.length" class="mt">

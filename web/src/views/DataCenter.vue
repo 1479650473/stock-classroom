@@ -4,6 +4,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import Card from '@/components/Card.vue'
 import StatCard from '@/components/StatCard.vue'
 import Skeleton from '@/components/Skeleton.vue'
+import EmptyState from '@/components/EmptyState.vue'
 import Icon from '@/components/Icon.vue'
 import { getBootstrap, getPipelineStats } from '@/api'
 import type { Bootstrap, PipelineStats } from '@/api'
@@ -11,16 +12,20 @@ import type { Bootstrap, PipelineStats } from '@/api'
 const b = ref<Bootstrap | null>(null)
 const stats = ref<PipelineStats | null>(null)
 const loading = ref(true)
+const error = ref('')
 
-onMounted(async () => {
+async function load() {
+  loading.value = true
+  error.value = ''
   try {
     const [boot, st] = await Promise.all([getBootstrap(), getPipelineStats()])
     b.value = boot
     stats.value = st
   } catch (e) {
-    console.error(e)
+    error.value = e instanceof Error ? e.message : '数据中心加载失败'
   } finally { loading.value = false }
-})
+}
+onMounted(load)
 
 function fmtRows(n: number | null | undefined) {
   if (n == null) return '—'
@@ -43,8 +48,9 @@ const TABLES = [
   { key: 'chip_distribution', label: '筹码分布', icon: 'dot' },
 ]
 const tableRows = computed(() => {
-  if (!stats.value?.tables) return []
-  return TABLES.map((t) => ({ ...t, ...(stats.value!.tables![t.key] || { rows: null, latest: null }) }))
+  const tables = stats.value?.tables
+  if (!tables) return []
+  return TABLES.map((t) => ({ ...t, ...(tables[t.key] ?? { rows: null, latest: null }) }))
 })
 </script>
 
@@ -53,6 +59,12 @@ const tableRows = computed(() => {
     <PageHeader title="数据中心" subtitle="数据库状态 · 各业务库统计" />
 
     <Skeleton v-if="loading && !b" />
+
+    <EmptyState v-if="error && !stats" :message="error">
+      <template #action>
+        <button class="retry" @click="load">重试</button>
+      </template>
+    </EmptyState>
 
     <div v-if="stats" class="stats">
       <StatCard label="K线数据库" :value="fmtRows(stats.kline_rows)" icon="datacenter" :trend-value="fmtDate(stats.latest_date)" />
@@ -99,4 +111,9 @@ const tableRows = computed(() => {
 .num { font-family: var(--font-mono); }
 .muted { color: var(--text-faint); font-size: var(--fs-xs); }
 .init-hint { padding: var(--sp-2); color: var(--text-sub); }
+.retry {
+  padding: 8px 16px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--bg-raised); color: var(--text-sub); font-size: var(--fs-sm); cursor: pointer;
+}
+.retry:hover { border-color: var(--gold); color: var(--gold); }
 </style>

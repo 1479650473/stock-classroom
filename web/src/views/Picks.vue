@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue'
+import { onMounted, onBeforeUnmount, ref } from 'vue'
 import PageHeader from '@/components/PageHeader.vue'
 import Card from '@/components/Card.vue'
 import Skeleton from '@/components/Skeleton.vue'
@@ -18,9 +18,14 @@ const accounts = ref<AccountSummary[]>([])
 const buyAccount = ref<number | null>(null)
 const buyQty = ref(100)
 const buying = ref<Record<string, boolean>>({})
+let pollTimer: ReturnType<typeof setInterval> | null = null
 
 onMounted(async () => {
   await Promise.all([loadAccounts(), load()])
+})
+
+onBeforeUnmount(() => {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
 })
 
 async function loadAccounts() {
@@ -49,21 +54,27 @@ async function rescan() {
     toast.success('扫描排队中，稍后自动刷新')
     // 轮询直到非 stale
     let tries = 0
-    const t = setInterval(async () => {
+    pollTimer = setInterval(async () => {
       tries++
-      const d = await getPicks(20)
-      if (!d.stale || tries > 30) {
-        clearInterval(t)
-        items.value = d.items
-        stale.value = d.stale
-        toast.success('选股已更新')
-        running.value = false
-      }
+      try {
+        const d = await getPicks(20)
+        if (!d.stale || tries > 30) {
+          clearIfPoll()
+          items.value = d.items
+          stale.value = d.stale
+          toast.success('选股已更新')
+          running.value = false
+        }
+      } catch { /* 轮询瞬断忽略 */ }
     }, 3000)
   } catch (e) {
     toast.error('扫描失败：' + (e instanceof Error ? e.message : String(e)))
     running.value = false
   }
+}
+
+function clearIfPoll() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
 }
 
 async function buy(p: PickItem) {

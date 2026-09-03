@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { ref } from 'vue'
 import PageHeader from '@/components/PageHeader.vue'
 import Card from '@/components/Card.vue'
 import Icon from '@/components/Icon.vue'
 import { useToastStore } from '@/stores/toast'
+import { streamJob } from '@/api/client'
 import { getOverview, getPicks, getRegime, triggerPipelineUpdate, listAccounts, portfolioRebalance } from '@/api'
-import type { JobHandle, PortfolioSnapshot } from '@/api'
+import type { PortfolioSnapshot } from '@/api'
 
 const toast = useToastStore()
 const running = ref(false)
@@ -17,25 +18,38 @@ interface Step {
 
 const steps = ref<Step[]>([
   { id: 'data', icon: 'datacenter', title: '数据更新', desc: 'K线 + 基本面 + 缓存', status: 'pending' },
-  { id: 'factors', icon: 'research', title: '因子评分', desc: '多因子打分排序', status: 'pending' },
+  { id: 'factors', icon: 'research', title: '因子评分（读缓存）', desc: '多因子打分排序 — 快速读取最近一次扫描结果', status: 'pending' },
   { id: 'regime', icon: 'market', title: '市场分类', desc: '牛/熊/震荡判定', status: 'pending' },
   { id: 'picks', icon: 'picks', title: '选股输出', desc: 'Top N 候选', status: 'pending' },
   { id: 'trade', icon: 'trade', title: '交易执行', desc: '模拟盘下单', status: 'pending' },
   { id: 'snapshot', icon: 'wallet', title: '净值快照', desc: '账户净值记录', status: 'pending' },
 ])
 
+// 等待 job 真正完成(streamJob 收到 result/error 为止)
+function waitJob(jobId: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const close = streamJob(jobId, {
+      onProgress: () => {},
+      onResult: () => { close(); resolve() },
+      onError: (m) => { close(); reject(new Error(m)) },
+    })
+  })
+}
+
 async function runPipeline() {
   running.value = true
   steps.value.forEach(s => { s.status = 'pending'; s.detail = undefined })
 
-  // step 1: data update
+  // step 1: data update (等 job 完成, 不只提交)
   steps.value[0].status = 'running'
   try {
     const job = await triggerPipelineUpdate(true)
-    steps.value[0].detail = `任务 ${job.job_id.slice(0, 8)}`
+    steps.value[0].detail = `任务 ${job.job_id.slice(0, 8)} 执行中…`
+    await waitJob(job.job_id)
+    steps.value[0].detail = `任务 ${job.job_id.slice(0, 8)} 完成`
     steps.value[0].status = 'done'
-  } catch {
-    steps.value[0].status = 'error'; steps.value[0].detail = '更新失败'
+  } catch (e) {
+    steps.value[0].status = 'error'; steps.value[0].detail = e instanceof Error ? e.message : '更新失败'
     running.value = false; return
   }
 
@@ -69,14 +83,20 @@ async function runPipeline() {
     steps.value[3].status = 'error'
   }
 
-  // step 5: trade execution (组合重平衡预览 — 真实计算 target weights + suggested trades)
+  // step 5: trade execution (组合重平衡 — 读真实 suggested_trades)
   steps.value[4].status = 'running'
   try {
     const accs = await listAccounts()
     if (accs.length) {
       const pf = await portfolioRebalance(accs[0].account_id) as PortfolioSnapshot
-      const trades = Object.keys((pf as unknown as { suggested_trades?: Record<string, unknown> }).suggested_trades || {}).length
-      steps.value[4].detail = trades ? `重平衡 ${trades} 笔` : '已平衡'
+      const trades = pf.suggested_trades || []
+      if (trades.length) {
+        const buys = trades.filter(t => t.side === 'buy').reduce((s, t) => s + t.qty, 0)
+        const sells = trades.filter(t => t.side === 'sell').reduce((s, t) => s + t.qty, 0)
+        steps.value[4].detail = `${trades.length} 笔调仓(买${buys}股/卖${sells}股)`
+      } else {
+        steps.value[4].detail = '已平衡'
+      }
     } else {
       steps.value[4].detail = '无账户'
     }

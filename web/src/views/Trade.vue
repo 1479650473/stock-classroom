@@ -16,6 +16,7 @@ const selectedId = ref<number | null>(null)
 const orders = ref<Order[]>([])
 const loading = ref(true)
 const submitting = ref(false)
+const loadError = ref('')
 
 const form = ref({
   side: 'buy' as 'buy' | 'sell',
@@ -26,20 +27,29 @@ const form = ref({
   qty: 100,
 })
 
-onMounted(async () => {
+async function loadAccounts() {
+  loading.value = true
+  loadError.value = ''
   try {
     accounts.value = await listAccounts()
     if (accounts.value.length) {
-      selectedId.value = accounts.value[0].account_id
+      if (!selectedId.value || !accounts.value.some(a => a.account_id === selectedId.value)) {
+        selectedId.value = accounts.value[0].account_id
+      }
       await loadOrders()
     }
+  } catch (e) {
+    loadError.value = e instanceof Error ? e.message : '账户加载失败'
   } finally { loading.value = false }
-})
+}
+onMounted(loadAccounts)
 
 async function loadOrders() {
   if (!selectedId.value) return
   loading.value = true
-  try { orders.value = await getOrders(selectedId.value) } finally { loading.value = false }
+  try { orders.value = await getOrders(selectedId.value) }
+  catch (e) { toast.error('订单加载失败：' + (e instanceof Error ? e.message : String(e))) }
+  finally { loading.value = false }
 }
 
 async function submitOrder() {
@@ -72,19 +82,18 @@ async function handleCancel(id: number) {
 
 async function handleRefresh() {
   if (!selectedId.value) return
-  await refreshPrices(selectedId.value); toast.success('价格已刷新')
+  try {
+    await refreshPrices(selectedId.value)
+    toast.success('价格已刷新')
+    await loadOrders()
+  } catch (e) {
+    toast.error('刷新价格失败：' + (e instanceof Error ? e.message : String(e)))
+  }
 }
 
 function fmtMoney(v: number) {
   if (Math.abs(v) >= 1e4) return (v / 1e4).toFixed(2) + '万'
   return v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-}
-
-const pending = ref<Order[]>([])
-const filled = ref<Order[]>([])
-function splitOrders() {
-  pending.value = orders.value.filter(o => o.status === 'pending')
-  filled.value = orders.value.filter(o => o.status !== 'pending')
 }
 </script>
 
@@ -102,7 +111,12 @@ function splitOrders() {
     </PageHeader>
 
     <Skeleton v-if="loading && !accounts.length" />
-    <EmptyState v-if="!loading && !accounts.length" message="暂无账户" />
+    <EmptyState v-if="loadError && !accounts.length" :message="loadError">
+      <template #action>
+        <button class="btn-sm retry" @click="loadAccounts">重试</button>
+      </template>
+    </EmptyState>
+    <EmptyState v-if="!loading && !loadError && !accounts.length" message="暂无账户，请到设置或持仓页创建" />
 
     <template v-if="accounts.length && selectedId">
       <!-- account stats -->
@@ -214,6 +228,7 @@ function splitOrders() {
 }
 .btn-sm:hover { color: var(--gold); border-color: var(--gold); }
 .btn-sm.danger:hover { color: var(--up); border-color: var(--up); }
+.btn-sm.retry { width: auto; padding: 8px 16px; font-size: var(--fs-sm); }
 
 .form { padding: var(--sp-2) 0; }
 .form-row { display: flex; align-items: flex-end; gap: var(--sp-3); flex-wrap: wrap; }

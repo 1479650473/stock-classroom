@@ -6,8 +6,9 @@ import StatCard from '@/components/StatCard.vue'
 import Skeleton from '@/components/Skeleton.vue'
 import Icon from '@/components/Icon.vue'
 import { useToastStore } from '@/stores/toast'
+import { streamJob } from '@/api/client'
 import { getPipelineStats, getPipelineStatus, triggerPipelineUpdate } from '@/api'
-import type { PipelineStats, PipelineStatus, JobHandle } from '@/api'
+import type { PipelineStats, PipelineStatus } from '@/api'
 
 const toast = useToastStore()
 const stats = ref<PipelineStats | null>(null)
@@ -16,73 +17,47 @@ const loading = ref(true)
 const updating = ref(false)
 const progress = ref(0)
 const progressMsg = ref('')
-let evtSource: EventSource | null = null
+let closeStream: (() => void) | null = null
 
 onMounted(async () => {
   try {
     const [s, st] = await Promise.all([getPipelineStats(), getPipelineStatus()])
     stats.value = s
     status.value = st
+  } catch (e) {
+    toast.error('管道状态加载失败：' + (e instanceof Error ? e.message : String(e)))
   } finally { loading.value = false }
 })
 
-onBeforeUnmount(() => { evtSource?.close() })
+onBeforeUnmount(() => closeStream?.())
 
 async function startUpdate(poolOnly = false) {
   updating.value = true; progress.value = 0; progressMsg.value = '提交中…'
   try {
     const job = await triggerPipelineUpdate(poolOnly)
     progressMsg.value = '任务已提交，等待执行…'
-    streamJob(job)
-  } catch (e: unknown) {
-    toast.error('提交失败：' + (e instanceof Error ? e.message : String(e)))
-    updating.value = false
-  }
-}
-
-function streamJob(job: JobHandle) {
-  evtSource?.close()
-  const url = `/api/jobs/${job.job_id}/stream`
-  evtSource = new EventSource(url)
-  evtSource.onmessage = (ev) => {
-    try {
-      const frame = JSON.parse(ev.data)
-      if (frame.type === 'progress') {
+    closeStream?.()
+    closeStream = streamJob(job.job_id, {
+      onProgress: (frame) => {
         progress.value = typeof frame.pct === 'number' ? frame.pct : Math.min(95, progress.value + 8)
-        progressMsg.value = frame.msg || frame.message || '更新中…'
-      } else if (frame.type === 'result') {
+        progressMsg.value = String(frame.msg || frame.message || '更新中…')
+      },
+      onResult: () => {
         progress.value = 100
         progressMsg.value = '更新完成'
         updating.value = false
         toast.success('数据更新完成')
-        evtSource?.close()
         refreshStats()
-      } else if (frame.type === 'error') {
-        progressMsg.value = '出错：' + (frame.message || '未知错误')
+      },
+      onError: (m) => {
+        progressMsg.value = '出错：' + m
         updating.value = false
-        toast.error('更新失败')
-        evtSource?.close()
-      } else if (frame.type === 'done') {
-        if (frame.status === 'failed') {
-          updating.value = false
-          toast.error('更新失败')
-        } else {
-          progress.value = 100
-          progressMsg.value = '更新完成'
-          updating.value = false
-          toast.success('数据更新完成')
-          refreshStats()
-        }
-        evtSource?.close()
-      }
-    } catch { /* ignore parse errors */ }
-  }
-  evtSource.onerror = () => {
-    if (updating.value) {
-      progressMsg.value = '连接断开'
-      updating.value = false
-      evtSource?.close()
-    }
+        toast.error('更新失败：' + m)
+      },
+    })
+  } catch (e: unknown) {
+    toast.error('提交失败：' + (e instanceof Error ? e.message : String(e)))
+    updating.value = false
   }
 }
 

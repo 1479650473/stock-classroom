@@ -21,6 +21,10 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
+    // 忽略 Tauri 的 target/ 目录, 避免 watch 到被锁定的 .exe 产物导致 EBUSY 崩溃
+    watch: {
+      ignored: ['**/src-tauri/target/**', '**/src-tauri/**', '**/dist/**', '**/node_modules/**'],
+    },
   },
   build: {
     outDir: 'dist',

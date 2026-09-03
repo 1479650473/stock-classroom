@@ -1,37 +1,60 @@
 <script setup lang="ts">
-import { onMounted, ref, shallowRef, nextTick } from 'vue'
+import { onMounted, ref } from 'vue'
 import PageHeader from '@/components/PageHeader.vue'
 import Card from '@/components/Card.vue'
 import StatCard from '@/components/StatCard.vue'
 import Skeleton from '@/components/Skeleton.vue'
 import EmptyState from '@/components/EmptyState.vue'
-import Icon from '@/components/Icon.vue'
 import { listAccounts, getPositions, getNavHistory } from '@/api'
 import type { AccountSummary, Position } from '@/api'
-import * as echarts from 'echarts'
+import { useEChart, cssVar } from '@/composables/useEChart'
 
 const accounts = ref<AccountSummary[]>([])
 const selectedId = ref<number | null>(null)
 const positions = ref<Position[]>([])
 const loading = ref(true)
+const loadError = ref('')
 const nav = ref<number[]>([])
 const navChartEl = ref<HTMLElement | null>(null)
-const navChart = shallowRef<echarts.ECharts | null>(null)
 
-onMounted(async () => {
+const { draw: drawNav } = useEChart(navChartEl, () => {
+  const n = nav.value
+  const start = n[0] || 0
+  const idx = n.map((v) => start ? +(v / start * 100).toFixed(2) : 0)
+  return {
+    grid: { left: 50, right: 16, top: 16, bottom: 26 },
+    tooltip: { trigger: 'axis' },
+    xAxis: { type: 'category', data: idx.map((_, i) => i), axisLabel: { show: false } },
+    yAxis: { type: 'value', scale: true },
+    series: [{
+      type: 'line', data: idx, smooth: true, showSymbol: false,
+      lineStyle: { color: cssVar('--gold'), width: 2 },
+      areaStyle: { color: cssVar('--gold-dim') },
+    }],
+  }
+})
+
+async function loadAccounts() {
+  loading.value = true
+  loadError.value = ''
   try {
     accounts.value = await listAccounts()
     if (accounts.value.length) {
-      selectedId.value = accounts.value[0].account_id
+      if (!selectedId.value || !accounts.value.some(a => a.account_id === selectedId.value)) {
+        selectedId.value = accounts.value[0].account_id
+      }
       await Promise.all([loadPositions(), loadNav()])
     }
+  } catch (e) {
+    loadError.value = e instanceof Error ? e.message : '账户加载失败'
   } finally { loading.value = false }
-})
+}
+onMounted(loadAccounts)
 
 async function loadPositions() {
   if (!selectedId.value) return
-  loading.value = true
-  try { positions.value = await getPositions(selectedId.value) } finally { loading.value = false }
+  try { positions.value = await getPositions(selectedId.value) }
+  catch (e) { loadError.value = e instanceof Error ? e.message : '持仓加载失败' }
 }
 
 async function loadNav() {
@@ -39,28 +62,8 @@ async function loadNav() {
   try {
     const r = await getNavHistory(selectedId.value)
     nav.value = r.nav || []
-    await nextTick()
-    drawNav()
+    navChartEl.value && drawNav()
   } catch { nav.value = [] }
-}
-
-function drawNav() {
-  if (!navChartEl.value) return
-  if (!navChart.value) navChart.value = echarts.init(navChartEl.value)
-  const n = nav.value
-  const start = n[0] || 0
-  const idx = n.map((v) => start ? +(v / start * 100).toFixed(2) : 0)
-  navChart.value.setOption({
-    grid: { left: 50, right: 16, top: 16, bottom: 26 },
-    tooltip: { trigger: 'axis' },
-    xAxis: { type: 'category', data: idx.map((_, i) => i), axisLabel: { show: false } },
-    yAxis: { type: 'value', scale: true },
-    series: [{
-      type: 'line', data: idx, smooth: true, showSymbol: false,
-      lineStyle: { color: '#D4A574', width: 2 },
-      areaStyle: { color: 'rgba(212,165,116,0.12)' },
-    }],
-  })
 }
 
 async function switchAccount(id: number) {
@@ -88,7 +91,13 @@ function fmtPct(v: number) { return (v >= 0 ? '+' : '') + v.toFixed(2) + '%' }
 
     <Skeleton v-if="loading && !positions.length" />
 
-    <EmptyState v-if="!loading && !accounts.length" message="暂无账户，请先在交易页面创建" />
+    <EmptyState v-if="loadError && !accounts.length" :message="loadError">
+      <template #action>
+        <button class="retry" @click="loadAccounts">重试</button>
+      </template>
+    </EmptyState>
+
+    <EmptyState v-if="!loading && !loadError && !accounts.length" message="暂无账户，请先创建账户" />
 
     <template v-if="accounts.length && selectedId">
       <div class="stats">
@@ -167,4 +176,9 @@ function fmtPct(v: number) { return (v >= 0 ? '+' : '') + v.toFixed(2) + '%' }
 .code { font-family: var(--font-mono); }
 .up { color: var(--up); } .down { color: var(--down); }
 .muted { color: var(--text-faint); font-size: var(--fs-xs); }
+.retry {
+  padding: 8px 16px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--bg-raised); color: var(--text-sub); font-size: var(--fs-sm); cursor: pointer;
+}
+.retry:hover { border-color: var(--gold); color: var(--gold); }
 </style>

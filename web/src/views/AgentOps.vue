@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import PageHeader from '@/components/PageHeader.vue'
 import Card from '@/components/Card.vue'
 import StatCard from '@/components/StatCard.vue'
@@ -11,6 +12,7 @@ import { getAgentStrategies, scanEntry, deepAnalyze, portfolioRebalance, listAcc
 import type { StrategyDef, ScanResult, DeepEntry, PortfolioSnapshot, AccountSummary } from '@/api'
 
 const toast = useToastStore()
+const router = useRouter()
 const strategies = ref<StrategyDef[]>([])
 const accounts = ref<AccountSummary[]>([])
 const loading = ref(true)
@@ -64,12 +66,20 @@ async function doPortfolio() {
   catch (e: unknown) { toast.error('获取失败：' + (e instanceof Error ? e.message : String(e))) }
 }
 
+function handToAI(s: StrategyDef) {
+  router.push({ path: '/agent', query: { prompt: `用 ${s.name} 策略分析当前机会并给出操作建议` } })
+}
+
 function fmtMoney(v: number) {
   if (Math.abs(v) >= 1e4) return (v / 1e4).toFixed(2) + '万'
   return v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 function verdictColor(v: string) {
-  return v === '前置' ? 'up' : v === '剔名' ? 'down' : 'flat'
+  if (v === '前置') return 'up'
+  if (v === '剔名' || v === '剔除') return 'down'
+  if (v === '保持') return 'flat'
+  if (v === '后移') return 'gold'
+  return 'flat'
 }
 </script>
 
@@ -87,6 +97,7 @@ function verdictColor(v: string) {
           @click="scanStrategy = s as unknown as Record<string, unknown>; selectedStratId = s.id" class="strat-card">
           <div class="strat-name">{{ s.name }}</div>
           <div class="strat-desc muted">{{ s.desc }}</div>
+          <button class="ai-link" @click.stop="handToAI(s)">交给 AI 操盘</button>
         </Card>
       </div>
     </section>
@@ -181,6 +192,11 @@ function verdictColor(v: string) {
 .strat-card { cursor: pointer; }
 .strat-name { font-weight: 700; color: var(--gold); margin-bottom: 2px; }
 .strat-desc { font-size: var(--fs-sm); }
+.ai-link {
+  margin-top: var(--sp-2); padding: 0; border: none; background: transparent;
+  color: var(--accent); font-size: var(--fs-xs); cursor: pointer; font-weight: 600;
+}
+.ai-link:hover { color: var(--accent-hover); text-decoration: underline; }
 .scan-form { display: flex; gap: var(--sp-2); align-items: center; margin-bottom: var(--sp-3); }
 .code-inp { width: 140px; font-family: var(--font-mono); }
 .inp {
@@ -210,6 +226,7 @@ function verdictColor(v: string) {
 .verdict.up { background: rgba(229, 72, 77, 0.15); color: var(--up); }
 .verdict.down { background: rgba(63, 185, 80, 0.15); color: var(--down); }
 .verdict.flat { background: rgba(154, 163, 176, 0.15); color: var(--text-sub); }
+.verdict.gold { background: var(--gold-dim); color: var(--gold); }
 .deep-reason { font-size: var(--fs-sm); color: var(--text-sub); margin-bottom: 2px; }
 .deep-conf { font-size: var(--fs-xs); }
 .pf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--sp-3); margin: var(--sp-3) 0; }
