@@ -37,6 +37,9 @@
       "icons/icon.png",
       "icons/icon.ico"
     ],
+    "resources": {
+      "../../package/dist/stock-api.exe": "stock-api.exe"
+    },
     "windows": {
       "webviewInstallMode": { "type": "embedBootstrapper" }
     }
