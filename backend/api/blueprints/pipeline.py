@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """DataPipeline blueprint — trigger data updates with SSE progress."""
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, request
+
+from ..envelope import ok, err
 
 bp = Blueprint("pipeline", __name__, url_prefix="/api/pipeline")
 
@@ -31,23 +33,22 @@ def trigger_update():
     body = request.get_json(force=True, silent=True) or {}
     from backend.api.jobman import submit
     job = submit("pipeline_update", _run_daily_update, {"pool_only": body.get("pool_only", False)})
-    return jsonify({"code": 0, "data": job, "message": "ok"})
+    return ok(job)
 
 
 @bp.route("/status", methods=["GET"])
 def pipeline_status():
     """Get latest update_marker.json status."""
     import json, os
-    marker_path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "data", "update_marker.json")
-    marker_path = os.path.normpath(marker_path)
+    marker_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "data", "update_marker.json"))
     if not os.path.exists(marker_path):
-        return jsonify({"code": 0, "data": {"last_update": None, "status": "未更新"}, "message": "ok"})
+        return ok({"last_update": None, "status": "未更新"})
     try:
         with open(marker_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return jsonify({"code": 0, "data": data, "message": "ok"})
+        return ok(data)
     except Exception:
-        return jsonify({"code": 0, "data": {"last_update": None, "status": "读取失败"}, "message": "ok"})
+        return ok({"last_update": None, "status": "读取失败"})
 
 
 _stats_cache = {"t": 0, "data": None}
@@ -58,7 +59,7 @@ def pipeline_stats():
     import time as _t
     now = _t.time()
     if _stats_cache["data"] is not None and now - _stats_cache["t"] < 60:
-        return jsonify({"code": 0, "data": _stats_cache["data"], "message": "ok"})
+        return ok(_stats_cache["data"])
     import sqlite3, os
     from backend.data_manager import KLINE_DB
     try:
@@ -93,6 +94,6 @@ def pipeline_stats():
                 conn.close()
         _stats_cache["t"] = now
         _stats_cache["data"] = data
-        return jsonify({"code": 0, "data": data, "message": "ok"})
+        return ok(data)
     except Exception as e:
-        return jsonify({"code": 500, "data": None, "error": {"code": 500, "message": str(e), "retriable": False}}), 500
+        return err(500, "pipeline_stats_failed", str(e), retriable=False)

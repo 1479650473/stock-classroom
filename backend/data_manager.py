@@ -16,8 +16,14 @@ import pandas as pd
 # AKShare calls centralized through akshare_source module
 from akshare_source import ak_fetch_kline, ak_fetch_index_kline, ak_get_all_stocks, ak_get_spot_all, ak_get_index_spot, ak_get_sectors, ak_get_north_flow, ak_get_limit_up, ak_get_lhb_stock_statistic, ak_get_high_low
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(os.path.dirname(BASE_DIR), "data")
+if getattr(sys, "frozen", False):
+    # PyInstaller 打包: __file__ 在临时解压目录, data 以 exe 目录(或 SC_DATA_DIR)为准
+    _exe_dir = os.path.dirname(sys.executable)
+    DATA_DIR = os.environ.get("SC_DATA_DIR") or os.path.join(_exe_dir, "data")
+    BASE_DIR = os.path.join(_exe_dir, "backend")
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    DATA_DIR = os.environ.get("SC_DATA_DIR") or os.path.join(os.path.dirname(BASE_DIR), "data")
 KLINE_DB = os.path.join(DATA_DIR, "kline.db")
 CACHE_DB = os.path.join(DATA_DIR, "stock_cache.db")
 

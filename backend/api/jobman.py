@@ -29,6 +29,24 @@ _JOBS: dict = {}          # job_id -> record dict
 _QUEUES: dict = {}        # job_id -> buffered SSE lines (ring)
 _SIGS: dict = {}          # job_id -> threading.Event
 _KEEP = 400
+_JOB_TTL = 6 * 3600      # 完成后的 job 记录保留 6 小时
+_last_prune = 0.0
+
+
+def _prune():
+    """惰性回收超过 TTL 的已完成 job(防长期运行内存泄漏)."""
+    global _last_prune
+    now = time.time()
+    if now - _last_prune < 3600:
+        return
+    _last_prune = now
+    stale = [jid for jid, j in _JOBS.items()
+             if (j.get("finished_at") or 0) and now - j["finished_at"] > _JOB_TTL]
+    with _LOCK:
+        for jid in stale:
+            _JOBS.pop(jid, None)
+            _QUEUES.pop(jid, None)
+            _SIGS.pop(jid, None)
 
 
 def _new_id() -> str:
@@ -53,6 +71,7 @@ def _push(job_id: str, frame: dict, terminal: bool = False):
 
 
 def submit(kind: str, runner: Callable, payload: Any = None) -> dict:
+    _prune()
     job_id = _new_id()
     now = time.time()
     _JOBS[job_id] = {

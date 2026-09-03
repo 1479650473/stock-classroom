@@ -5,7 +5,7 @@ import time
 
 from flask import Blueprint, request
 
-from ..envelope import ok, err
+from ..envelope import ok, err, int_arg
 from .. import jobman
 
 bp = Blueprint("picks", __name__, url_prefix="/api/picks")
@@ -28,7 +28,7 @@ def _run(payload, on_progress):
 def latest():
     with _lock:
         data, ts = _cache["data"], _cache["ts"]
-    top = int(request.args.get("top", 20))
+    top = int_arg(request.args.get("top"), 20, 1, 100)
     if data is None:
         return ok({"items": [], "total": 0, "stale": True, "ts": 0})
     return ok({"items": data["items"][:top], "total": data["total"],

@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Research blueprint — regime, metrics, strategy describe."""
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, request
+
+from ..envelope import ok, err
 
 bp = Blueprint("research", __name__, url_prefix="/api/research")
 
@@ -11,9 +13,9 @@ def get_regime():
     try:
         from backend.strategy.regime import run as regime_run
         data = regime_run()
-        return jsonify({"code": 0, "data": data, "message": "ok"})
+        return ok(data)
     except Exception as e:
-        return jsonify({"code": 500, "data": None, "error": {"code": 500, "message": str(e), "retriable": False}}), 500
+        return err(500, "regime_failed", str(e), retriable=False)
 
 
 @bp.route("/metrics", methods=["POST"])
@@ -22,15 +24,15 @@ def compute_metrics():
     body = request.get_json(force=True, silent=True) or {}
     nav = body.get("nav")
     if not nav or not isinstance(nav, list) or len(nav) < 2:
-        return jsonify({"code": 400, "data": None, "error": {"code": 400, "message": "nav must be a list with >=2 points", "retriable": False}}), 400
+        return err(400, "bad_nav", "nav must be a list with >=2 points", retriable=False)
     try:
         from backend.strategy.metrics import full_metrics
         bench = body.get("bench")
         dates = body.get("dates")
         result = full_metrics(nav, bench=bench, dates=dates)
-        return jsonify({"code": 0, "data": result, "message": "ok"})
+        return ok(result)
     except Exception as e:
-        return jsonify({"code": 500, "data": None, "error": {"code": 500, "message": str(e), "retriable": False}}), 500
+        return err(500, "metrics_failed", str(e), retriable=False)
 
 
 @bp.route("/strategy/describe", methods=["POST"])
@@ -38,13 +40,13 @@ def describe_strategy():
     """Describe a strategy contract in Chinese."""
     body = request.get_json(force=True, silent=True) or {}
     if not body:
-        return jsonify({"code": 400, "data": None, "error": {"code": 400, "message": "empty body", "retriable": False}}), 400
+        return err(400, "empty_body", "empty body", retriable=False)
     try:
         from backend.strategy.describe import describe_contract
         data = describe_contract(body)
-        return jsonify({"code": 0, "data": data, "message": "ok"})
+        return ok(data)
     except Exception as e:
-        return jsonify({"code": 500, "data": None, "error": {"code": 500, "message": str(e), "retriable": False}}), 500
+        return err(500, "describe_failed", str(e), retriable=False)
 
 
 @bp.route("/factors", methods=["GET"])
@@ -59,7 +61,7 @@ def get_factors():
         {"id": "VOLUME_RATIO", "name": "量比", "group": "情绪", "desc": "当日成交量/5日均量"},
         {"id": "PRICE_POS", "name": "价格位置", "group": "技术", "desc": "当前价在20日高低点中的位置"},
     ]
-    return jsonify({"code": 0, "data": factors, "message": "ok"})
+    return ok(factors)
 
 
 @bp.route("/strategies", methods=["GET"])
@@ -88,6 +90,6 @@ def get_strategies():
                 "top_k_pct": getattr(c, "top_k_pct", 0.2),
                 "use_tilt": getattr(c, "use_tilt", False),
             })
-        return jsonify({"code": 0, "data": out, "message": "ok"})
+        return ok(out)
     except Exception as e:
-        return jsonify({"code": 500, "data": None, "error": {"code": 500, "message": str(e), "retriable": False}}), 500
+        return err(500, "strategies_failed", str(e), retriable=False)

@@ -8,7 +8,8 @@ if getattr(sys, "frozen", False):
 else:
     PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-DATA_DIR = os.path.join(PROJECT_DIR, "data")
+# 打包后数据的默认位置不变(exe旁 data/), 外壳可通过环境变量改为本地用户目录
+DATA_DIR = os.environ.get("SC_DATA_DIR") or os.path.join(PROJECT_DIR, "data")
 KLINE_DB = os.path.join(DATA_DIR, "kline.db")
 CACHE_DB = os.path.join(DATA_DIR, "stock_cache.db")
 FUND_DB = os.path.join(DATA_DIR, "fundamental.db")

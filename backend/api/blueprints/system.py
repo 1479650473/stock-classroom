@@ -65,7 +65,14 @@ def bootstrap():
 @bp.route("/settings", methods=["GET"])
 def get_settings():
     s = settings_store.load_settings()
-    # never leak the raw key fully to list endpoints; UI edits it explicitly
+    # 脱敏 api_key: 只回最后4位 + 布尔标记, 不在网络上泄露完整 key
+    agent = s.get("agent") or {}
+    raw = agent.get("api_key") or ""
+    if raw:
+        agent = dict(agent)
+        agent["api_key"] = "****" + raw[-4:] if len(raw) > 4 else "****"
+    s["agent"] = agent
+    s["api_key_set"] = bool(raw)
     return ok(s)
 
 
@@ -77,7 +84,13 @@ def save_settings():
         if key in body:
             current[key] = body[key]
     if "agent" in body and isinstance(body["agent"], dict):
-        current.setdefault("agent", {}).update(body["agent"])
+        current.setdefault("agent", {})
+        new_agent = body["agent"]
+        for k, v in new_agent.items():
+            if k == "api_key" and (v is None or str(v).startswith("****")):
+                continue  # 掩码值不变更
+            if v is not None:
+                current["agent"][k] = v
     settings_store.save_settings(current)
     return ok(current, message="saved")
 

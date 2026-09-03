@@ -4,7 +4,7 @@ import sqlite3
 
 from flask import Blueprint, request
 
-from ..envelope import ok, err
+from ..envelope import ok, err, int_arg
 from ..paths import KLINE_DB
 
 bp = Blueprint("kline", __name__, url_prefix="/api")
@@ -13,7 +13,7 @@ bp = Blueprint("kline", __name__, url_prefix="/api")
 @bp.route("/kline")
 def kline():
     code = request.args.get("code", "").strip()
-    days = int(request.args.get("days", 180))
+    days = int_arg(request.args.get("days"), 180, 5, 5000)
     if not code:
         return err(400, "missing_code", "需要 code 参数")
     try:

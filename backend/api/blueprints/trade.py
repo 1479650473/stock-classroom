@@ -5,7 +5,7 @@ Wraps backend.trade_engine.engine.TradeEngine. All endpoints are paper-only.
 """
 from flask import Blueprint, request
 
-from ..envelope import ok, err
+from ..envelope import ok, err, int_arg
 
 bp = Blueprint("trade", __name__, url_prefix="/api/trade")
 
@@ -26,11 +26,17 @@ def list_accounts():
 
 @bp.route("/accounts", methods=["POST"])
 def create_account():
+    import math
     body = request.get_json(silent=True) or {}
     name = str(body.get("name", "")).strip()
-    cap = float(body.get("initial_capital", 100000))
+    try:
+        cap = float(body.get("initial_capital", 100000))
+    except (TypeError, ValueError):
+        return err(400, "bad_capital", "initial_capital 必须是数字")
     if not name:
         return err(400, "missing_name", "需要账户名称")
+    if not math.isfinite(cap) or cap <= 0:
+        return err(400, "bad_capital", "initial_capital 必须是正数")
     try:
         acc = _engine().create_account(name, int(cap))
         return ok(acc, message="created")
@@ -97,7 +103,7 @@ def positions(aid):
 @bp.route("/accounts/<int:aid>/orders")
 def orders(aid):
     status = request.args.get("status")
-    limit = int(request.args.get("limit", 100))
+    limit = int_arg(request.args.get("limit"), 100, 1, 500)
     try:
         return ok(_engine().get_orders(aid, status=status, limit=limit))
     except Exception as e:
@@ -106,7 +112,7 @@ def orders(aid):
 
 @bp.route("/accounts/<int:aid>/trades")
 def trades(aid):
-    limit = int(request.args.get("limit", 100))
+    limit = int_arg(request.args.get("limit"), 100, 1, 500)
     try:
         return ok(_engine().get_trades(aid, limit=limit))
     except Exception as e:

@@ -10,7 +10,7 @@ else:
 
 
 def get_db_path():
-    data_dir = os.path.join(PROJECT_DIR, "data")
+    data_dir = os.environ.get("SC_DATA_DIR") or os.path.join(PROJECT_DIR, "data")
     os.makedirs(data_dir, exist_ok=True)
     return os.path.join(data_dir, "sim_trade.db")
 

@@ -3,7 +3,7 @@
 import os
 from flask import Blueprint, request
 
-from ..envelope import ok, err
+from ..envelope import ok, err, int_arg
 
 bp = Blueprint("market", __name__, url_prefix="/api/market")
 
@@ -76,7 +76,7 @@ def sectors():
 @bp.route("/north-flow")
 def north_flow():
     """北向资金 — 优先真实(akshare 有非0净流入), 否则回退本地 north_flow, 不空."""
-    days = int(request.args.get("days", 30))
+    days = int_arg(request.args.get("days"), 30, 1, 365)
     try:
         from akshare_source import ak_get_north_flow
         data = ak_get_north_flow(days)
@@ -105,7 +105,7 @@ def north_flow():
 @bp.route("/news")
 def news():
     code = request.args.get("code", "000001")
-    limit = int(request.args.get("limit", 20))
+    limit = int_arg(request.args.get("limit"), 20, 1, 100)
     try:
         from akshare_source import ak_get_stock_news
         return ok(ak_get_stock_news(code, limit))

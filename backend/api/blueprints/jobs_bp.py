@@ -2,7 +2,7 @@
 """Generic job endpoints (poll + SSE stream) backed by jobman."""
 from flask import Blueprint, Response, request
 
-from ..envelope import ok, err
+from ..envelope import ok, err, int_arg
 from .. import jobman
 
 bp = Blueprint("jobs", __name__, url_prefix="/api/jobs")
@@ -11,7 +11,7 @@ bp = Blueprint("jobs", __name__, url_prefix="/api/jobs")
 @bp.route("", methods=["GET"])
 def list_jobs():
     kind = request.args.get("kind")
-    limit = int(request.args.get("limit", 50))
+    limit = int_arg(request.args.get("limit"), 50, 1, 200)
     return ok(jobman.list_jobs(kind=kind, limit=limit))
 
 
@@ -25,7 +25,7 @@ def get_job(job_id):
 
 @bp.route("/<job_id>/stream", methods=["GET"])
 def stream_job(job_id):
-    since = int(request.args.get("since", 0))
+    since = int_arg(request.args.get("since"), 0, 0, 1_000_000)
     headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     return Response(jobman.stream(job_id, since), mimetype="text/event-stream", headers=headers)
 
