@@ -25,7 +25,11 @@ interface Envelope<T> {
   error?: { code: string; message: string; retriable?: boolean }
 }
 
-async function request<T>(method: string, path: string, body?: unknown, params?: Record<string, unknown>): Promise<T> {
+interface RequestOptions {
+  signal?: AbortSignal
+}
+
+async function request<T>(method: string, path: string, body?: unknown, params?: Record<string, unknown>, opts?: RequestOptions): Promise<T> {
   let url = BASE + path
   if (params) {
     const qs = new URLSearchParams()
@@ -41,8 +45,10 @@ async function request<T>(method: string, path: string, body?: unknown, params?:
       method,
       headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: opts?.signal,
     })
   } catch (e) {
+    if ((e as Error).name === 'AbortError') throw e
     throw new ApiError(0, 'network', '无法连接后端服务(请确认 run_web.py 已启动)', true)
   }
   let payload: Envelope<T>
@@ -59,9 +65,9 @@ async function request<T>(method: string, path: string, body?: unknown, params?:
 }
 
 export const api = {
-  get: <T>(path: string, params?: Record<string, unknown>) => request<T>('GET', path, undefined, params),
-  post: <T>(path: string, body?: unknown, params?: Record<string, unknown>) => request<T>('POST', path, body, params),
-  del: <T>(path: string) => request<T>('DELETE', path),
+  get: <T>(path: string, params?: Record<string, unknown>, opts?: RequestOptions) => request<T>('GET', path, undefined, params, opts),
+  post: <T>(path: string, body?: unknown, params?: Record<string, unknown>, opts?: RequestOptions) => request<T>('POST', path, body, params, opts),
+  del: <T>(path: string, opts?: RequestOptions) => request<T>('DELETE', path, undefined, undefined, opts),
   base: BASE,
 }
 

@@ -19,7 +19,7 @@ defineSlots<{ action?: {} }>()
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: var(--sp-10) var(--sp-6);
+  padding: var(--sp-8) var(--sp-6);
   gap: var(--sp-3);
 }
 .ic { color: var(--text-faint); }

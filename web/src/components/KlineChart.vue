@@ -9,6 +9,7 @@ import {
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import type { KlineBar } from '@/api'
+import { cssVar } from '@/composables/useEChart'
 
 echarts.use([
   CandlestickChart, BarChart, LineChart,
@@ -27,8 +28,8 @@ function getTheme() {
 
 function buildOption(bars: KlineBar[]): echarts.EChartsCoreOption {
   const isDark = getTheme() !== 'ivory'
-  const upColor = '#E84040'
-  const downColor = '#2DB757'
+  const upColor = cssVar('--up', '#E84040')
+  const downColor = cssVar('--down', '#2DB757')
   const gridText = isDark ? '#8A8F9A' : '#666'
   const gridLine = isDark ? '#2A2D35' : '#E5E7EB'
 
@@ -140,11 +141,12 @@ watch(() => props.bars, (b) => {
 const ro = typeof ResizeObserver !== 'undefined'
   ? new ResizeObserver(() => chart.value?.resize())
   : null
+let mo: MutationObserver | null = null
 
 onMounted(() => {
   init()
   if (ro && el.value) ro.observe(el.value)
-  const mo = new MutationObserver(() => {
+  mo = new MutationObserver(() => {
     if (chart.value && props.bars.length) chart.value.setOption(buildOption(props.bars), true)
   })
   mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
@@ -152,6 +154,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   ro?.disconnect()
+  mo?.disconnect()
   chart.value?.dispose()
 })
 </script>

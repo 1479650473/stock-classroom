@@ -5,7 +5,7 @@ import { isTauri, winMinimize, winToggleMaximize, winClose, winStartDrag } from 
 import { useAppStore } from '@/stores/app'
 
 const app = useAppStore()
-const emit = defineEmits<{ (e: 'open-search'): void; (e: 'toggle-chat'): void }>()
+const emit = defineEmits<{ (e: 'open-search'): void }>()
 
 const maximized = ref(false)
 async function toggleMax() {
@@ -44,9 +44,9 @@ const inTauri = isTauri()
       <button class="tb-btn" @click="cycleTheme" :title="'切换主题（当前：' + themes.find(t=>t.key===app.theme)?.label + '）'">
         <Icon name="layers" :size="16" />
       </button>
-      <button class="tb-btn" @click="emit('toggle-chat')" title="AI 助手">
+      <router-link to="/agent" class="tb-btn" title="AI 操盘台">
         <Icon name="chat" :size="16" />
-      </button>
+      </router-link>
       <router-link to="/settings" class="tb-btn" title="设置">
         <Icon name="settings" :size="16" />
       </router-link>

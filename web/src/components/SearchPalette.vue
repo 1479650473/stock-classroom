@@ -6,7 +6,7 @@ import { searchStock } from '@/api'
 import type { StockRef } from '@/api'
 
 const props = defineProps<{ open: boolean }>()
-const emit = defineEmits<{ (e: 'close'): void }>()
+const emit = defineEmits<{ (e: 'close'): void; (e: 'open'): void }>()
 
 const router = useRouter()
 const q = ref('')
@@ -16,6 +16,7 @@ const active = ref(0)
 const inputEl = ref<HTMLInputElement>()
 
 let timer: ReturnType<typeof setTimeout> | null = null
+let controller: AbortController | null = null
 
 watch(() => props.open, async (v) => {
   if (v) {
@@ -37,11 +38,14 @@ watch(q, (val) => {
 })
 
 async function run() {
+  controller?.abort()
+  controller = new AbortController()
   loading.value = true
   try {
-    results.value = await searchStock(q.value.trim())
+    results.value = await searchStock(q.value.trim(), controller.signal)
     active.value = 0
-  } catch {
+  } catch (e) {
+    if ((e as Error).name === 'AbortError') return
     results.value = []
   } finally {
     loading.value = false
@@ -63,11 +67,15 @@ function onKey(e: KeyboardEvent) {
 function globalKey(e: KeyboardEvent) {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
     e.preventDefault()
-    emit(props.open ? 'close' : 'open' as never)
+    if (props.open) emit('close')
+    else emit('open')
   }
 }
 onMounted(() => window.addEventListener('keydown', globalKey))
-onBeforeUnmount(() => window.removeEventListener('keydown', globalKey))
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', globalKey)
+  controller?.abort()
+})
 </script>
 
 <template>

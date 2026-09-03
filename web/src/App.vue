@@ -7,7 +7,6 @@ import ToastHost from '@/components/ToastHost.vue'
 import SearchPalette from '@/components/SearchPalette.vue'
 
 const app = useAppStore()
-const chatOpen = ref(false)
 const searchOpen = ref(false)
 
 onMounted(() => app.init())
@@ -15,7 +14,7 @@ onMounted(() => app.init())
 
 <template>
   <div v-if="app.ready" class="shell">
-    <TitleBar @open-search="searchOpen = true" @toggle-chat="chatOpen = !chatOpen" />
+    <TitleBar @open-search="searchOpen = true" />
     <div class="body">
       <SideNav />
       <main class="content">

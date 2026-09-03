@@ -1,5 +1,5 @@
 // Typed API surface for the SPA.
-import { api } from './client'
+import { api, ApiError } from './client'
 import type { JobHandle } from './client'
 export type { JobHandle }
 
@@ -150,7 +150,7 @@ export const getQuote = (codes: string[]) => api.get<IndexQuote[]>('/api/market/
 // ---- kline / stock ----
 export const getKline = (code: string, days = 250) => api.get<KlineBar[]>('/api/kline', { code, days })
 export const getCyq = (code: string) => api.get<Record<string, unknown>[]>('/api/kline/cyq', { code })
-export const searchStock = (q: string) => api.get<StockRef[]>('/api/stock/search', { q })
+export const searchStock = (q: string, signal?: AbortSignal) => api.get<StockRef[]>('/api/stock/search', { q }, { signal })
 
 // ---- trade ----
 export const listAccounts = () => api.get<AccountSummary[]>('/api/trade/accounts')
@@ -221,18 +221,96 @@ export const runPaper = (hp?: number, top_k_pct?: number, fwd_start?: string) =>
 export const runCompare = (start?: string, end?: string) =>
   api.post<JobHandle>('/api/research/compare', { start, end })
 
+// ---- optimize (自主策略进化, 分阶段) ----
+export interface OptimizeFamily {
+  strategy_name: string
+  metrics: Record<string, number>
+  describe: { summary: string; buy_condition: string }
+  factors: string[]
+  rebalance_bars: number
+  top_k_pct: number
+  use_tilt: boolean
+  total_return?: number
+}
+export interface OptimizeProposal {
+  name: string; description: string; source: string; reason: string
+  factors: string[]; base_weights: Record<string, number>
+  top_k_pct: number; rebalance_bars: number; use_tilt: boolean
+}
+export const optimizeFamilies = (hp = 20) => api.post<JobHandle>('/api/optimize/families', { hp })
+export const optimizePropose = (hp = 20, use_llm = true, families?: Record<string, unknown>, as_of?: string) =>
+  api.post<JobHandle>('/api/optimize/propose', { hp, use_llm, families: families || {}, as_of })
+export const optimizeBacktest = (hp: number, proposal: OptimizeProposal) =>
+  api.post<JobHandle>('/api/optimize/backtest', { hp, proposal })
+export const optimizeVerdict = (payload: Record<string, unknown>) =>
+  api.post<JobHandle>('/api/optimize/verdict', payload)
+export const optimizeAll = (payload: Record<string, unknown>) =>
+  api.post<JobHandle>('/api/optimize/all', payload)
+
 // ---- agentops ----
 export interface ScanResult { code: string; triggered: boolean; price: number }
 export interface DeepEntry { code: string; name: string; verdict: string; reason: string; confidence: number; news: unknown[] }
 export interface PortfolioSnapshot {
   account_id: number; name: string; cash: number; total_assets: number;
   holdings: Record<string, number>; prices: Record<string, number>; current_weights: Record<string, number>
+  suggested_trades?: { code: string; name: string; side: 'buy' | 'sell'; qty: number; price: number; reason: string; value: number }[]
 }
 
 export const scanEntry = (code: string, contract: Record<string, unknown>) => api.post<ScanResult>('/api/agentops/scan', { code, contract })
 export const deepAnalyze = (candidates: string[]) => api.post<{ entries: DeepEntry[] }>('/api/agentops/deep', { candidates })
 export const portfolioRebalance = (account_id: number) => api.post<PortfolioSnapshot>('/api/agentops/portfolio/rebalance', { account_id })
 export const getAgentStrategies = () => api.get<StrategyDef[]>('/api/agentops/strategies')
+
+// ---- agent chat (AI 操盘台, SSE tool-calling) ----
+export interface AgentStreamEvent {
+  type: string
+  delta?: string
+  id?: string
+  name?: string
+  args?: Record<string, unknown>
+  ok?: boolean
+  summary?: string
+  message?: string
+}
+export const agentStream = (messages: { role: string; content: string }[], onEvent: (ev: AgentStreamEvent) => void, signal?: AbortSignal) => {
+  const url = api.base + '/api/agent/chat'
+  const ctrl = signal ? { signal } : undefined
+  return fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages }),
+    ...ctrl,
+  }).then(async (resp) => {
+    if (!resp.ok || !resp.body) throw new ApiError(0, 'stream_failed', '无法连接 Agent 服务')
+    const reader = resp.body.getReader()
+    const decoder = new TextDecoder()
+    let buf = ''
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      let idx: number
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const frame = buf.slice(0, idx).replace(/^data:\s*/, '').trim()
+        buf = buf.slice(idx + 2)
+        if (!frame) continue
+        try { onEvent(JSON.parse(frame)) } catch { /* skip malformed */ }
+      }
+    }
+  })
+}
+export const getAgentHealth = () => api.get<{ llm_configured: boolean; model: string; tools: number }>('/api/agent/health')
+export const getAgentTools = () => api.get<{ tools: string[] }>('/api/agent/tools')
+
+// ---- scheduler (AI 定时自主交易) ----
+export interface SchedulerConfig {
+  enabled: boolean; at: string; use_llm: boolean; hp: number
+  last_run?: string | null; last_finish?: string | null; last_job?: string | null
+  log?: string
+}
+export const getScheduler = () => api.get<SchedulerConfig>('/api/scheduler')
+export const saveScheduler = (body: Partial<SchedulerConfig>) => api.post<SchedulerConfig>('/api/scheduler', body)
+export const schedulerRunNow = () => api.post<{ queued: boolean; reason?: string }>('/api/scheduler/run-now')
 
 // ---- pipeline ----
 export interface PipelineStatus { last_update: string | null; status: string; steps?: Record<string, unknown> }
