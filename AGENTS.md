@@ -2,21 +2,29 @@
 
 ## Project Identity
 - **Name**: stock-classroom (A股量化教室)
-- **Version**: v4.3
-- **Type**: PyQt5 Desktop App + Optional Flask API
+- **Version**: v5.0 — Web 栈(Vue3+TS+ECharts+Tauri2) + Flask API (+ PyQt5 旧版仍在 frontend/)
+- **Type**: Tauri 2 Desktop App (Web frontend) + Flask API v2 (blueprints)
 - **Python**: 3.14.3 (C:\Python314) — 项目运行时用这个; Hermes venv python 无 PyQt5 不可用
 - **Database**: SQLite 多库 (kline.db + fundamental.db + stock_cache.db + sim_trade.db)
 - **Data Source**: AKShare / Sina API (三源回退 Sina主/TX/EM)
 
-## Architecture (plugin-based, v4.0+)
+## Architecture (Web v5.0)
 ```
-Platform Shell (~frameless custom titlebar, immutable)
-  └─ PluginManager → discovers from frontend/plugins/
-      └─ Each plugin: IPlugin subclass in plugin.py
-Right pane = collapsible drawer (K线按需滑出, 非常驻)
+Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
+  └─ Vue3 SPA (web/src: views/router/stores/composables)
+       └─ Flask API 127.0.0.1:5000 (backend/api/server.py, 12+ blueprints, 统一 envelope)
 ```
+- **后端打包**: `package/stock_api.spec` → 单文件 `stock-api.exe` (PyInstaller, 含 akshare data)
+- **前端打包**: `web/src-tauri` → NSIS/MSI 安装包 (bundle.resources 内嵌 stock-api.exe)
+- **⚠️ 打包坑**: `frontend/platform/` 是名为 `platform` 的包, **绝不能**把 frontend 加入 PyInstaller pathex (遮蔽 stdlib platform → pandas 崩溃)
+- **打包后数据目录**: exe 旁 `data/` (或 `SC_DATA_DIR` 环境变量); frozen 路径经 `backend/api/paths.py` / `data_manager.py` `/trade_engine/schema.py` 处理
 
-**Key principle**: Platform never imports panel code directly. Plugins fail in isolation.
+## Web API(backend/api/)
+- `server.py`: create_app, 全局错误信封, CORS 限本机 origins
+- `envelope.py`: ok/err + `int_arg()` 安全解析; 所有 blueprint 统一 error.code=string
+- `jobman.py`: 线程池 job + SSE, 6h TTL 清理; `client.ts.streamJob` 前端复用
+- `agent_chat.py`: `/api/agent/chat` SSE tool-calling(16工具); `backend/agent/toolkit.py`
+- PyQt5 桌面入口 `desktop_app.py` / `frontend/plugins/*`(研究worker/训练引擎)**仍是后端核心**, 被蓝本图 import (如 frontend.plugins.research.worker)
 
 ## Key Files
 | Layer | Files | Purpose |
@@ -43,7 +51,8 @@ Right pane = collapsible drawer (K线按需滑出, 非常驻)
 | Backend | `backend/strategy/news_driven.py` | 事件驱动候选池(涨停+热点板块+豆包消息, isolated) |
 | Backend | `backend/agent/search_client.py` | 豆包搜索客户端(资讯源, 财经语境) |
 | Backend | `backend/agent/research_loop.py` | ResearchLoop 单标的/组合重平衡 |
-| Backend | `backend/agent/llm_client.py` | LLMClient (DeepSeek) |
+| Backend | `backend/agent/llm_client.py` | LLMClient (DeepSeek) + `chat_with_tools` |
+| Backend | `backend/agent/toolkit.py` | **Web Agent 工具集(16)**: 交易6/研究4/策略6, `execute_tool(name, args)` |
 | Backend | `backend/trade_engine/` | **Simulated trading engine (v4.2)** |
 | Backend | `backend/update_daily.py` | **每日自动化: K线池+基本面+纸面盘+净值快照+regime+事件池+深挖+守护** |
 | Settings | `frontend/plugins/settings/config.py` | `load_settings()` / `save_settings()` → `backend/configs/settings.json` |
@@ -90,10 +99,16 @@ Nav 分两组 (plugins.json `nav_groups`): **核心工作流** + **数据工具*
 - Chinese UI text everywhere; use `dp(x)`/`fs(x)` not hardcoded px
 
 ## Build
+**Web 版(Tauri) — 需要 vcvars64 环境(cl.exe)**:
 ```bat
-package\build_desktop.bat
+rem 1) 后端 sidecar (PyInstaller, 含 akshare data)
+python -m PyInstaller --clean --noconfirm package\stock_api.spec --distpath package\dist --workpath package\build_api
+rem 2) 前端 + 外壳 (需先 activate VS BuildTools vcvars64)
+cd web\src-tauri && cargo tauri build
+rem 输出: web\src-tauri\target\release\bundle\{msi,nsis}\StockClassroom_*.exe
+rem 便携版: package\dist\stock-api.exe 与 web\src-tauri\target\release\stock-classroom.exe 放同目录, 旁有 data/ + backend/configs/
 ```
-Output: `dist/StockClassroom/`. Requires SQLite 库 in `data/`.
+**PyQt5 旧版**: `package\build_desktop.bat` → `dist/StockClassroom/`. Requires SQLite 库 in `data/`.
 
 ## Dependencies
 Core: `flask`, `PyQt5`, `akshare`, `pandas`, `requests`, `py_mini_racer`, `openai`

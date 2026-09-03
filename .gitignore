@@ -38,6 +38,7 @@ scripts/logs/
 package/__pycache__/
 package/dist/
 package/build/
+package/build_api/
 
 # User settings (contains API key)
 backend/configs/settings.json
