@@ -26,7 +26,9 @@ from flask_cors import CORS
 
 def create_app():
     app = Flask(__name__)
-    CORS(app)
+    # 本地桌面应用: 只允许 Tauri webview 与 vite dev origin
+    CORS(app, origins=["http://localhost:5173", "http://127.0.0.1:5173",
+                       "tauri://localhost", "https://tauri.localhost"])
 
     # 全局异常 -> 统一错误信封(避免裸露 HTML 错误页)
     from .envelope import err
@@ -53,6 +55,15 @@ def create_app():
     # v2 研究交互(回测/因子研究/组合纸面盘/策略对比) — 复用桌面版研究能力
     from .blueprints import research_v2
     app.register_blueprint(research_v2.bp)
+    # Agent 操盘台 (SSE tool-calling 聊天)
+    from .blueprints import agent_chat
+    app.register_blueprint(agent_chat.bp)
+    # 自主策略进化闭环 (分阶段 job)
+    from .blueprints import optimize
+    app.register_blueprint(optimize.bp)
+    # AI 定时自主交易 (后台线程)
+    from .blueprints import scheduler_bp
+    app.register_blueprint(scheduler_bp.bp)
 
     @app.route("/")
     def root():

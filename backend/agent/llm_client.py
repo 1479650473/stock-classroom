@@ -14,7 +14,13 @@ from typing import Optional
 
 
 def get_agent_config() -> dict:
-    p = Path(__file__).resolve().parents[2] / "backend" / "configs" / "settings.json"
+    import os
+    import sys
+    if getattr(sys, "frozen", False):
+        from backend.api.paths import SETTINGS_PATH
+        p: Path = Path(SETTINGS_PATH)
+    else:
+        p = Path(__file__).resolve().parents[2] / "backend" / "configs" / "settings.json"
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
     except Exception:
@@ -53,6 +59,29 @@ class LLMClient:
             if text:
                 return text
         return ""
+
+    def chat_with_tools(self, messages: list, tools: list, max_tokens: int = 2200,
+                        temperature: float = 0.6) -> dict:
+        """Tool-calling 单轮: 返回 {"content": str} 或 {"tool_calls": [..openai格式..]}。"""
+        resp = self._client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            tools=tools,
+            tool_choice="auto",
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        choice = resp.choices[0]
+        if choice.message.tool_calls:
+            tcs = []
+            for tc in choice.message.tool_calls:
+                tcs.append({
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {"name": tc.function.name, "arguments": tc.function.arguments or ""},
+                })
+            return {"tool_calls": tcs}
+        return {"content": choice.message.content or ""}
 
 
 def extract_json(text: str) -> dict:
