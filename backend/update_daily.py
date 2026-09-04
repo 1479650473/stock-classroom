@@ -116,13 +116,34 @@ def run(pool_only=False, skip_paper=False):
     pool = build_wide_pool() or []
     lg.info('量化池 %d 只', len(pool))
 
-    # ① K线池
-    from data_manager import update_pool, _log_update, get_kline_db
+    # ① K线 全市场增量(仅补最新缺口, 不重拉全量历史) —— 每日应覆盖全市场约5000只而非仅量化池
+    from data_manager import update_codes, _log_update, get_kline_db
     def _plog(msg, code=None):
         lg.info(msg)
-    rk = update_pool(pool=pool, workers=16, progress=_plog)
+    # 全市场代码(优先本地 stock_list 稳定来源, akshare 实时接口常被反爬拉空 → 兜底池)
+    all_codes = []
+    try:
+        _c = get_kline_db()
+        _rows = _c.execute("SELECT code FROM stock_list WHERE status='active' OR status IS NULL").fetchall()
+        _c.close()
+        all_codes = [str(r[0]) for r in _rows]
+        lg.info('全市场(本地stock_list) %d 只', len(all_codes))
+    except Exception as e:
+        lg.warning('本地stock_list读取失败(%s)', str(e)[:50])
+    if not all_codes:
+        try:
+            from akshare_source import ak_get_all_stocks
+            _st = ak_get_all_stocks() or []
+            all_codes = [str(s["code"]) for s in _st]
+            lg.info('全市场(akshare) %d 只', len(all_codes))
+        except Exception as e:
+            lg.warning('akshare获取全市场失败(%s), 回退量化池 %d 只', str(e)[:50], len(pool))
+            all_codes = [str(c) for c in pool]
+    # 只拉增量小窗口(3根bar≈当日+前2交易日, 覆盖跨周末/停牌当日无bar), 不重拉历史
+    # 历史已存在DB, 因子计算读DB完整K线, 无需每次带warmup重拉60根
+    rk = update_codes(all_codes, catch_up_days=3, workers=16, progress=_plog)
     out['steps']['kline'] = {k: rk[k] for k in ('updated', 'skipped', 'errors', 'rows_added', 'total', 'elapsed') if k in rk}
-    lg.info('  K线池: %s', out['steps']['kline'])
+    lg.info('  K线全市场: %s', out['steps']['kline'])
     try:
         _c = get_kline_db()
         _latest = _c.execute("SELECT MAX(date) FROM kline_daily").fetchone()[0]
