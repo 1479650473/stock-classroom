@@ -25,6 +25,7 @@ export const NAV: NavGroup[] = [
       { path: '/agentops', name: 'agentops', title: 'AI操盘', icon: 'agentops' },
       { path: '/agent', name: 'agent', title: 'AI操盘台', icon: 'chat' },
       { path: '/optimize', name: 'optimize', title: '策略进化', icon: 'trending' },
+      { path: '/replay', name: 'replay', title: '策略回放', icon: 'play' },
     ],
   },
   {

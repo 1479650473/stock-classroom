@@ -341,3 +341,31 @@ export const trainerOrder = (sid: number, side: string, qty: number, stop_loss?:
 export const trainerCancel = (sid: number, order_idx: number) => api.post<{ snapshot: TrainerSnapshot }>(`/api/trainer/${sid}/cancel`, { order_idx })
 export const trainerBars = (sid: number) => api.get<KlineBar[]>(`/api/trainer/${sid}/bars`)
 export const endTrainer = (sid: number) => api.del(`/api/trainer/${sid}`)
+
+// ---- replay (策略回放器) ----
+export interface ReplayStrategy {
+  id: string; name: string; kind: 'single' | 'family'; desc: string
+  contract: Record<string, unknown> | null
+}
+export interface ReplayEvent {
+  index: number; date: string; kind: 'entry' | 'exit'; price: number
+  reason?: string; qty?: number; pnl?: number
+  entry_date?: string; entry_price?: number
+}
+export interface ReplayDaily {
+  i: number; date: string; close: number
+  signal_buy: boolean; signal_sell: boolean; position: boolean
+}
+export interface ReplayResult {
+  code: string; contract_name: string; dates: string[]
+  daily: ReplayDaily[]; events: ReplayEvent[]
+  holding_spans: number[][]
+  metrics: {
+    total_return: number; final_equity: number; initial_balance: number
+    num_trades: number; win_rate: number; profit_factor: number
+  }
+}
+
+export const getReplayStrategies = () => api.get<ReplayStrategy[]>('/api/replay/strategies')
+export const getReplay = (code: string, strategy: string, days = 500) =>
+  api.get<ReplayResult>('/api/replay', { code, strategy, days })

@@ -17,6 +17,7 @@ const viewModules: Record<string, () => Promise<{ default: unknown }>> = {
   pipeline: () => import('@/views/Pipeline.vue'),
   trainer: () => import('@/views/Trainer.vue'),
   flow: () => import('@/views/Flow.vue'),
+  replay: () => import('@/views/Replay.vue'),
 }
 
 const ALL_ROUTES: RouteRecordRaw[] = [
@@ -35,6 +36,7 @@ const ALL_ROUTES: RouteRecordRaw[] = [
   { path: '/pipeline', name: 'pipeline', component: viewModules.pipeline, meta: { title: '数据管道' } },
   { path: '/trainer', name: 'trainer', component: viewModules.trainer, meta: { title: '训练' } },
   { path: '/flow', name: 'flow', component: viewModules.flow, meta: { title: '指挥舱' } },
+  { path: '/replay', name: 'replay', component: viewModules.replay, meta: { title: '策略回放' } },
   { path: '/settings', name: 'settings', component: () => import('@/views/Settings.vue'), meta: { title: '设置' } },
   { path: '/:pathMatch(.*)*', redirect: '/overview' },
 ]

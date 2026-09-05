@@ -64,6 +64,9 @@ def create_app():
     # AI 定时自主交易 (后台线程)
     from .blueprints import scheduler_bp
     app.register_blueprint(scheduler_bp.bp)
+    # 策略回放器 (K线逐日回放: 买卖点/持仓高亮)
+    from .blueprints import replay
+    app.register_blueprint(replay.bp)
 
     @app.route("/")
     def root():

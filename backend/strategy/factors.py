@@ -75,6 +75,16 @@ def compute_factor_series(klines):
             if _v is not None:
                 d[_fk] = f(_v)
 
+        # BP 均线(供单标的回放用相对估值条件: BP < BP_MA120 = 相对便宜)
+        # 当前 bar 的 BP 在 d 里, 历史 BP 从已建好的 series 取(series 只含 i 之前的 bar)
+        if "BP" in d and i >= 20:
+            _bp_hist = [series[j].get("BP") for j in range(max(0, i - 119), i)]
+            _bp_hist.append(d["BP"])
+            _bp_hist = [x for x in _bp_hist if x is not None]
+            if len(_bp_hist) >= 60:
+                d["BP_MA120"] = f(sum(_bp_hist) / len(_bp_hist))
+                d["BP_MA20"] = f(sum(_bp_hist[-20:]) / min(20, len(_bp_hist)))
+
         if ma5[i] is not None:
             d["MA5"] = f(ma5[i])
         if ma10[i] is not None:
