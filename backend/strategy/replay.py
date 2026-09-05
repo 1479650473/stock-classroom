@@ -1,23 +1,33 @@
 # -*- coding: utf-8 -*-
-"""replay.py — 策略 K 线回放引擎 (Web「策略回放器」数据源).
+"""replay.py — 策略 K 线回放引擎 (Web「策略回放器」数据源) v2.
 
-复用 backtest.py 的完整交易模拟口径(次开成交 / T+1 / 三驱动卖出 / 涨跌停拦截 / 全费用),
-但为**逐日回放可视化**输出:
-  每日信号(signal_buy/signal_sell) + 建仓/平仓事件(entry_price/exit_price/exit_reason)
-  + 持仓区间(holding_spans) —— 前端用这些画 K 线高亮与买/卖点标记.
+真实交易环境模拟:
+  · 口径: 信号当日收盘计算 → 次日开盘成交(无未来函数); T+1 禁当日卖出
+  · 涨跌停拦截(按 board ±pct); 整数手(100股); 全费用(佣金+最低佣金+印花税+过户费)
+  · 滑点: 买入价上浮 / 卖出价下浮
+  · 买入方式: percent_of_equity(仓位比例) / fixed_capital(固定金额) / fixed_qty(固定股数)
+  · 三驱动卖出: 条件止损 + 移动止损 + 策略卖出(与 backtest/protection 同一判定器)
+  · warmup_bars: 区间起点前的预热K线(算因子/均线), 回放输出从 warmup 之后开始,
+    保证起止日期区间内因子/信号准确(如 BP_MA120 需要 60+ 根预热)
 
-口径与 verify_full_lifecycle 一致: 信号在当日收盘后计算, 次日开盘成交(无未来函数)。
+输出:
+  bars: 区间内 [{date, open, high, low, close, volume}]
+  daily: 逐日 [{i, date, close, signal_buy/sell, position, qty, entry_price, entry_index,
+                 cash, market_value, equity, float_pnl, realized_pnl, cum_fee}]
+  events: 买卖事件(含费用/净盈亏/持有bar数)
+  holding_spans: 持仓区间(区间内索引)
+  metrics: 收益/胜率/盈亏比/最大回撤/累计费用/期末现金
 """
 from __future__ import annotations
 
 from typing import Optional
 
-from backend.strategy.backtest import limit_pct, _limit_prices, _fee_buy, _fee_sell, FEES
+from backend.strategy.backtest import limit_pct, _limit_prices, FEES
 from backend.strategy.protection import ProtectionEngine, ProtectionState
 from backend.factor_engine.dsl import evaluate as _eval_dsl
 
 
-def _build_prot_spec(contract: dict) -> object:
+def _build_prot_spec(contract: dict):
     from backend.strategy.protection import ProtectionSpec
     risk = contract.get("risk") or {}
     return ProtectionSpec(
@@ -31,7 +41,6 @@ def _build_prot_spec(contract: dict) -> object:
 
 
 def _eval(cond, vals: dict) -> bool:
-    """DSL 条件求值; 空/None 条件=False(不触发)."""
     if not cond:
         return False
     try:
@@ -42,7 +51,7 @@ def _eval(cond, vals: dict) -> bool:
 
 # ── 5 家族组合策略 → 单标的 DSL 近似契约(供回放器观察单股走势) ──
 # 家族策略本质是截面选股(组合层), 回放到单标的时用其因子方向做时间序列近似:
-#   价值(BP低) → BP < 阈值; 反转 → REVERSAL_20 高; 低波动 → VOLATILITY_20 低.
+#   价值(BP低) → BP 低于自身120日均线(相对便宜); 反转 → REVERSAL_20 高; 低波动 → VOLATILITY_20 低.
 FAMILY_DSL = {
     "A价值": {
         "entry": {"type": "lt", "args": ["BP", "BP_MA120"]},
@@ -82,7 +91,6 @@ FAMILY_DSL = {
 
 
 def family_to_single_contract(name: str) -> Optional[dict]:
-    """家族策略名 → 单标的 DSL 契约(回放观察用). 未知家族返回 None."""
     dsl = FAMILY_DSL.get(name)
     if not dsl:
         return None
@@ -100,26 +108,45 @@ def family_to_single_contract(name: str) -> Optional[dict]:
     }
 
 
-def replay_contract(klines: list, contract: dict) -> dict:
-    """按策略契约逐日回放单标的 K 线, 输出回放数据.
+def _fee_buy(qty: float, price: float, f: dict) -> float:
+    amount = qty * price
+    commission = max(amount * f["commission_rate"], f.get("min_commission", 0.0))
+    transfer = amount * f.get("transfer_fee_rate", 0.0)
+    return commission + transfer
 
-    klines: [{date, open, high, low, close, volume, ...}] 时间升序
-    contract: StrategySpec.to_dict() 结构 {entry, exit, position_sizing, risk, params, universe}
-    returns:
-      {
-        dates: [...],            # 日期轴
-        daily: [{i, date, close, signal_buy, signal_sell, position}],  # 逐日信号/持仓
-        events: [{index, date, kind: entry|exit, price, reason, qty, pnl}],
-        holding_spans: [[start_i, end_i], ...],   # 半开区间 end_i 为平仓日
-        metrics: {total_return, num_trades, win_rate, profit_factor, final_equity},
-        contract_name
-      }
+
+def _fee_sell(qty: float, price: float, f: dict) -> float:
+    amount = qty * price
+    commission = max(amount * f["commission_rate"], f.get("min_commission", 0.0))
+    stamp = amount * f.get("stamp_tax_rate", 0.0)
+    transfer = amount * f.get("transfer_fee_rate", 0.0)
+    return commission + stamp + transfer
+
+
+def replay_contract(klines: list, contract: dict, overrides: dict = None,
+                    warmup_bars: int = 0) -> dict:
+    """逐日回放, 输出区间内(从 warmup_bars 起)的展示数据.
+
+    overrides: {initial_balance, fees:{commission_rate,min_commission,stamp_tax_rate},
+                slippage, sizing_mode, sizing_value}
     """
     from backend.strategy.factors import compute_factor_series
     if not klines:
         return {"error": "无K线数据"}
 
-    # 注入基本面点时间因子(EP/BP/ROE)
+    overrides = overrides or {}
+    fees = dict(FEES)
+    fees.update(overrides.get("fees") or {})
+    slippage = float(overrides.get("slippage") or 0.0)
+    initial = float(overrides.get("initial_balance")
+                    or (contract.get("params") or {}).get("initial_balance") or 100000.0)
+
+    sizing = dict(contract.get("position_sizing") or {})
+    if overrides.get("sizing_mode"):
+        sizing["mode"] = overrides["sizing_mode"]
+    if overrides.get("sizing_value") is not None:
+        sizing["value"] = float(overrides["sizing_value"])
+
     code = (contract.get("universe") or {}).get("code", "")
     try:
         from backend.fundamental import attach_kline_fundamentals
@@ -130,26 +157,25 @@ def replay_contract(klines: list, contract: dict) -> dict:
     series = compute_factor_series(klines)
     n = len(klines)
 
-    fees = dict(FEES)
-    fees.update((contract.get("params") or {}).get("fees", {}))
-    initial = float((contract.get("params") or {}).get("initial_balance", 100000.0))
-
     name = (contract.get("universe") or {}).get("name", "")
     pct = limit_pct(code, name)
     prot_spec = _build_prot_spec(contract)
     prot_engine = ProtectionEngine(intrabar_mode=prot_spec.intrabar_mode)
 
-    sizing = contract.get("position_sizing") or {}
     sizing_mode = sizing.get("mode", "percent_of_equity")
     sizing_value = float(sizing.get("value", 0.95))
 
     cash = initial
-    pos = None          # {qty, cost, entry_price, entry_index, entry_date, prot, name}
+    realized = 0.0
+    cum_fee = 0.0
+    pos = None          # {qty, entry_price_exec, entry_fee, entry_index, entry_date, prot}
     pending = None      # 'buy' | 'sell'
 
-    daily = []
-    events = []
-    spans = []
+    bars_out: list = []
+    daily: list = []
+    events: list = []
+    spans: list = []
+    equity_hist: list = []
 
     def position_qty(open_price, equity_now):
         if not open_price or open_price <= 0 or not equity_now:
@@ -162,16 +188,17 @@ def replay_contract(klines: list, contract: dict) -> dict:
             want = int(equity_now * sizing_value / open_price)
         qty = (want // fees["lot"]) * fees["lot"]
         while qty > 0:
-            need = qty * open_price + _fee_buy(qty, open_price, fees)
+            need = qty * open_price * (1.0 + slippage) + _fee_buy(qty, open_price * (1.0 + slippage), fees)
             if need <= cash + 1e-9:
                 break
             qty -= fees["lot"]
         return qty
 
     def do_buy(i):
-        nonlocal cash, pos
+        nonlocal cash, pos, cum_fee
         bar = klines[i]
         open_price = float(bar["open"])
+        exec_price = open_price * (1.0 + slippage)
         qty = position_qty(open_price, cash)
         if qty < fees["lot"]:
             return None
@@ -180,35 +207,49 @@ def replay_contract(klines: list, contract: dict) -> dict:
             up, _ = _limit_prices(prev_close, pct)
             if up is not None and open_price >= up - 1e-9:
                 return None
-        fee = _fee_buy(qty, open_price, fees)
-        cost = qty * open_price + fee
+        fee = _fee_buy(qty, exec_price, fees)
+        cost = qty * exec_price + fee
         cash -= cost
+        cum_fee += fee
         pos = {
-            "qty": qty, "cost": cost, "entry_price": open_price,
+            "qty": qty, "entry_price_exec": exec_price, "entry_fee": fee,
             "entry_index": i, "entry_date": str(bar["date"]),
-            "prot": ProtectionState.open(open_price, i, prot_spec, "long"),
+            "prot": ProtectionState.open(exec_price, i, prot_spec, "long"),
         }
-        return {"kind": "entry", "price": open_price, "qty": qty}
+        return {"kind": "entry", "price": round(exec_price, 3), "qty": qty, "fee": round(fee, 2)}
 
-    def do_sell(i, price=None, reason="exit"):
-        nonlocal cash, pos
+    def do_sell(i, price=None, reason="exit_signal"):
+        nonlocal cash, pos, realized, cum_fee
         bar = klines[i]
-        sell_price = float(price if price is not None else bar["open"])
+        base_price = float(price if price is not None else bar["open"])
+        exec_price = base_price * (1.0 - slippage)
         if price is None and i > 0:
             prev_close = float(klines[i - 1]["close"])
             _, down = _limit_prices(prev_close, pct)
-            if down is not None and sell_price <= down + 1e-9:
+            if down is not None and base_price <= down + 1e-9:
                 return None
         qty = pos["qty"]
-        fee = _fee_sell(qty, sell_price, fees)
-        proceeds = qty * sell_price - fee
-        pnl = proceeds - pos["cost"]
+        fee = _fee_sell(qty, exec_price, fees)
+        proceeds = qty * exec_price - fee
+        gross = (exec_price - pos["entry_price_exec"]) * qty
+        net = gross - pos["entry_fee"] - fee
         cash += proceeds
-        spans.append([pos["entry_index"], i])
-        ev = {"kind": "exit", "price": round(sell_price, 3), "reason": reason,
-              "qty": qty, "pnl": round(pnl, 2),
+        realized += net
+        cum_fee += fee
+        # 持仓区间裁剪到展示窗口: 建仓早于窗口起点 → 从0开始; 平仓早于窗口起点 → 丢弃
+        exit_disp = i - warmup_bars
+        if exit_disp < 0:
+            pass  # 平仓在窗口外, 不显示
+        else:
+            entry_disp = pos["entry_index"] - warmup_bars
+            spans.append([max(0, entry_disp), exit_disp])
+        ev = {"kind": "exit", "price": round(exec_price, 3), "reason": reason,
+              "qty": qty, "fee": round(fee, 2),
+              "gross_pnl": round(gross, 2), "net_pnl": round(net, 2),
               "entry_date": pos["entry_date"],
-              "entry_price": pos["entry_price"]}
+              "entry_price": round(pos["entry_price_exec"], 3),
+              "hold_bars": i - pos["entry_index"],
+              "index": i - warmup_bars, "date": str(bar["date"])}
         pos = None
         return ev
 
@@ -220,12 +261,12 @@ def replay_contract(klines: list, contract: dict) -> dict:
         if pending == "buy" and pos is None:
             ev = do_buy(i)
             if ev:
-                ev["index"], ev["date"] = i, str(bar["date"])
+                ev["index"] = i - warmup_bars
+                ev["date"] = str(bar["date"])
                 events.append(ev)
         elif pending == "sell" and pos is not None:
             ev = do_sell(i, reason="exit_signal")
             if ev:
-                ev["index"], ev["date"] = i, str(bar["date"])
                 events.append(ev)
         pending = None
 
@@ -235,7 +276,6 @@ def replay_contract(klines: list, contract: dict) -> dict:
             if decision is not None:
                 ev = do_sell(i, price=decision.price, reason=decision.reason)
                 if ev:
-                    ev["index"], ev["date"] = i, str(bar["date"])
                     events.append(ev)
 
         # ③ 收盘信号(→ 次日开盘执行)
@@ -250,41 +290,87 @@ def replay_contract(klines: list, contract: dict) -> dict:
                 sig_sell = True
                 pending = "sell"
 
-        # ④ 当日记录
-        daily.append({
-            "i": i,
-            "date": str(bar["date"]),
-            "close": round(close, 3),
-            "signal_buy": sig_buy,
-            "signal_sell": sig_sell,
-            "position": bool(pos),
-        })
+        # ④ 账户快照(收盘)
+        if pos is not None:
+            qty = pos["qty"]
+            ep = pos["entry_price_exec"]
+            mv = qty * close
+            float_pnl = (close - ep) * qty
+            entry_idx = pos["entry_index"]
+            entry_price = ep
+        else:
+            qty, mv, float_pnl = 0, 0.0, 0.0
+            entry_idx, entry_price = -1, 0.0
+        equity = cash + mv
+        equity_hist.append(equity)
 
-    # 期末未平仓(按收盘市值计净值, 不计 events)
+        if i >= warmup_bars:
+            bars_out.append({
+                "date": str(bar["date"]),
+                "open": float(bar["open"]), "high": float(bar["high"]),
+                "low": float(bar["low"]), "close": close,
+                "volume": float(bar.get("volume", 0) or 0),
+            })
+            daily.append({
+                "i": i - warmup_bars,
+                "date": str(bar["date"]),
+                "close": round(close, 3),
+                "signal_buy": sig_buy,
+                "signal_sell": sig_sell,
+                "position": bool(pos),
+                "qty": qty,
+                "entry_price": round(entry_price, 3),
+                "entry_index": entry_idx - warmup_bars if entry_idx >= 0 else -1,
+                "cash": round(cash, 2),
+                "market_value": round(mv, 2),
+                "equity": round(equity, 2),
+                "float_pnl": round(float_pnl, 2),
+                "realized_pnl": round(realized, 2),
+                "cum_fee": round(cum_fee, 2),
+            })
+
+    # 过滤/对齐事件到区间内
+    events = [e for e in events if e.get("index", -1) >= 0]
+
+    # 期末权益(按最后收盘)
     final_eq = cash
     if pos is not None:
         final_eq += pos["qty"] * float(klines[-1]["close"])
 
-    # 统计
+    # 最大回撤(区间内 equity 序列)
+    peak, mdd = None, 0.0
+    for v in equity_hist[warmup_bars:] if warmup_bars < len(equity_hist) else equity_hist:
+        if peak is None or v > peak:
+            peak = v
+        if peak and peak > 0:
+            dd = (v - peak) / peak
+            if dd < mdd:
+                mdd = dd
+
+    # 统计(区间内平仓)
     exits = [e for e in events if e["kind"] == "exit"]
-    wins = [e for e in exits if e.get("pnl", 0) > 0]
-    losses = [e for e in exits if e.get("pnl", 0) <= 0]
-    gp = sum(e.get("pnl", 0) for e in wins) or 0.0
-    gl = abs(sum(e.get("pnl", 0) for e in losses)) or 0.0
+    wins = [e for e in exits if e.get("net_pnl", 0) > 0]
+    losses = [e for e in exits if e.get("net_pnl", 0) <= 0]
+    gp = sum(e.get("net_pnl", 0) for e in wins) or 0.0
+    gl = abs(sum(e.get("net_pnl", 0) for e in losses)) or 0.0
 
     return {
         "code": code,
         "contract_name": contract.get("name", ""),
-        "dates": [d["date"] for d in daily],
+        "bars": bars_out,
         "daily": daily,
         "events": events,
-        "holding_spans": spans,
+        "holding_spans": [s for s in spans if s[1] >= 0],
         "metrics": {
             "total_return": round(final_eq / initial - 1.0, 4) if initial else 0.0,
             "final_equity": round(final_eq, 2),
+            "final_cash": round(cash, 2),
             "initial_balance": round(initial, 2),
             "num_trades": len(exits),
             "win_rate": round(len(wins) / len(exits), 4) if exits else 0.0,
             "profit_factor": round(gp / gl, 3) if gl > 0 else (999.0 if gp > 0 else 0.0),
+            "cum_fee": round(cum_fee, 2),
+            "realized_pnl": round(realized, 2),
+            "max_drawdown": round(mdd, 4),
         },
     }

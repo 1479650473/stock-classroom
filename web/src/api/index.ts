@@ -349,23 +349,40 @@ export interface ReplayStrategy {
 }
 export interface ReplayEvent {
   index: number; date: string; kind: 'entry' | 'exit'; price: number
-  reason?: string; qty?: number; pnl?: number
-  entry_date?: string; entry_price?: number
+  reason?: string; qty?: number; pnl?: number; fee?: number
+  gross_pnl?: number; net_pnl?: number
+  entry_date?: string; entry_price?: number; hold_bars?: number
 }
 export interface ReplayDaily {
   i: number; date: string; close: number
   signal_buy: boolean; signal_sell: boolean; position: boolean
+  qty: number; entry_price: number; entry_index: number
+  cash: number; market_value: number; equity: number
+  float_pnl: number; realized_pnl: number; cum_fee: number
+}
+export interface ReplayBar {
+  date: string; open: number; high: number; low: number; close: number; volume: number
 }
 export interface ReplayResult {
-  code: string; contract_name: string; dates: string[]
-  daily: ReplayDaily[]; events: ReplayEvent[]
+  code: string; contract_name: string
+  bars: ReplayBar[]; daily: ReplayDaily[]; events: ReplayEvent[]
   holding_spans: number[][]
   metrics: {
     total_return: number; final_equity: number; initial_balance: number
     num_trades: number; win_rate: number; profit_factor: number
+    cum_fee: number; realized_pnl: number; max_drawdown: number; final_cash: number
   }
 }
 
+export interface ReplayParams {
+  start?: string; end?: string
+  initial_balance?: number
+  sizing_mode?: 'percent_of_equity' | 'fixed_capital' | 'fixed_qty'
+  sizing_value?: number
+  commission_rate?: number; min_commission?: number; stamp_tax_rate?: number
+  slippage?: number
+}
+
 export const getReplayStrategies = () => api.get<ReplayStrategy[]>('/api/replay/strategies')
-export const getReplay = (code: string, strategy: string, days = 500) =>
-  api.get<ReplayResult>('/api/replay', { code, strategy, days })
+export const getReplay = (code: string, strategy: string, days = 2500, params: ReplayParams = {}) =>
+  api.get<ReplayResult>('/api/replay', { code, strategy, days, ...params })

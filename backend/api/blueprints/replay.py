@@ -72,8 +72,10 @@ def strategies():
 @bp.route("", methods=["GET"])
 def replay():
     code = request.args.get("code", "").strip()
-    days = int_arg(request.args.get("days"), 500, 5, 5000)
     sid = request.args.get("strategy", "").strip()
+    days = int_arg(request.args.get("days"), 500, 5, 5000)
+    start_date = request.args.get("start", "").strip()   # YYYY-MM-DD 或 YYYYMMDD
+    end_date = request.args.get("end", "").strip()
     if not code:
         return err(400, "missing_code", "需要 code 参数")
     if not sid:
@@ -87,6 +89,34 @@ def replay():
         if not kd:
             return err(404, "no_kline", f"{code} 无K线数据")
         kd = enrich_kline(kd)
+
+        # 日期区间截取(含预热窗口): 展示区间= [start, end], 预热窗口取 start 前 150 根
+        warmup = 150
+        start_compact = start_date.replace("-", "")[:8] if start_date else ""
+        end_compact = end_date.replace("-", "")[:8] if end_date else ""
+        warmup_bars = 0
+        if start_compact or end_compact:
+            dates = [str(k.get("date", ""))[:8] for k in kd]
+            lo = 0
+            hi = len(kd)
+            if start_compact:
+                for i, d in enumerate(dates):
+                    if d >= start_compact:
+                        lo = i
+                        break
+            if end_compact:
+                for i in range(len(dates) - 1, -1, -1):
+                    if dates[i] <= end_compact:
+                        hi = i + 1
+                        break
+            if start_compact:
+                warmup_bars = max(0, lo)
+                lo = max(0, lo - warmup)
+            kd = kd[lo:hi]
+            if not start_compact:
+                warmup_bars = 0
+            else:
+                warmup_bars = min(warmup, warmup_bars)
 
         contract = None
         if sid.startswith("db-"):
@@ -109,13 +139,58 @@ def replay():
         if not contract:
             return err(404, "strategy_not_found", f"策略不存在: {sid}")
 
-        # 单标的契约: 确保 universe 指向当前股票(回放时只影响名称显示)
+        # 单标的契约: 确保 universe 指向当前股票
         if contract.get("universe"):
             contract = dict(contract)
             contract["universe"] = dict(contract["universe"])
             contract["universe"]["code"] = code
 
-        result = replay_contract(kd, contract)
+        # 交易环境参数覆盖(前端可调)
+        overrides = {}
+        try:
+            ib = float(request.args.get("initial_balance", "") or 0)
+            if ib > 0:
+                overrides["initial_balance"] = ib
+        except ValueError:
+            pass
+        try:
+            sl = float(request.args.get("slippage", "") or 0)
+            if sl >= 0:
+                overrides["slippage"] = sl
+        except ValueError:
+            pass
+        fees_override = {}
+        try:
+            cr = float(request.args.get("commission_rate", "") or 0)
+            if cr >= 0:
+                fees_override["commission_rate"] = cr
+        except ValueError:
+            pass
+        try:
+            mc = float(request.args.get("min_commission", "") or 0)
+            if mc >= 0:
+                fees_override["min_commission"] = mc
+        except ValueError:
+            pass
+        try:
+            st = float(request.args.get("stamp_tax_rate", "") or 0)
+            if st >= 0:
+                fees_override["stamp_tax_rate"] = st
+        except ValueError:
+            pass
+        if fees_override:
+            overrides["fees"] = fees_override
+        sm = request.args.get("sizing_mode", "").strip()
+        if sm in ("percent_of_equity", "fixed_capital", "fixed_qty"):
+            overrides["sizing_mode"] = sm
+        try:
+            sv = float(request.args.get("sizing_value", "") or 0)
+            if sv > 0:
+                overrides["sizing_value"] = sv
+        except ValueError:
+            pass
+
+        result = replay_contract(kd, contract, overrides=overrides, warmup_bars=warmup_bars)
         if "error" in result:
             return err(500, "replay_error", result["error"])
         return ok(result)
