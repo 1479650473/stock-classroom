@@ -19,7 +19,7 @@ echarts.use([
   CanvasRenderer,
 ])
 
-// ── 数据结构(从 API 本地重建, 支持渐进加载) ──
+// ── 数据结构 ──
 interface ReplayBar { date: string; open: number; high: number; low: number; close: number; volume: number }
 interface ReplayDailyExt {
   i: number; date: string; close: number
@@ -54,28 +54,28 @@ const commissionRate = ref(0.0003)
 const minCommission = ref(5)
 const stampTaxRate = ref(0.0005)
 const slippage = ref(0.0)
-const paramsOpen = ref(false)
+const settingsOpen = ref(false)
 
 // 搜索
 const searchResults = ref<StockRef[]>([])
 const searchOpen = ref(false)
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 
-// ── 回放数据(渐进式) ──
+// ── 回放数据 ──
 const allBars = ref<ReplayBar[]>([])
 const allDaily = ref<ReplayDailyExt[]>([])
 const allEvents = ref<ReplayEventExt[]>([])
 const allSpans = ref<number[][]>([])
 const metrics = ref<ReplayResult['metrics'] | null>(null)
 
-// 渐进窗口: 显示 [windowStart, cursor] 的K线, cursor 前保留至少 KEEP_BACK 根
+// 渐进窗口: 保留前 KEEP_BACK 根历史, 保证窗口至少 MIN_VISIBLE 根(开头向后借, 比例正常)
 const KEEP_BACK = 50
-const PRELOAD = 25
+const MIN_VISIBLE = 70
 const cursor = ref(0)
 
 // 播放
 const playing = ref(false)
-const speed = ref(1) // 1 = 600ms/bar
+const speed = ref(1)
 const SPEED_MS: Record<number, number> = { 0.25: 2400, 0.5: 1200, 1: 600, 2: 300, 4: 150, 8: 75 }
 let playTimer: ReturnType<typeof setInterval> | null = null
 
@@ -84,16 +84,17 @@ const el = ref<HTMLDivElement>()
 const chart = ref<echarts.ECharts | null>(null)
 const isDark = computed(() => document.documentElement.getAttribute('data-theme') !== 'ivory')
 
-// 窗口内可见的数据
-const visibleBars = computed(() => {
-  const start = Math.max(0, cursor.value - KEEP_BACK)
-  return allBars.value.slice(0, cursor.value + 1).slice(start)
-})
+// ── 渐进窗口 ──
 const visibleStart = computed(() => Math.max(0, cursor.value - KEEP_BACK))
+const visibleEnd = computed(() => {
+  const minEnd = visibleStart.value + MIN_VISIBLE - 1
+  return Math.min(allBars.value.length - 1, Math.max(cursor.value, minEnd))
+})
+const visibleBars = computed(() =>
+  allBars.value.slice(visibleStart.value, visibleEnd.value + 1))
 
 function visibleDailyAt(idx: number): ReplayDailyExt | undefined {
-  const abs = visibleStart.value + idx
-  return allDaily.value[abs]
+  return allDaily.value[visibleStart.value + idx]
 }
 
 // 当前状态
@@ -101,12 +102,25 @@ const cursorBar = computed(() => allBars.value[cursor.value])
 const cursorDaily = computed(() => allDaily.value[cursor.value])
 const cursorEvent = computed(() => allEvents.value.find((e) => e.index === cursor.value))
 
-// 持仓(当前位置)
 const holdingState = computed(() => {
   const d = cursorDaily.value
   if (!d || !d.position) return null
   const bars = (cursor.value - (d.entry_index >= 0 ? d.entry_index : 0)) + 1
   return { ...d, hold_bars: bars }
+})
+
+// 设置摘要(折叠时显示)
+const settingsSummary = computed(() => {
+  const parts: string[] = []
+  parts.push(startDate.value || endDate.value
+    ? `${startDate.value || '起点'} ~ ${endDate.value || '终点'}`
+    : '默认近500根')
+  parts.push(`${(initialBalance.value / 10000).toFixed(0)}万`)
+  if (sizingMode.value === 'percent_of_equity') parts.push(`仓位${(sizingValue.value * 100).toFixed(0)}%`)
+  else if (sizingMode.value === 'fixed_capital') parts.push(`固定${(sizingValue.value / 10000).toFixed(1)}万/笔`)
+  else parts.push(`固定${sizingValue.value}股/笔`)
+  parts.push(`佣金万${(commissionRate.value * 10000).toFixed(0)}`)
+  return parts.join(' · ')
 })
 
 // ── 加载 ──
@@ -137,10 +151,7 @@ async function load() {
   errorMsg.value = ''
   stopPlay()
   try {
-    const r = await getReplay(
-      code.value, strategyId.value, 2500,
-      buildQuery(),
-    )
+    const r = await getReplay(code.value, strategyId.value, 2500, buildQuery())
     allBars.value = r.bars
     allDaily.value = r.daily
     allEvents.value = r.events
@@ -158,24 +169,14 @@ async function load() {
   }
 }
 
-async function loadKlineOnly() {
-  // 选股后仅加载(策略未选时也可预览K线)
-  if (!code.value) return
-  loading.value = true
-  errorMsg.value = ''
-  try {
-    if (strategyId.value) { await load(); return }
-    // 无策略时只显示K线: 直接调 replay 但策略不选会报错, 改为提示
-    errorMsg.value = ''
-  } finally { loading.value = false }
-}
-
 function doSearch(q: string) {
   if (searchTimer) clearTimeout(searchTimer)
-  if (!q.trim()) { searchResults.value = []; return }
+  if (!q.trim()) { searchResults.value = []; searchOpen.value = false; return }
   searchTimer = setTimeout(async () => {
-    try { searchResults.value = await searchStock(q.trim()) }
-    catch { searchResults.value = [] }
+    try {
+      searchResults.value = await searchStock(q.trim())
+      searchOpen.value = searchResults.value.length > 0
+    } catch { searchResults.value = [] }
   }, 250)
 }
 
@@ -209,7 +210,6 @@ function buildOption(): echarts.EChartsCoreOption {
       return +(sum / n).toFixed(2)
     })
 
-  // 买卖点(窗口内)
   const markPoints: { coord: [number, number]; value: string; symbol: string; symbolSize: number; itemStyle: { color: string } }[] = []
   const markAreas: Array<Array<{ xAxis: number; itemStyle?: { color: string } }>> = []
 
@@ -232,7 +232,6 @@ function buildOption(): echarts.EChartsCoreOption {
     ])
   }
 
-  // 当前播放位置竖线
   const curLocal = cursor.value - vStart
   const markLines = curLocal >= 0 && curLocal < bars.length
     ? [{ xAxis: curLocal, lineStyle: { color: '#D4A574', type: 'dashed' as const, width: 1 } }]
@@ -314,6 +313,7 @@ function buildOption(): echarts.EChartsCoreOption {
         type: 'candlestick',
         xAxisIndex: 0, yAxisIndex: 0,
         data: ohlc,
+        barMaxWidth: 11,
         itemStyle: { color: upColor, color0: downColor, borderColor: upColor, borderColor0: downColor },
         markArea: { silent: true, data: markAreas },
         markPoint: {
@@ -332,7 +332,6 @@ function buildOption(): echarts.EChartsCoreOption {
         barMaxWidth: 8,
       },
       {
-        // 权益曲线(第三行)
         name: '权益',
         type: 'line',
         xAxisIndex: 2, yAxisIndex: 2,
@@ -373,25 +372,27 @@ function initChart() {
 }
 
 // ── 播放控制 ──
-function setSpeed(sp: number) { speed.value = sp }
-
 function togglePlay() {
   if (!allBars.value.length) return
   playing.value = !playing.value
   if (playing.value) {
     if (cursor.value >= allBars.value.length - 1) cursor.value = 0
-    playTimer = setInterval(() => {
-      if (cursor.value < allBars.value.length - 1) {
-        cursor.value++
-        renderChart()
-      } else {
-        stopPlay()
-      }
-    }, SPEED_MS[speed.value] ?? 600)
+    startTimer()
   } else if (playTimer) {
     clearInterval(playTimer)
     playTimer = null
   }
+}
+
+function startTimer() {
+  if (playTimer) clearInterval(playTimer)
+  playTimer = setInterval(() => {
+    if (cursor.value < allBars.value.length - 1) {
+      cursor.value++
+    } else {
+      stopPlay()
+    }
+  }, SPEED_MS[speed.value] ?? 600)
 }
 
 function stopPlay() {
@@ -399,41 +400,22 @@ function stopPlay() {
   if (playTimer) { clearInterval(playTimer); playTimer = null }
 }
 
-function stepFwd() { if (cursor.value < allBars.value.length - 1) { cursor.value++; renderChart() } }
-function stepBack() { if (cursor.value > 0) { cursor.value--; renderChart() } }
-function jumpStart() { cursor.value = 0; renderChart() }
-function jumpEnd() { cursor.value = allBars.value.length - 1; renderChart() }
+function stepFwd() { if (cursor.value < allBars.value.length - 1) cursor.value++ }
+function stepBack() { if (cursor.value > 0) cursor.value-- }
 
-// 滚动条(手动拖动)
 function onSliderInput(ev: Event) {
-  const v = Number((ev.target as HTMLInputElement).value)
-  cursor.value = v
-  renderChart()
+  cursor.value = Number((ev.target as HTMLInputElement).value)
 }
 
-// 买入方式切换时重置为合理默认值
+watch(speed, () => { if (playing.value) startTimer() })
+watch(cursor, () => { renderChart() })
+
+// 买入方式切换重置合理默认值
 watch(sizingMode, (m) => {
   if (m === 'percent_of_equity') sizingValue.value = 0.95
   else if (m === 'fixed_capital') sizingValue.value = 50000
   else sizingValue.value = 1000
 })
-
-// 速度变化时若在播放, 重启计时器
-watch(speed, () => {
-  if (playing.value) {
-    if (playTimer) clearInterval(playTimer)
-    playTimer = setInterval(() => {
-      if (cursor.value < allBars.value.length - 1) {
-        cursor.value++
-        renderChart()
-      } else {
-        stopPlay()
-      }
-    }, SPEED_MS[speed.value] ?? 600)
-  }
-})
-
-watch(cursor, () => { renderChart() })
 
 function fmtPct(v: number) { return (v >= 0 ? '+' : '') + (v * 100).toFixed(2) + '%' }
 function fmtMoney(v: number) { return v.toLocaleString('zh-CN', { maximumFractionDigits: 0 }) }
@@ -444,7 +426,6 @@ let mo: MutationObserver | null = null
 
 onMounted(() => {
   loadStrategies()
-  if (ro && el.value) ro.observe(el.value)
   mo = new MutationObserver(() => { if (chart.value) renderChart() })
   mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
 })
@@ -476,7 +457,9 @@ watch(strategyId, (v) => {
     <PageHeader title="策略回放" subtitle="真实交易环境模拟 — 逐日播放买卖点 / 持仓盈亏 / 账户权益">
       <template #right>
         <div class="hdr-actions">
-          <input v-model="code" class="code-input" placeholder="股票代码" @keyup.enter="pickStock({ code: code, name: '', status: '' } as StockRef)" @input="doSearch(code)" />
+          <input v-model="code" class="code-input" placeholder="股票代码"
+                 @keyup.enter="pickStock({ code: code, name: '', status: '' } as StockRef)"
+                 @input="doSearch(code)" />
           <select v-model="strategyId" class="sel wide">
             <option value="">选择策略…</option>
             <optgroup v-if="strategies.some(s => s.kind === 'family')" label="5策略家族">
@@ -500,56 +483,64 @@ watch(strategyId, (v) => {
       </div>
     </div>
 
-    <!-- 参数面板 -->
+    <!-- ═══ 顶部: 回放设置(收纳) ═══ -->
     <Card class="mt">
-      <div class="param-bar">
-        <div class="param-item">
-          <label>起始日期</label>
-          <input v-model="startDate" type="date" class="date-input" />
-        </div>
-        <div class="param-item">
-          <label>结束日期</label>
-          <input v-model="endDate" type="date" class="date-input" />
-        </div>
-        <button class="btn" @click="paramsOpen = !paramsOpen">{{ paramsOpen ? '收起参数 ▲' : '交易环境参数 ▼' }}</button>
-        <div v-if="!startDate && !endDate" class="muted note">默认最近约500根K线; 设日期后从起点前150根预热因子</div>
+      <div class="settings-bar">
+        <button class="btn" @click="settingsOpen = !settingsOpen">
+          {{ settingsOpen ? '▲ 收起设置' : '▾ 回放设置' }}
+        </button>
+        <span class="summary muted">{{ settingsSummary }}</span>
+        <span v-if="name" class="stock-name">{{ name }}</span>
       </div>
-
-      <div v-if="paramsOpen" class="params-grid">
-        <div class="param-item">
-          <label>账户总金额(元)</label>
-          <input v-model.number="initialBalance" type="number" min="10000" step="10000" class="num-input" />
+      <div v-if="settingsOpen" class="settings-body">
+        <div class="settings-row">
+          <div class="param-item">
+            <label>起始日期</label>
+            <input v-model="startDate" type="date" class="date-input" />
+          </div>
+          <div class="param-item">
+            <label>结束日期</label>
+            <input v-model="endDate" type="date" class="date-input" />
+          </div>
+          <div class="param-item">
+            <label>账户总金额(元)</label>
+            <input v-model.number="initialBalance" type="number" min="10000" step="10000" class="num-input" />
+          </div>
+          <div class="param-item">
+            <label>买入方式</label>
+            <select v-model="sizingMode" class="sel">
+              <option value="percent_of_equity">总资产百分比</option>
+              <option value="fixed_capital">固定金额</option>
+              <option value="fixed_qty">固定股数</option>
+            </select>
+          </div>
+          <div class="param-item">
+            <label>{{ sizingMode === 'fixed_qty' ? '股数(股)' : sizingMode === 'fixed_capital' ? '金额(元)' : '仓位比例(0~1)' }}</label>
+            <input v-model.number="sizingValue" type="number"
+                   :min="sizingMode === 'percent_of_equity' ? 0.01 : 100"
+                   :step="sizingMode === 'percent_of_equity' ? 0.05 : sizingMode === 'fixed_qty' ? 100 : 10000"
+                   class="num-input" />
+          </div>
+          <div class="param-item">
+            <label>佣金率</label>
+            <input v-model.number="commissionRate" type="number" min="0" step="0.0001" class="num-input" />
+          </div>
+          <div class="param-item">
+            <label>最低佣金(元)</label>
+            <input v-model.number="minCommission" type="number" min="0" step="1" class="num-input" />
+          </div>
+          <div class="param-item">
+            <label>印花税率(卖出)</label>
+            <input v-model.number="stampTaxRate" type="number" min="0" step="0.0001" class="num-input" />
+          </div>
+          <div class="param-item">
+            <label>滑点</label>
+            <input v-model.number="slippage" type="number" min="0" step="0.001" class="num-input" />
+          </div>
         </div>
-        <div class="param-item">
-          <label>买入方式</label>
-          <select v-model="sizingMode" class="sel">
-            <option value="percent_of_equity">总资产百分比</option>
-            <option value="fixed_capital">固定金额</option>
-            <option value="fixed_qty">固定股数</option>
-          </select>
-        </div>
-        <div class="param-item">
-          <label>{{ sizingMode === 'fixed_qty' ? '股数(股)' : sizingMode === 'fixed_capital' ? '金额(元)' : '仓位比例(0~1)' }}</label>
-          <input v-model.number="sizingValue" type="number" :min="sizingMode === 'percent_of_equity' ? 0.01 : 100" :step="sizingMode === 'percent_of_equity' ? 0.05 : sizingMode === 'fixed_qty' ? 100 : 10000" class="num-input" />
-        </div>
-        <div class="param-item">
-          <label>佣金率</label>
-          <input v-model.number="commissionRate" type="number" min="0" step="0.0001" class="num-input" />
-        </div>
-        <div class="param-item">
-          <label>最低佣金(元)</label>
-          <input v-model.number="minCommission" type="number" min="0" step="1" class="num-input" />
-        </div>
-        <div class="param-item">
-          <label>印花税率(卖出)</label>
-          <input v-model.number="stampTaxRate" type="number" min="0" step="0.0001" class="num-input" />
-        </div>
-        <div class="param-item">
-          <label>滑点</label>
-          <input v-model.number="slippage" type="number" min="0" step="0.001" class="num-input" />
-        </div>
-        <div class="param-item wide">
-          <button class="btn primary" @click="load" :disabled="loading || !strategyId">应用参数并重新回放</button>
+        <div class="settings-actions">
+          <span v-if="!startDate && !endDate" class="muted note">未设日期时回放最近约500根K线(区间前自动预热150根因子)</span>
+          <button class="btn primary" @click="load" :disabled="loading || !strategyId">应用设置并重新回放</button>
         </div>
       </div>
     </Card>
@@ -557,39 +548,39 @@ watch(strategyId, (v) => {
     <EmptyState v-if="errorMsg && !allBars.length" :message="errorMsg" />
 
     <template v-if="allBars.length">
-      <!-- 播放控制 -->
+      <!-- ═══ 中间: K线播放图 ═══ -->
       <Card class="mt">
         <div class="ctl">
           <button class="btn" @click="stepBack" title="上一根">◀</button>
-          <button class="btn primary wide-btn" @click="togglePlay">{{ playing ? '⏸ 暂停' : '▶ 播放' }}</button>
+          <button class="btn primary play-btn" @click="togglePlay">{{ playing ? '⏸ 暂停' : '▶ 播放' }}</button>
           <button class="btn" @click="stepFwd" title="下一根">▶</button>
-          <span class="ctl-sep"></span>
-          <span class="lbl">速度</span>
-          <div class="speed-btns">
-            <button v-for="s in [0.25, 0.5, 1, 2, 4, 8]" :key="s" class="btn speed-btn" :class="{ active: speed === s }" @click="setSpeed(s)">{{ s }}x</button>
-          </div>
-          <span class="ctl-sep"></span>
+          <select v-model="speed" class="sel speed-sel" title="播放速度">
+            <option :value="0.25">0.25x 慢放</option>
+            <option :value="0.5">0.5x</option>
+            <option :value="1">1x 正常</option>
+            <option :value="2">2x</option>
+            <option :value="4">4x</option>
+            <option :value="8">8x 快放</option>
+          </select>
           <input type="range" class="slider" :min="0" :max="allBars.length - 1" :value="cursor" @input="onSliderInput" />
           <span class="mono pos">{{ cursor + 1 }}/{{ allBars.length }}</span>
         </div>
         <div class="status-line">
-          <span class="mono">{{ cursorBar?.date }}</span>
+          <span class="mono date">{{ cursorBar?.date }}</span>
           <span v-if="cursorDaily?.position" class="tag hold">● 持仓中 {{ cursorDaily?.qty }}股</span>
           <span v-else class="tag idle">○ 空仓</span>
           <span v-if="cursorDaily?.signal_buy" class="tag buy">买入信号</span>
           <span v-if="cursorDaily?.signal_sell" class="tag sell">卖出信号</span>
           <span v-if="cursorEvent" class="tag" :class="cursorEvent.kind === 'entry' ? 'buy' : 'sell'">
-            {{ cursorEvent.kind === 'entry' ? `▲ 建仓 @${cursorEvent.price} ×${cursorEvent.qty}股` : `▼ 平仓 @${cursorEvent.price} ${cursorEvent.reason ? '(' + reasonCn(cursorEvent.reason) + ')' : ''} ${cursorEvent.net_pnl !== undefined ? '净盈亏 ' + (cursorEvent.net_pnl >= 0 ? '+' : '') + cursorEvent.net_pnl : ''}` }}
+            {{ cursorEvent.kind === 'entry'
+              ? `▲ 建仓 @${cursorEvent.price} ×${cursorEvent.qty}股`
+              : `▼ 平仓 @${cursorEvent.price} ${cursorEvent.reason ? '(' + reasonCn(cursorEvent.reason) + ')' : ''} ${cursorEvent.net_pnl !== undefined ? '净盈亏 ' + (cursorEvent.net_pnl >= 0 ? '+' : '') + cursorEvent.net_pnl : ''}` }}
           </span>
         </div>
-      </Card>
-
-      <!-- K线图 -->
-      <Card class="mt">
         <div ref="el" class="chart"></div>
       </Card>
 
-      <!-- 账户面板 + 指标 -->
+      <!-- ═══ 底部: 账户 + 交易 ═══ -->
       <div class="acct-grid mt">
         <Card>
           <div class="metric-label">总资产(权益)</div>
@@ -623,7 +614,6 @@ watch(strategyId, (v) => {
         </Card>
       </div>
 
-      <!-- 最终指标 -->
       <div v-if="metrics" class="metric-grid mt">
         <Card>
           <div class="metric-label">区间总收益</div>
@@ -651,7 +641,6 @@ watch(strategyId, (v) => {
         </Card>
       </div>
 
-      <!-- 交易明细 -->
       <Card class="mt" v-if="allEvents.filter(e => e.kind === 'exit').length">
         <h4 class="sec-title">交易明细（真实费用模拟）</h4>
         <table class="tbl">
@@ -691,7 +680,7 @@ watch(strategyId, (v) => {
 }
 .code-input { width: 100px; }
 .sel.wide { max-width: 280px; }
-.date-input { width: 150px; }
+.date-input { width: 148px; }
 .num-input { width: 110px; }
 .code-input:focus, .sel:focus, .date-input:focus, .num-input:focus { border-color: var(--gold); outline: none; }
 .btn {
@@ -701,7 +690,6 @@ watch(strategyId, (v) => {
 .btn:hover { border-color: var(--gold); }
 .btn.primary { background: var(--gold); color: #1A1D23; border-color: var(--gold); font-weight: 600; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
-.wide-btn { min-width: 110px; }
 .search-pop {
   position: absolute; z-index: 50; background: var(--panel); border: 1px solid var(--border);
   border-radius: var(--radius); margin-top: 4px; max-height: 320px; overflow-y: auto;
@@ -712,28 +700,40 @@ watch(strategyId, (v) => {
 .search-item .mono { color: var(--gold); font-family: var(--font-mono); }
 .search-item .nm { color: var(--text); }
 .mt { margin-top: var(--sp-4); }
-.param-bar { display: flex; gap: var(--sp-3); align-items: center; flex-wrap: wrap; }
+
+/* ── 顶部设置卡 ── */
+.settings-bar { display: flex; gap: var(--sp-3); align-items: center; }
+.summary { font-size: var(--fs-sm); }
+.stock-name { color: var(--gold); font-size: var(--fs-sm); margin-left: auto; }
+.settings-body { margin-top: var(--sp-3); padding-top: var(--sp-3); border-top: 1px solid var(--border-soft); }
+.settings-row { display: flex; gap: var(--sp-3); flex-wrap: wrap; align-items: flex-end; }
 .param-item { display: flex; flex-direction: column; gap: 4px; }
 .param-item label { font-size: 12px; color: var(--text-sub); }
-.param-item.wide { justify-content: flex-end; }
+.settings-actions { display: flex; gap: var(--sp-3); align-items: center; margin-top: var(--sp-3); flex-wrap: wrap; }
 .note { font-size: 12px; }
-.params-grid { display: flex; gap: var(--sp-3); flex-wrap: wrap; margin-top: var(--sp-3); padding-top: var(--sp-3); border-top: 1px solid var(--border-soft); }
-.ctl { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; }
-.ctl-sep { width: 1px; height: 22px; background: var(--border); margin: 0 var(--sp-1); }
-.lbl { font-size: var(--fs-sm); color: var(--text-sub); }
-.speed-btns { display: flex; gap: 4px; }
-.speed-btn { padding: 4px 10px; }
-.speed-btn.active { background: var(--gold); color: #1A1D23; border-color: var(--gold); font-weight: 600; }
+
+/* ── 播放控制 ── */
+.ctl { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; padding-bottom: var(--sp-2); }
+.play-btn { min-width: 96px; }
+.speed-sel { width: 104px; }
 .slider { flex: 1; min-width: 140px; accent-color: var(--gold); }
 .pos { font-size: var(--fs-sm); color: var(--text-sub); white-space: nowrap; }
-.status-line { display: flex; gap: var(--sp-3); align-items: center; margin-top: var(--sp-2); flex-wrap: wrap; font-size: var(--fs-sm); }
+.status-line {
+  display: flex; gap: var(--sp-3); align-items: center; flex-wrap: wrap;
+  font-size: var(--fs-sm); padding: var(--sp-2) 0;
+  border-top: 1px solid var(--border-soft); border-bottom: 1px solid var(--border-soft);
+  margin-bottom: var(--sp-2);
+}
+.date { color: var(--gold); font-weight: 600; }
 .mono { font-family: var(--font-mono); }
 .tag { padding: 2px 8px; border-radius: 10px; font-size: 12px; background: var(--bg-hover); color: var(--text-sub); }
 .tag.hold { background: rgba(45,183,87,.15); color: var(--down); }
 .tag.idle { background: rgba(138,143,154,.15); }
 .tag.buy { background: rgba(45,183,87,.2); color: var(--down); font-weight: 600; }
 .tag.sell { background: rgba(232,64,64,.2); color: var(--up); font-weight: 600; }
-.chart { width: 100%; height: 560px; min-height: 400px; }
+.chart { width: 100%; height: 540px; min-height: 380px; }
+
+/* ── 账户/指标卡 ── */
 .acct-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: var(--sp-3); }
 .metric-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: var(--sp-3); }
 .metric-label { font-size: var(--fs-sm); color: var(--text-sub); }
@@ -742,6 +742,8 @@ watch(strategyId, (v) => {
 .up { color: var(--up); }
 .down { color: var(--down); }
 .muted { color: var(--text-faint); }
+
+/* ── 交易明细 ── */
 .tbl { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
 .tbl th { padding: 8px var(--sp-3); text-align: left; color: var(--text-sub); border-bottom: 1px solid var(--border); }
 .tbl .ar { text-align: right; }
@@ -750,5 +752,6 @@ watch(strategyId, (v) => {
 .sec-title { margin: 0 0 var(--sp-2); color: var(--text); font-size: var(--fs-md); }
 .num { font-family: var(--font-mono); }
 .bold { font-weight: 600; }
+
 @media (max-width: 1400px) { .acct-grid, .metric-grid { grid-template-columns: repeat(3, 1fr); } }
 </style>
