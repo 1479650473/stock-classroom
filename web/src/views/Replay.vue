@@ -80,7 +80,6 @@ const cursor = ref(0)
 const playing = ref(false)
 const speed = ref(1)
 const SPEED_MS: Record<number, number> = { 0.25: 2400, 0.5: 1200, 1: 600, 2: 300, 4: 150, 8: 75 }
-let playTimer: ReturnType<typeof setInterval> | null = null
 
 // 侧栏(交易明细)
 const sideOpen = ref(true)
@@ -219,7 +218,7 @@ function newRound() {
   cursor.value = 0
   phase.value = 'setup'
   settingsOpen.value = true
-  renderChart()
+  scheduleRender()
 }
 
 // ── 图表 ──
@@ -267,9 +266,6 @@ function buildOption(): echarts.EChartsCoreOption {
   }
 
   const curLocal = cursor.value - vStart
-  const markLines = curLocal >= 0 && curLocal < bars.length
-    ? [{ xAxis: curLocal, lineStyle: { color: '#D4A574', type: 'dashed' as const, width: 1 } }]
-    : []
 
   return {
     animation: false,
@@ -344,6 +340,7 @@ function buildOption(): echarts.EChartsCoreOption {
     ],
     series: [
       {
+        id: 'candlestick',
         type: 'candlestick',
         xAxisIndex: 0, yAxisIndex: 0,
         data: ohlc,
@@ -355,7 +352,6 @@ function buildOption(): echarts.EChartsCoreOption {
           label: { show: true, color: '#fff', fontSize: 9, fontWeight: 'bold' },
           itemStyle: { borderColor: '#fff', borderWidth: 1 },
         },
-        markLine: { silent: true, symbol: 'none', data: markLines },
       },
       { name: 'MA5', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: ma(5), smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#E8B84B' } },
       { name: 'MA20', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: ma(20), smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#C16BE0' } },
@@ -386,15 +382,63 @@ function reasonCn(r: string): string {
   return m[r] || r
 }
 
-function renderChart() {
+// ── 渲染: 拆分全量渲染(窗口变化) 与 播放头轻量更新(仅 markLine) ──
+let rafPending = false
+function scheduleRender() {
+  if (rafPending) return
+  rafPending = true
+  requestAnimationFrame(() => {
+    rafPending = false
+    renderFull()
+  })
+}
+
+function renderFull() {
   if (!chart.value || !visibleBars.value.length) return
   try {
     chart.value.setOption(buildOption(), true)
+    lastFullCursor = cursor.value
+    lastRenderedStart = visibleStart.value
+    renderPlayhead()
   } catch (e) {
     console.warn('chart setOption failed, re-init', e)
-    chart.value?.dispose()
+    try {
+      chart.value?.dispose()
+    } catch { /* ignore */ }
     chart.value = null
-    initChart()
+    // 重建一次; 若再失败则放弃(避免无限递归)
+    try {
+      initChart()
+    } catch (e2) {
+      console.warn('chart re-init failed', e2)
+    }
+  }
+}
+
+// 仅更新播放头竖线: CSS 覆盖层(零 ECharts 重渲染成本)
+let lastFullCursor = -1
+let lastRenderedStart = -1
+function renderPlayhead() {
+  const curLocal = cursor.value - visibleStart.value
+  if (curLocal < 0 || curLocal >= visibleBars.value.length) {
+    renderFull()
+    return
+  }
+  // 持仓中每 4 根全量渲染一次(markArea 持仓带随播放生长); 空仓/普通推进仅移动播放头线
+  const d = allDaily.value[cursor.value]
+  const needFull = d?.position && (cursor.value - lastFullCursor >= 4)
+  if (needFull) {
+    renderFull()
+    return
+  }
+  const line = document.getElementById('playhead-line')
+  const chartEl = el.value
+  if (line && chartEl) {
+    const total = visibleBars.value.length
+    const contentW = chartEl.clientWidth - 80
+    const left = 60 + ((curLocal + 0.5) / total) * contentW
+    line.style.left = left + 'px'
+    line.style.display = 'block'
   }
 }
 
@@ -402,42 +446,63 @@ function initChart() {
   if (!el.value) return
   if (chart.value) { chart.value.dispose(); chart.value = null }
   chart.value = echarts.init(el.value, undefined, { renderer: 'canvas' })
-  renderChart()
+  renderFull()
 }
 
 // ── 播放控制 ──
+// 播放控制 ── requestAnimationFrame 驱动(可见时精准; 隐藏时浏览器自动暂停rAF, 恢复后继续, 不积压) ──
+let rafId: number | null = null
+let lastStepAt = 0
+
 function togglePlay() {
   if (!allBars.value.length || phase.value === 'settled') return
   startRound()
   playing.value = !playing.value
   if (playing.value) {
     if (cursor.value >= allBars.value.length - 1) cursor.value = 0
+    lastStepAt = performance.now()
     startTimer()
-  } else if (playTimer) {
-    clearInterval(playTimer)
-    playTimer = null
+  } else {
+    stopPlay()
   }
 }
 
 function startTimer() {
-  if (playTimer) clearInterval(playTimer)
-  playTimer = setInterval(() => {
-    if (cursor.value < allBars.value.length - 1) {
-      cursor.value++
+  if (rafId !== null) return
+  const loop = (now: number) => {
+    rafId = null
+    if (!playing.value) return
+    const interval = SPEED_MS[speed.value] ?? 600
+    if (now - lastStepAt >= interval) {
+      lastStepAt = now
       if (cursor.value >= allBars.value.length - 1) {
-        // 到达期末 → 结算
         stopPlay()
         phase.value = 'settled'
+        return
       }
-    } else {
-      stopPlay()
+      try {
+        cursor.value++
+      } catch (e) {
+        console.warn('tick failed', e)
+      }
     }
-  }, SPEED_MS[speed.value] ?? 600)
+    rafId = requestAnimationFrame(loop)
+  }
+  rafId = requestAnimationFrame(loop)
 }
 
 function stopPlay() {
   playing.value = false
-  if (playTimer) { clearInterval(playTimer); playTimer = null }
+  if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null }
+}
+
+function restartTimer() {
+  const wasPlaying = playing.value
+  if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null }
+  if (wasPlaying) {
+    lastStepAt = performance.now()
+    startTimer()
+  }
 }
 
 function stepFwd() {
@@ -466,8 +531,15 @@ function onSliderInput(ev: Event) {
   }
 }
 
-watch(speed, () => { if (playing.value) startTimer() })
-watch(cursor, () => { renderChart() })
+watch(speed, () => { if (playing.value) restartTimer() })
+watch(cursor, () => {
+  // 窗口起点与上次渲染不一致 → 全量重绘(窗口滑动); 否则仅移动播放头
+  if (visibleStart.value !== lastRenderedStart) {
+    scheduleRender()
+  } else {
+    renderPlayhead()
+  }
+})
 
 // 买入方式切换重置合理默认值
 watch(sizingMode, (m) => {
@@ -481,12 +553,15 @@ function fmtPct(v: number) { return (v >= 0 ? '+' : '') + (v * 100).toFixed(2) +
 function fmtMoney(v: number) { return v.toLocaleString('zh-CN', { maximumFractionDigits: 0 }) }
 
 // 主题响应 + resize
-const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => chart.value?.resize()) : null
+const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => {
+  chart.value?.resize()
+  scheduleRender()
+}) : null
 let mo: MutationObserver | null = null
 
 onMounted(() => {
   loadStrategies()
-  mo = new MutationObserver(() => { if (chart.value) renderChart() })
+  mo = new MutationObserver(() => { if (chart.value) renderFull() })
   mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
 })
 
@@ -507,10 +582,11 @@ watch(() => allBars.value.length, async (len) => {
   }
 })
 
-// 侧栏开合时图表尺寸自适应
+// 侧栏开合时图表尺寸自适应 + 重绘
 watch(sideOpen, async () => {
   await nextTick()
   chart.value?.resize()
+  scheduleRender()
 })
 
 watch(strategyId, (v) => {
@@ -658,7 +734,10 @@ watch(strategyId, (v) => {
                   : `▼ 平仓 @${cursorEvent.price} ${cursorEvent.reason ? '(' + reasonCn(cursorEvent.reason) + ')' : ''} ${cursorEvent.net_pnl !== undefined ? '净盈亏 ' + (cursorEvent.net_pnl >= 0 ? '+' : '') + cursorEvent.net_pnl : ''}` }}
               </span>
             </div>
-            <div ref="el" class="chart"></div>
+            <div class="chart-wrap">
+              <div ref="el" class="chart"></div>
+              <div id="playhead-line" class="playhead-line"></div>
+            </div>
           </Card>
 
           <!-- 底部: 账户 + 指标 -->
@@ -928,7 +1007,15 @@ watch(strategyId, (v) => {
 .tag.idle { background: rgba(138,143,154,.15); }
 .tag.buy { background: rgba(45,183,87,.2); color: var(--down); font-weight: 600; }
 .tag.sell { background: rgba(232,64,64,.2); color: var(--up); font-weight: 600; }
+.chart-wrap { position: relative; width: 100%; }
 .chart { width: 100%; height: 540px; min-height: 380px; }
+.playhead-line {
+  position: absolute; top: 20px; bottom: 260px;
+  width: 1px; background: #D4A574;
+  display: none; pointer-events: none;
+  box-shadow: 0 0 4px rgba(212, 165, 116, .6);
+  z-index: 5;
+}
 
 /* ── 账户/指标卡 ── */
 .acct-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-3); }
