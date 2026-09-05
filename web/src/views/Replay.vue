@@ -42,6 +42,9 @@ const strategyId = ref('')
 const loading = ref(false)
 const errorMsg = ref('')
 
+// ── 回合状态机: setup(准备, 可调设置) → trading(回合中, 设置锁定) → settled(期末结算) ──
+const phase = ref<'setup' | 'trading' | 'settled'>('setup')
+
 // 起止日期
 const startDate = ref('')
 const endDate = ref('')
@@ -54,7 +57,7 @@ const commissionRate = ref(0.0003)
 const minCommission = ref(5)
 const stampTaxRate = ref(0.0005)
 const slippage = ref(0.0)
-const settingsOpen = ref(false)
+const settingsOpen = ref(true)
 
 // 搜索
 const searchResults = ref<StockRef[]>([])
@@ -68,7 +71,7 @@ const allEvents = ref<ReplayEventExt[]>([])
 const allSpans = ref<number[][]>([])
 const metrics = ref<ReplayResult['metrics'] | null>(null)
 
-// 渐进窗口: 保留前 KEEP_BACK 根历史, 保证窗口至少 MIN_VISIBLE 根(开头向后借, 比例正常)
+// 渐进窗口
 const KEEP_BACK = 50
 const MIN_VISIBLE = 70
 const cursor = ref(0)
@@ -78,6 +81,9 @@ const playing = ref(false)
 const speed = ref(1)
 const SPEED_MS: Record<number, number> = { 0.25: 2400, 0.5: 1200, 1: 600, 2: 300, 4: 150, 8: 75 }
 let playTimer: ReturnType<typeof setInterval> | null = null
+
+// 侧栏(交易明细)
+const sideOpen = ref(true)
 
 // 图表
 const el = ref<HTMLDivElement>()
@@ -123,6 +129,18 @@ const settingsSummary = computed(() => {
   return parts.join(' · ')
 })
 
+// 回合进度
+const roundProgress = computed(() =>
+  allBars.value.length ? Math.round((cursor.value / (allBars.value.length - 1)) * 100) : 0)
+
+// 当前策略名(结算弹窗用)
+const strategyName = computed(() =>
+  strategies.value.find((x) => x.id === strategyId.value)?.name || '')
+
+// 退出交易(按平仓时间倒序, 侧栏时间线)
+const exitEvents = computed(() =>
+  allEvents.value.filter((e) => e.kind === 'exit').slice().reverse())
+
 // ── 加载 ──
 async function loadStrategies() {
   try { strategies.value = await getReplayStrategies() } catch { strategies.value = [] }
@@ -150,6 +168,7 @@ async function load() {
   loading.value = true
   errorMsg.value = ''
   stopPlay()
+  phase.value = 'setup'
   try {
     const r = await getReplay(code.value, strategyId.value, 2500, buildQuery())
     allBars.value = r.bars
@@ -186,6 +205,21 @@ function pickStock(s: StockRef) {
   searchOpen.value = false
   searchResults.value = []
   if (strategyId.value) load()
+}
+
+// ── 回合控制 ──
+function startRound() {
+  // 任何"推进"动作都意味着回合开始: 之后设置锁定
+  if (phase.value === 'setup') phase.value = 'trading'
+}
+
+function newRound() {
+  // 结算后开新回合: 回起点, 解锁设置
+  stopPlay()
+  cursor.value = 0
+  phase.value = 'setup'
+  settingsOpen.value = true
+  renderChart()
 }
 
 // ── 图表 ──
@@ -373,7 +407,8 @@ function initChart() {
 
 // ── 播放控制 ──
 function togglePlay() {
-  if (!allBars.value.length) return
+  if (!allBars.value.length || phase.value === 'settled') return
+  startRound()
   playing.value = !playing.value
   if (playing.value) {
     if (cursor.value >= allBars.value.length - 1) cursor.value = 0
@@ -389,6 +424,11 @@ function startTimer() {
   playTimer = setInterval(() => {
     if (cursor.value < allBars.value.length - 1) {
       cursor.value++
+      if (cursor.value >= allBars.value.length - 1) {
+        // 到达期末 → 结算
+        stopPlay()
+        phase.value = 'settled'
+      }
     } else {
       stopPlay()
     }
@@ -400,11 +440,30 @@ function stopPlay() {
   if (playTimer) { clearInterval(playTimer); playTimer = null }
 }
 
-function stepFwd() { if (cursor.value < allBars.value.length - 1) cursor.value++ }
-function stepBack() { if (cursor.value > 0) cursor.value-- }
+function stepFwd() {
+  if (phase.value === 'settled') return
+  startRound()
+  if (cursor.value < allBars.value.length - 1) {
+    cursor.value++
+    if (cursor.value >= allBars.value.length - 1) phase.value = 'settled'
+  }
+}
+
+function stepBack() {
+  if (phase.value === 'settled') return
+  startRound()
+  if (cursor.value > 0) cursor.value--
+}
 
 function onSliderInput(ev: Event) {
-  cursor.value = Number((ev.target as HTMLInputElement).value)
+  if (phase.value === 'settled') return
+  startRound()
+  const v = Number((ev.target as HTMLInputElement).value)
+  cursor.value = v
+  if (v >= allBars.value.length - 1) {
+    stopPlay()
+    phase.value = 'settled'
+  }
 }
 
 watch(speed, () => { if (playing.value) startTimer() })
@@ -412,6 +471,7 @@ watch(cursor, () => { renderChart() })
 
 // 买入方式切换重置合理默认值
 watch(sizingMode, (m) => {
+  if (phase.value !== 'setup') return
   if (m === 'percent_of_equity') sizingValue.value = 0.95
   else if (m === 'fixed_capital') sizingValue.value = 50000
   else sizingValue.value = 1000
@@ -447,6 +507,12 @@ watch(() => allBars.value.length, async (len) => {
   }
 })
 
+// 侧栏开合时图表尺寸自适应
+watch(sideOpen, async () => {
+  await nextTick()
+  chart.value?.resize()
+})
+
 watch(strategyId, (v) => {
   if (v && code.value) load()
 })
@@ -458,9 +524,10 @@ watch(strategyId, (v) => {
       <template #right>
         <div class="hdr-actions">
           <input v-model="code" class="code-input" placeholder="股票代码"
+                 :disabled="phase !== 'setup'"
                  @keyup.enter="pickStock({ code: code, name: '', status: '' } as StockRef)"
                  @input="doSearch(code)" />
-          <select v-model="strategyId" class="sel wide">
+          <select v-model="strategyId" class="sel wide" :disabled="phase !== 'setup'">
             <option value="">选择策略…</option>
             <optgroup v-if="strategies.some(s => s.kind === 'family')" label="5策略家族">
               <option v-for="s in strategies.filter(x => x.kind === 'family')" :key="s.id" :value="s.id">{{ s.name }}</option>
@@ -469,7 +536,11 @@ watch(strategyId, (v) => {
               <option v-for="s in strategies.filter(x => x.kind === 'single')" :key="s.id" :value="s.id">{{ s.name }}</option>
             </optgroup>
           </select>
-          <button class="btn primary" @click="load" :disabled="loading || !strategyId">{{ loading ? '加载中…' : '开始回放' }}</button>
+          <button class="btn primary" @click="load" :disabled="loading || !strategyId || phase !== 'setup'">
+            {{ loading ? '加载中…' : '开始回放' }}
+          </button>
+          <span v-if="phase === 'trading'" class="tag round-tag">● 回合进行中</span>
+          <span v-else-if="phase === 'settled'" class="tag round-tag done">回合已结算</span>
         </div>
       </template>
     </PageHeader>
@@ -483,191 +554,263 @@ watch(strategyId, (v) => {
       </div>
     </div>
 
-    <!-- ═══ 顶部: 回放设置(收纳) ═══ -->
-    <Card class="mt">
+    <!-- ═══ 顶部: 回放设置(仅 setup 阶段可调) ═══ -->
+    <Card class="mt" :class="{ locked: phase !== 'setup' }">
       <div class="settings-bar">
         <button class="btn" @click="settingsOpen = !settingsOpen">
           {{ settingsOpen ? '▲ 收起设置' : '▾ 回放设置' }}
         </button>
         <span class="summary muted">{{ settingsSummary }}</span>
         <span v-if="name" class="stock-name">{{ name }}</span>
+        <span v-if="phase !== 'setup'" class="lock-note">
+          <span class="lock-icon">🔒</span> 回合中 — 设置已锁定
+        </span>
       </div>
       <div v-if="settingsOpen" class="settings-body">
-        <div class="settings-row">
-          <div class="param-item">
-            <label>起始日期</label>
-            <input v-model="startDate" type="date" class="date-input" />
+        <fieldset :disabled="phase !== 'setup'" class="fs">
+          <div class="settings-row">
+            <div class="param-item">
+              <label>起始日期</label>
+              <input v-model="startDate" type="date" class="date-input" />
+            </div>
+            <div class="param-item">
+              <label>结束日期</label>
+              <input v-model="endDate" type="date" class="date-input" />
+            </div>
+            <div class="param-item">
+              <label>账户总金额(元)</label>
+              <input v-model.number="initialBalance" type="number" min="10000" step="10000" class="num-input" />
+            </div>
+            <div class="param-item">
+              <label>买入方式</label>
+              <select v-model="sizingMode" class="sel">
+                <option value="percent_of_equity">总资产百分比</option>
+                <option value="fixed_capital">固定金额</option>
+                <option value="fixed_qty">固定股数</option>
+              </select>
+            </div>
+            <div class="param-item">
+              <label>{{ sizingMode === 'fixed_qty' ? '股数(股)' : sizingMode === 'fixed_capital' ? '金额(元)' : '仓位比例(0~1)' }}</label>
+              <input v-model.number="sizingValue" type="number"
+                     :min="sizingMode === 'percent_of_equity' ? 0.01 : 100"
+                     :step="sizingMode === 'percent_of_equity' ? 0.05 : sizingMode === 'fixed_qty' ? 100 : 10000"
+                     class="num-input" />
+            </div>
+            <div class="param-item">
+              <label>佣金率</label>
+              <input v-model.number="commissionRate" type="number" min="0" step="0.0001" class="num-input" />
+            </div>
+            <div class="param-item">
+              <label>最低佣金(元)</label>
+              <input v-model.number="minCommission" type="number" min="0" step="1" class="num-input" />
+            </div>
+            <div class="param-item">
+              <label>印花税率(卖出)</label>
+              <input v-model.number="stampTaxRate" type="number" min="0" step="0.0001" class="num-input" />
+            </div>
+            <div class="param-item">
+              <label>滑点</label>
+              <input v-model.number="slippage" type="number" min="0" step="0.001" class="num-input" />
+            </div>
           </div>
-          <div class="param-item">
-            <label>结束日期</label>
-            <input v-model="endDate" type="date" class="date-input" />
+          <div class="settings-actions">
+            <span v-if="!startDate && !endDate" class="muted note">未设日期时回放最近约500根K线(区间前自动预热150根因子)</span>
+            <button class="btn primary" @click="load" :disabled="loading || !strategyId">应用设置并重新回放</button>
           </div>
-          <div class="param-item">
-            <label>账户总金额(元)</label>
-            <input v-model.number="initialBalance" type="number" min="10000" step="10000" class="num-input" />
-          </div>
-          <div class="param-item">
-            <label>买入方式</label>
-            <select v-model="sizingMode" class="sel">
-              <option value="percent_of_equity">总资产百分比</option>
-              <option value="fixed_capital">固定金额</option>
-              <option value="fixed_qty">固定股数</option>
-            </select>
-          </div>
-          <div class="param-item">
-            <label>{{ sizingMode === 'fixed_qty' ? '股数(股)' : sizingMode === 'fixed_capital' ? '金额(元)' : '仓位比例(0~1)' }}</label>
-            <input v-model.number="sizingValue" type="number"
-                   :min="sizingMode === 'percent_of_equity' ? 0.01 : 100"
-                   :step="sizingMode === 'percent_of_equity' ? 0.05 : sizingMode === 'fixed_qty' ? 100 : 10000"
-                   class="num-input" />
-          </div>
-          <div class="param-item">
-            <label>佣金率</label>
-            <input v-model.number="commissionRate" type="number" min="0" step="0.0001" class="num-input" />
-          </div>
-          <div class="param-item">
-            <label>最低佣金(元)</label>
-            <input v-model.number="minCommission" type="number" min="0" step="1" class="num-input" />
-          </div>
-          <div class="param-item">
-            <label>印花税率(卖出)</label>
-            <input v-model.number="stampTaxRate" type="number" min="0" step="0.0001" class="num-input" />
-          </div>
-          <div class="param-item">
-            <label>滑点</label>
-            <input v-model.number="slippage" type="number" min="0" step="0.001" class="num-input" />
-          </div>
-        </div>
-        <div class="settings-actions">
-          <span v-if="!startDate && !endDate" class="muted note">未设日期时回放最近约500根K线(区间前自动预热150根因子)</span>
-          <button class="btn primary" @click="load" :disabled="loading || !strategyId">应用设置并重新回放</button>
-        </div>
+        </fieldset>
       </div>
     </Card>
 
     <EmptyState v-if="errorMsg && !allBars.length" :message="errorMsg" />
 
     <template v-if="allBars.length">
-      <!-- ═══ 中间: K线播放图 ═══ -->
-      <Card class="mt">
-        <div class="ctl">
-          <button class="btn" @click="stepBack" title="上一根">◀</button>
-          <button class="btn primary play-btn" @click="togglePlay">{{ playing ? '⏸ 暂停' : '▶ 播放' }}</button>
-          <button class="btn" @click="stepFwd" title="下一根">▶</button>
-          <select v-model="speed" class="sel speed-sel" title="播放速度">
-            <option :value="0.25">0.25x 慢放</option>
-            <option :value="0.5">0.5x</option>
-            <option :value="1">1x 正常</option>
-            <option :value="2">2x</option>
-            <option :value="4">4x</option>
-            <option :value="8">8x 快放</option>
-          </select>
-          <input type="range" class="slider" :min="0" :max="allBars.length - 1" :value="cursor" @input="onSliderInput" />
-          <span class="mono pos">{{ cursor + 1 }}/{{ allBars.length }}</span>
-        </div>
-        <div class="status-line">
-          <span class="mono date">{{ cursorBar?.date }}</span>
-          <span v-if="cursorDaily?.position" class="tag hold">● 持仓中 {{ cursorDaily?.qty }}股</span>
-          <span v-else class="tag idle">○ 空仓</span>
-          <span v-if="cursorDaily?.signal_buy" class="tag buy">买入信号</span>
-          <span v-if="cursorDaily?.signal_sell" class="tag sell">卖出信号</span>
-          <span v-if="cursorEvent" class="tag" :class="cursorEvent.kind === 'entry' ? 'buy' : 'sell'">
-            {{ cursorEvent.kind === 'entry'
-              ? `▲ 建仓 @${cursorEvent.price} ×${cursorEvent.qty}股`
-              : `▼ 平仓 @${cursorEvent.price} ${cursorEvent.reason ? '(' + reasonCn(cursorEvent.reason) + ')' : ''} ${cursorEvent.net_pnl !== undefined ? '净盈亏 ' + (cursorEvent.net_pnl >= 0 ? '+' : '') + cursorEvent.net_pnl : ''}` }}
-          </span>
-        </div>
-        <div ref="el" class="chart"></div>
-      </Card>
+      <!-- ═══ 中间: K线播放图 + 侧边交易明细 ═══ -->
+      <div class="replay-layout mt">
+        <div class="main-col">
+          <Card>
+            <div class="ctl">
+              <button class="btn" @click="stepBack" title="上一根" :disabled="phase === 'settled'">◀</button>
+              <button class="btn primary play-btn" @click="togglePlay" :disabled="phase === 'settled'">
+                {{ phase === 'settled' ? '已结束' : playing ? '⏸ 暂停' : '▶ 播放' }}
+              </button>
+              <button class="btn" @click="stepFwd" title="下一根" :disabled="phase === 'settled'">▶</button>
+              <select v-model="speed" class="sel speed-sel" title="播放速度">
+                <option :value="0.25">0.25x 慢放</option>
+                <option :value="0.5">0.5x</option>
+                <option :value="1">1x 正常</option>
+                <option :value="2">2x</option>
+                <option :value="4">4x</option>
+                <option :value="8">8x 快放</option>
+              </select>
+              <input type="range" class="slider" :min="0" :max="allBars.length - 1" :value="cursor" @input="onSliderInput" />
+              <span class="mono pos">{{ cursor + 1 }}/{{ allBars.length }}</span>
+              <span class="round-pct muted">{{ roundProgress }}%</span>
+            </div>
+            <div class="status-line">
+              <span class="mono date">{{ cursorBar?.date }}</span>
+              <span v-if="cursorDaily?.position" class="tag hold">● 持仓中 {{ cursorDaily?.qty }}股</span>
+              <span v-else class="tag idle">○ 空仓</span>
+              <span v-if="cursorDaily?.signal_buy" class="tag buy">买入信号</span>
+              <span v-if="cursorDaily?.signal_sell" class="tag sell">卖出信号</span>
+              <span v-if="cursorEvent" class="tag" :class="cursorEvent.kind === 'entry' ? 'buy' : 'sell'">
+                {{ cursorEvent.kind === 'entry'
+                  ? `▲ 建仓 @${cursorEvent.price} ×${cursorEvent.qty}股`
+                  : `▼ 平仓 @${cursorEvent.price} ${cursorEvent.reason ? '(' + reasonCn(cursorEvent.reason) + ')' : ''} ${cursorEvent.net_pnl !== undefined ? '净盈亏 ' + (cursorEvent.net_pnl >= 0 ? '+' : '') + cursorEvent.net_pnl : ''}` }}
+              </span>
+            </div>
+            <div ref="el" class="chart"></div>
+          </Card>
 
-      <!-- ═══ 底部: 账户 + 交易 ═══ -->
-      <div class="acct-grid mt">
-        <Card>
-          <div class="metric-label">总资产(权益)</div>
-          <div class="metric-val mono">{{ cursorDaily ? fmtMoney(cursorDaily.equity) : '—' }}</div>
-          <div class="metric-sub muted">期初 {{ metrics ? fmtMoney(metrics.initial_balance) : '—' }}</div>
-        </Card>
-        <Card>
-          <div class="metric-label">现金</div>
-          <div class="metric-val mono">{{ cursorDaily ? fmtMoney(cursorDaily.cash) : '—' }}</div>
-        </Card>
-        <Card>
-          <div class="metric-label">持仓市值</div>
-          <div class="metric-val mono">{{ cursorDaily ? fmtMoney(cursorDaily.market_value) : '—' }}</div>
-          <div class="metric-sub muted">{{ holdingState ? `成本 ${holdingState.entry_price} · 持有${holdingState.hold_bars}根` : '无持仓' }}</div>
-        </Card>
-        <Card>
-          <div class="metric-label">浮动盈亏</div>
-          <div class="metric-val mono" :class="(cursorDaily?.float_pnl ?? 0) >= 0 ? 'up' : 'down'">
-            {{ cursorDaily ? (cursorDaily.float_pnl >= 0 ? '+' : '') + fmtMoney(cursorDaily.float_pnl) : '—' }}
+          <!-- 底部: 账户 + 指标 -->
+          <div class="acct-grid mt">
+            <Card>
+              <div class="metric-label">总资产(权益)</div>
+              <div class="metric-val mono">{{ cursorDaily ? fmtMoney(cursorDaily.equity) : '—' }}</div>
+              <div class="metric-sub muted">期初 {{ metrics ? fmtMoney(metrics.initial_balance) : '—' }}</div>
+            </Card>
+            <Card>
+              <div class="metric-label">现金</div>
+              <div class="metric-val mono">{{ cursorDaily ? fmtMoney(cursorDaily.cash) : '—' }}</div>
+            </Card>
+            <Card>
+              <div class="metric-label">持仓市值</div>
+              <div class="metric-val mono">{{ cursorDaily ? fmtMoney(cursorDaily.market_value) : '—' }}</div>
+              <div class="metric-sub muted">{{ holdingState ? `成本 ${holdingState.entry_price} · 持有${holdingState.hold_bars}根` : '无持仓' }}</div>
+            </Card>
+            <Card>
+              <div class="metric-label">浮动盈亏</div>
+              <div class="metric-val mono" :class="(cursorDaily?.float_pnl ?? 0) >= 0 ? 'up' : 'down'">
+                {{ cursorDaily ? (cursorDaily.float_pnl >= 0 ? '+' : '') + fmtMoney(cursorDaily.float_pnl) : '—' }}
+              </div>
+            </Card>
+            <Card>
+              <div class="metric-label">已实现盈亏</div>
+              <div class="metric-val mono" :class="(cursorDaily?.realized_pnl ?? 0) >= 0 ? 'up' : 'down'">
+                {{ cursorDaily ? (cursorDaily.realized_pnl >= 0 ? '+' : '') + fmtMoney(cursorDaily.realized_pnl) : '—' }}
+              </div>
+            </Card>
+            <Card>
+              <div class="metric-label">累计费用</div>
+              <div class="metric-val mono muted">{{ cursorDaily ? fmtMoney(cursorDaily.cum_fee) : '—' }}</div>
+            </Card>
           </div>
-        </Card>
-        <Card>
-          <div class="metric-label">已实现盈亏</div>
-          <div class="metric-val mono" :class="(cursorDaily?.realized_pnl ?? 0) >= 0 ? 'up' : 'down'">
-            {{ cursorDaily ? (cursorDaily.realized_pnl >= 0 ? '+' : '') + fmtMoney(cursorDaily.realized_pnl) : '—' }}
+
+          <div v-if="metrics" class="metric-grid mt">
+            <Card>
+              <div class="metric-label">区间总收益</div>
+              <div class="metric-val" :class="metrics.total_return >= 0 ? 'up' : 'down'">{{ fmtPct(metrics.total_return) }}</div>
+            </Card>
+            <Card>
+              <div class="metric-label">交易次数</div>
+              <div class="metric-val">{{ metrics.num_trades }}</div>
+            </Card>
+            <Card>
+              <div class="metric-label">胜率</div>
+              <div class="metric-val">{{ (metrics.win_rate * 100).toFixed(1) }}%</div>
+            </Card>
+            <Card>
+              <div class="metric-label">盈亏比</div>
+              <div class="metric-val">{{ metrics.profit_factor }}</div>
+            </Card>
+            <Card>
+              <div class="metric-label">最大回撤</div>
+              <div class="metric-val down">{{ (metrics.max_drawdown * 100).toFixed(1) }}%</div>
+            </Card>
+            <Card>
+              <div class="metric-label">期末权益</div>
+              <div class="metric-val">{{ fmtMoney(metrics.final_equity) }}</div>
+            </Card>
           </div>
-        </Card>
-        <Card>
-          <div class="metric-label">累计费用</div>
-          <div class="metric-val mono muted">{{ cursorDaily ? fmtMoney(cursorDaily.cum_fee) : '—' }}</div>
-        </Card>
-      </div>
+        </div>
 
-      <div v-if="metrics" class="metric-grid mt">
-        <Card>
-          <div class="metric-label">区间总收益</div>
-          <div class="metric-val" :class="metrics.total_return >= 0 ? 'up' : 'down'">{{ fmtPct(metrics.total_return) }}</div>
-        </Card>
-        <Card>
-          <div class="metric-label">交易次数</div>
-          <div class="metric-val">{{ metrics.num_trades }}</div>
-        </Card>
-        <Card>
-          <div class="metric-label">胜率</div>
-          <div class="metric-val">{{ (metrics.win_rate * 100).toFixed(1) }}%</div>
-        </Card>
-        <Card>
-          <div class="metric-label">盈亏比</div>
-          <div class="metric-val">{{ metrics.profit_factor }}</div>
-        </Card>
-        <Card>
-          <div class="metric-label">最大回撤</div>
-          <div class="metric-val down">{{ (metrics.max_drawdown * 100).toFixed(1) }}%</div>
-        </Card>
-        <Card>
-          <div class="metric-label">期末权益</div>
-          <div class="metric-val">{{ fmtMoney(metrics.final_equity) }}</div>
-        </Card>
+        <!-- ═══ 侧边: 交易明细(可折叠) ═══ -->
+        <aside class="side-col" :class="{ open: sideOpen }">
+          <div class="side-toggle" @click="sideOpen = !sideOpen">
+            <span class="side-toggle-txt">{{ sideOpen ? '交易明细 ▸' : '◂ 交易明细' }}</span>
+            <span class="side-count" v-if="!sideOpen">{{ exitEvents.length }}</span>
+          </div>
+          <div v-if="sideOpen" class="side-body">
+            <h4 class="side-title">交易明细 <span class="muted">({{ exitEvents.length }}笔)</span></h4>
+            <div v-if="!exitEvents.length" class="side-empty muted">暂无交易</div>
+            <div v-for="(e, i) in exitEvents" :key="i" class="trade-item"
+                 :class="{ done: e.index <= cursor }">
+              <div class="trade-head">
+                <span class="trade-idx">#{{ exitEvents.length - i }}</span>
+                <span class="mono muted">{{ e.entry_date }} → {{ e.date }}</span>
+                <span class="trade-pnl" :class="(e.net_pnl || 0) >= 0 ? 'up' : 'down'">
+                  {{ (e.net_pnl || 0) >= 0 ? '+' : '' }}{{ e.net_pnl?.toFixed(0) }}
+                </span>
+              </div>
+              <div class="trade-body">
+                <span class="mono">{{ e.entry_price }} → {{ e.price }}</span>
+                <span class="tag mini" :class="e.reason === 'exit_signal' ? 'sell' : 'hold'">{{ reasonCn(e.reason || '') }}</span>
+                <span class="muted tiny">持有{{ e.hold_bars }}根</span>
+              </div>
+              <div class="trade-meta muted tiny">毛{{ e.gross_pnl?.toFixed(0) }} · 费用{{ e.fee?.toFixed(2) }}</div>
+            </div>
+          </div>
+        </aside>
       </div>
-
-      <Card class="mt" v-if="allEvents.filter(e => e.kind === 'exit').length">
-        <h4 class="sec-title">交易明细（真实费用模拟）</h4>
-        <table class="tbl">
-          <thead>
-            <tr>
-              <th>建仓日</th><th class="ar">建仓价</th><th>平仓日</th><th class="ar">平仓价</th>
-              <th class="ar">持有</th><th>卖出原因</th><th class="ar">毛盈亏</th><th class="ar">费用</th><th class="ar">净盈亏</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(e, i) in allEvents.filter(x => x.kind === 'exit')" :key="i">
-              <td class="mono">{{ e.entry_date }}</td>
-              <td class="ar num">{{ e.entry_price }}</td>
-              <td class="mono">{{ e.date }}</td>
-              <td class="ar num">{{ e.price }}</td>
-              <td class="ar num muted">{{ e.hold_bars }}根</td>
-              <td><span class="tag" :class="e.reason === 'exit_signal' ? 'sell' : 'hold'">{{ reasonCn(e.reason || '') }}</span></td>
-              <td class="ar num" :class="(e.gross_pnl || 0) >= 0 ? 'up' : 'down'">{{ (e.gross_pnl || 0) >= 0 ? '+' : '' }}{{ e.gross_pnl?.toFixed(0) }}</td>
-              <td class="ar num muted">{{ e.fee?.toFixed(2) }}</td>
-              <td class="ar num bold" :class="(e.net_pnl || 0) >= 0 ? 'up' : 'down'">{{ (e.net_pnl || 0) >= 0 ? '+' : '' }}{{ e.net_pnl?.toFixed(0) }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </Card>
     </template>
 
     <EmptyState v-if="!allBars.length && !errorMsg && strategyId" message="选择股票和策略后点击「开始回放」" />
+
+    <!-- ═══ 结算弹窗 ═══ -->
+    <div v-if="phase === 'settled' && metrics" class="settle-overlay">
+      <div class="settle-modal">
+        <div class="settle-head">
+          <h3>📊 回合结算</h3>
+          <span class="muted">{{ name }} · {{ strategyName }}</span>
+        </div>
+        <div class="settle-range mono muted">
+          {{ allBars[0]?.date }} ~ {{ allBars[allBars.length - 1]?.date }} · {{ allBars.length }} 根K线
+        </div>
+        <div class="settle-hero">
+          <div class="settle-main" :class="metrics.total_return >= 0 ? 'up' : 'down'">
+            {{ fmtPct(metrics.total_return) }}
+          </div>
+          <div class="settle-main-sub muted">区间总收益</div>
+        </div>
+        <div class="settle-grid">
+          <div class="settle-cell">
+            <div class="k muted">期初资金</div>
+            <div class="v mono">{{ fmtMoney(metrics.initial_balance) }}</div>
+          </div>
+          <div class="settle-cell">
+            <div class="k muted">期末权益</div>
+            <div class="v mono" :class="metrics.final_equity >= metrics.initial_balance ? 'up' : 'down'">{{ fmtMoney(metrics.final_equity) }}</div>
+          </div>
+          <div class="settle-cell">
+            <div class="k muted">交易次数</div>
+            <div class="v mono">{{ metrics.num_trades }}</div>
+          </div>
+          <div class="settle-cell">
+            <div class="k muted">胜率</div>
+            <div class="v mono">{{ (metrics.win_rate * 100).toFixed(1) }}%</div>
+          </div>
+          <div class="settle-cell">
+            <div class="k muted">盈亏比</div>
+            <div class="v mono">{{ metrics.profit_factor }}</div>
+          </div>
+          <div class="settle-cell">
+            <div class="k muted">最大回撤</div>
+            <div class="v mono down">{{ (metrics.max_drawdown * 100).toFixed(1) }}%</div>
+          </div>
+          <div class="settle-cell">
+            <div class="k muted">累计费用</div>
+            <div class="v mono muted">{{ fmtMoney(metrics.cum_fee) }}</div>
+          </div>
+          <div class="settle-cell">
+            <div class="k muted">已实现盈亏</div>
+            <div class="v mono" :class="metrics.realized_pnl >= 0 ? 'up' : 'down'">{{ metrics.realized_pnl >= 0 ? '+' : '' }}{{ fmtMoney(metrics.realized_pnl) }}</div>
+          </div>
+        </div>
+        <div class="settle-actions">
+          <button class="btn" @click="phase = 'trading'">返回查看图表</button>
+          <button class="btn primary" @click="newRound">开始新回合</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -683,13 +826,16 @@ watch(strategyId, (v) => {
 .date-input { width: 148px; }
 .num-input { width: 110px; }
 .code-input:focus, .sel:focus, .date-input:focus, .num-input:focus { border-color: var(--gold); outline: none; }
+.code-input:disabled, .sel:disabled, .date-input:disabled, .num-input:disabled,
+.fs:disabled { opacity: .55; cursor: not-allowed; }
 .btn {
   background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm);
   padding: 6px 12px; color: var(--text); cursor: pointer; font-size: var(--fs-sm);
 }
-.btn:hover { border-color: var(--gold); }
+.btn:hover:not(:disabled) { border-color: var(--gold); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
 .btn.primary { background: var(--gold); color: #1A1D23; border-color: var(--gold); font-weight: 600; }
-.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn.primary:disabled { opacity: .5; }
 .search-pop {
   position: absolute; z-index: 50; background: var(--panel); border: 1px solid var(--border);
   border-radius: var(--radius); margin-top: 4px; max-height: 320px; overflow-y: auto;
@@ -702,22 +848,73 @@ watch(strategyId, (v) => {
 .mt { margin-top: var(--sp-4); }
 
 /* ── 顶部设置卡 ── */
-.settings-bar { display: flex; gap: var(--sp-3); align-items: center; }
+.settings-bar { display: flex; gap: var(--sp-3); align-items: center; flex-wrap: wrap; }
 .summary { font-size: var(--fs-sm); }
 .stock-name { color: var(--gold); font-size: var(--fs-sm); margin-left: auto; }
+.lock-note { font-size: var(--fs-sm); color: var(--gold); display: flex; gap: 4px; align-items: center; margin-left: auto; }
+.lock-icon { font-size: 12px; }
 .settings-body { margin-top: var(--sp-3); padding-top: var(--sp-3); border-top: 1px solid var(--border-soft); }
+.fs { border: none; padding: 0; margin: 0; }
 .settings-row { display: flex; gap: var(--sp-3); flex-wrap: wrap; align-items: flex-end; }
 .param-item { display: flex; flex-direction: column; gap: 4px; }
 .param-item label { font-size: 12px; color: var(--text-sub); }
 .settings-actions { display: flex; gap: var(--sp-3); align-items: center; margin-top: var(--sp-3); flex-wrap: wrap; }
 .note { font-size: 12px; }
+.round-tag { font-weight: 600; }
+.round-tag.done { color: var(--text-sub); }
+.card.locked { border-color: var(--gold); }
+
+/* ── 布局: 主列 + 侧栏 ── */
+.replay-layout { display: flex; gap: var(--sp-4); align-items: flex-start; }
+.main-col { flex: 1; min-width: 0; }
+.side-col {
+  width: 300px; flex-shrink: 0;
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+  overflow: hidden; transition: width var(--dur) var(--ease);
+}
+.side-col:not(.open) { width: 44px; }
+.side-toggle {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px; cursor: pointer; user-select: none;
+  color: var(--text); font-size: var(--fs-sm); font-weight: 600;
+  border-bottom: 1px solid var(--border-soft);
+}
+.side-col:not(.open) .side-toggle {
+  flex-direction: column; gap: 6px; padding: 10px 8px;
+  writing-mode: vertical-rl; text-orientation: mixed; height: 120px;
+}
+.side-toggle:hover { color: var(--gold); }
+.side-count {
+  background: var(--gold); color: #1A1D23; font-size: 11px; font-weight: 700;
+  border-radius: 10px; padding: 1px 7px;
+}
+.side-body { padding: var(--sp-2); max-height: 720px; overflow-y: auto; }
+.side-title { margin: var(--sp-1) 0 var(--sp-2); font-size: var(--fs-sm); color: var(--text); }
+.side-empty { font-size: var(--fs-sm); padding: var(--sp-3); text-align: center; }
+
+/* 交易条目 */
+.trade-item {
+  border: 1px solid var(--border-soft); border-radius: var(--radius-sm);
+  padding: 8px 10px; margin-bottom: var(--sp-2); background: var(--bg);
+  opacity: .45;
+}
+.trade-item.done { opacity: 1; border-color: var(--border); }
+.trade-head { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.trade-idx { color: var(--gold); font-weight: 700; font-family: var(--font-mono); }
+.trade-head .mono { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trade-pnl { font-weight: 700; font-family: var(--font-mono); font-size: 13px; }
+.trade-body { display: flex; gap: 8px; align-items: center; margin-top: 4px; font-size: 12px; }
+.trade-meta { margin-top: 3px; }
+.tiny { font-size: 11px; }
+.tag.mini { padding: 1px 6px; font-size: 11px; }
 
 /* ── 播放控制 ── */
 .ctl { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; padding-bottom: var(--sp-2); }
 .play-btn { min-width: 96px; }
 .speed-sel { width: 104px; }
-.slider { flex: 1; min-width: 140px; accent-color: var(--gold); }
+.slider { flex: 1; min-width: 120px; accent-color: var(--gold); }
 .pos { font-size: var(--fs-sm); color: var(--text-sub); white-space: nowrap; }
+.round-pct { font-size: 12px; white-space: nowrap; }
 .status-line {
   display: flex; gap: var(--sp-3); align-items: center; flex-wrap: wrap;
   font-size: var(--fs-sm); padding: var(--sp-2) 0;
@@ -734,24 +931,47 @@ watch(strategyId, (v) => {
 .chart { width: 100%; height: 540px; min-height: 380px; }
 
 /* ── 账户/指标卡 ── */
-.acct-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: var(--sp-3); }
-.metric-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: var(--sp-3); }
+.acct-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-3); }
+.metric-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-3); }
 .metric-label { font-size: var(--fs-sm); color: var(--text-sub); }
-.metric-val { font-size: 20px; font-weight: 600; color: var(--text); margin-top: 4px; }
+.metric-val { font-size: 18px; font-weight: 600; color: var(--text); margin-top: 4px; }
 .metric-sub { font-size: 12px; margin-top: 2px; }
 .up { color: var(--up); }
 .down { color: var(--down); }
 .muted { color: var(--text-faint); }
 
-/* ── 交易明细 ── */
-.tbl { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
-.tbl th { padding: 8px var(--sp-3); text-align: left; color: var(--text-sub); border-bottom: 1px solid var(--border); }
-.tbl .ar { text-align: right; }
-.tbl tr:hover { background: var(--bg-hover); }
-.tbl td { padding: 8px var(--sp-3); border-bottom: 1px solid var(--border-soft); color: var(--text); }
-.sec-title { margin: 0 0 var(--sp-2); color: var(--text); font-size: var(--fs-md); }
-.num { font-family: var(--font-mono); }
-.bold { font-weight: 600; }
+/* ── 结算弹窗 ── */
+.settle-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(10, 12, 16, .72);
+  display: flex; align-items: center; justify-content: center;
+  animation: fadeIn .18s var(--ease);
+}
+.settle-modal {
+  width: 520px; max-width: 92vw; max-height: 86vh; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--gold);
+  border-radius: var(--radius); padding: var(--sp-5);
+  box-shadow: var(--shadow-lg);
+  animation: popIn .2s var(--ease);
+}
+.settle-head { display: flex; align-items: baseline; gap: var(--sp-3); }
+.settle-head h3 { margin: 0; font-size: 20px; }
+.settle-range { margin-top: 6px; font-size: 12px; }
+.settle-hero { text-align: center; margin: var(--sp-4) 0; }
+.settle-main { font-size: 44px; font-weight: 700; font-family: var(--font-mono); }
+.settle-main-sub { font-size: var(--fs-sm); margin-top: 2px; }
+.settle-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-3); }
+.settle-cell { background: var(--bg); border-radius: var(--radius-sm); padding: var(--sp-3); text-align: center; }
+.settle-cell .k { font-size: 12px; margin-bottom: 4px; }
+.settle-cell .v { font-size: 16px; font-weight: 600; }
+.settle-actions { display: flex; gap: var(--sp-3); justify-content: flex-end; margin-top: var(--sp-4); }
+.settle-actions .btn { padding: 8px 18px; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes popIn { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: scale(1); } }
 
-@media (max-width: 1400px) { .acct-grid, .metric-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 1200px) {
+  .acct-grid, .metric-grid { grid-template-columns: repeat(2, 1fr); }
+  .replay-layout { flex-direction: column; }
+  .side-col, .side-col:not(.open) { width: 100%; }
+}
 </style>
