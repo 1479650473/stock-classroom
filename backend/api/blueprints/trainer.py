@@ -10,10 +10,9 @@ from ..envelope import ok, err
 
 bp = Blueprint("trainer", __name__, url_prefix="/api/trainer")
 
-# Make trainer engine importable
-_TRAINER_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "frontend", "plugins", "trainer"))
-if _TRAINER_DIR not in sys.path:
-    sys.path.insert(0, _TRAINER_DIR)
+# Make trainer engine importable (legacy: 旧版依赖 frontend/plugins/trainer 的 from engine import,
+# 已统一为 backend.trainer_engine, 此处 import 仅保证模块注册)
+import backend.trainer_engine  # noqa: F401
 
 # In-memory session store (per-server-process) + TTL 清理
 _sessions: dict = {}
@@ -58,7 +57,7 @@ def start_session():
         bars = get_kline_data(code, days=days)
         if not bars:
             return err(404, "not_found", "no kline data", retriable=False)
-        from engine import TrainingEngine
+        from backend.trainer_engine import TrainingEngine
         engine = TrainingEngine(bars, {"initial_balance": initial_balance})
         with _sessions_lock:
             sid = _next_id

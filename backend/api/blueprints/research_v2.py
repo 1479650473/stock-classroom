@@ -18,7 +18,7 @@ bp = Blueprint("research_v2", __name__, url_prefix="/api/research")
 # ---------- 私有: 加载研究上下文(缓存帧+契约) ----------
 def _ctx():
     """返回 (frames, contracts_fn). 在 job 内调用(避免阻塞请求线程)."""
-    from frontend.plugins.research.worker import _load_frames, _strategy_contracts
+    from backend.paper_worker import _load_frames, _strategy_contracts
     frames = _load_frames()
     return frames, _strategy_contracts
 
@@ -59,7 +59,7 @@ def backtest():
         c, name = _contract_from(contract, contracts_fn)
         on_progress({"msg": "加载历史帧并回测...", "pct": 30})
         fw = forward_paper_run(frames, c, start, end, initial_balance=c.initial_balance)
-        from frontend.plugins.research.worker import _flatten_rebalance_trades
+        from backend.paper_worker import _flatten_rebalance_trades
         from backend.strategy.metrics import compute_full_metrics
         tr = _flatten_rebalance_trades(fw.get("rebalance_log") or [])
         m = compute_full_metrics(fw["nav_n"], freq_bars=c.rebalance_bars, trades=tr,
@@ -112,7 +112,7 @@ def paper():
     fwd_start = body.get("fwd_start", "2024-01-01")
 
     def _work(payload, on_progress):
-        from frontend.plugins.research.worker import build_paper_only
+        from backend.paper_worker import build_paper_only
         frames, _ = _ctx()
         on_progress({"msg": "组合纸面盘回放(多策略)...", "pct": 20})
         r = build_paper_only(hp=hp, top_k_pct=top_k_pct, fwd_start=fwd_start)
@@ -132,7 +132,7 @@ def compare():
 
     def _work(payload, on_progress):
         from backend.strategy.portfolio_rebalance import forward_paper_run
-        from frontend.plugins.research.worker import _flatten_rebalance_trades
+        from backend.paper_worker import _flatten_rebalance_trades
         from backend.strategy.metrics import compute_full_metrics
         frames, contracts_fn = _ctx()
         out = {}

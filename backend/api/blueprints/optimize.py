@@ -22,7 +22,7 @@ def _load_cache(hp: int):
     """读取 paper_runs.json 缓存(若 hp 匹配), 返回 families dict 或 None."""
     import os
     import json
-    from frontend.plugins.research.worker import _strategy_contracts
+    from backend.paper_worker import _strategy_contracts
     path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
         os.path.dirname(os.path.abspath(__file__))))), "data", "paper_runs.json")
     try:
@@ -75,7 +75,7 @@ def stage_families():
     fwd_start = body.get("fwd_start", "2024-01-01")
 
     def _work(payload, on_progress):
-        from frontend.plugins.research.worker import run_paper_multi
+        from backend.paper_worker import run_paper_multi
         on_progress({"msg": "读取家族回测(优先缓存)...", "pct": 10})
         cached = _load_cache(hp)
         if cached:
@@ -86,7 +86,7 @@ def stage_families():
         if r.get("error"):
             raise RuntimeError(r["error"])
         families = r["runs"]
-        from frontend.plugins.research.worker import _strategy_contracts
+        from backend.paper_worker import _strategy_contracts
         contracts = _strategy_contracts(hp)
         for n in families:
             if isinstance(families[n], dict) and not families[n].get("error"):
@@ -146,7 +146,7 @@ def stage_backtest():
         from backend.strategy.portfolio_rebalance import SelectionContract, forward_paper_run
         from backend.strategy.metrics import compute_full_metrics
         from backend.strategy.describe import describe_contract
-        from frontend.plugins.research.worker import _load_frames, _strategy_contracts
+        from backend.paper_worker import _load_frames, _strategy_contracts
         on_progress({"msg": "加载帧+回测提案契约...", "pct": 20})
         frames = _load_frames()
         nc = SelectionContract(
@@ -192,7 +192,7 @@ def stage_verdict():
         from backend.strategy.portfolio_rebalance import SelectionContract, forward_paper_run
         from backend.strategy.metrics import compute_full_metrics
         from backend.strategy.describe import describe_contract
-        from frontend.plugins.research.worker import _load_frames
+        from backend.paper_worker import _load_frames
         on_progress({"msg": "读取裁决基准...", "pct": 10})
         families = dict(families_body) if isinstance(families_body, dict) else {}
         # 基准: 前端没传 families 则重算(用缓存优先)

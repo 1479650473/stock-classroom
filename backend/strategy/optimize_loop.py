@@ -130,7 +130,7 @@ def run_optimize_loop(use_llm: bool = True, hp: int = 20, account_id: Optional[i
             except Exception:
                 pass
     import copy, json
-    from frontend.plugins.research.worker import run_paper_multi, _strategy_contracts
+    from backend.paper_worker import run_paper_multi, _strategy_contracts
     from backend.strategy.metrics import compute_full_metrics
     from backend.strategy.describe import describe_contract
     from backend.strategy.factor_selector import build_wide_pool
@@ -182,7 +182,7 @@ def run_optimize_loop(use_llm: bool = True, hp: int = 20, account_id: Optional[i
 
     # ③ 回测新契约(带基准 α). 用与 5家族纸面盘一致的帧(缓存, start=WARM, 含基本面).
     _emit("③ 回测新契约...")
-    from frontend.plugins.research.worker import _load_frames
+    from backend.paper_worker import _load_frames
     frames = _load_frames()
     eng = FactorResearchEngine()
     close = eng._panel(frames, "close")

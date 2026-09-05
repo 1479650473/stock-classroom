@@ -13,7 +13,7 @@ hiddenimports = [
     'backend.api.server', 'backend.api.settings_store', 'backend.api.paths',
     'backend.api.envelope', 'backend.api.jobman',
     'data_manager', 'indicators', 'akshare_source', 'data_lhb',
-    'frontend.plugins.research.worker', 'frontend.plugins.trainer.engine',
+    'backend.paper_worker', 'backend.trainer_engine',
     'backend.strategy.metrics', 'backend.strategy.describe',
     'backend.strategy.portfolio_rebalance', 'backend.strategy.regime',
     'backend.strategy.sell_rules', 'backend.strategy.position_guard',
@@ -28,18 +28,16 @@ hiddenimports += collect_submodules('backend.factor_engine')
 a = Analysis(
     [r'D:\小光工作区\projects\stock-classroom\package\run_web_api.py'],
     pathex=[root, r'D:\小光工作区\projects\stock-classroom\backend'],
-    # 注意: 不要把 frontend 加入 pathex —— frontend/platform 会被当成顶层 platform 包,
-    # 遮蔽 stdlib platform, 导致 pandas 等报 "module 'platform' has no attribute ..."
+    # 注意: 不要把 frontend 加入 pathex —— 但该目录已归档删除, 此注释仅存历史警告.
+    # 筹码分布 JS 引擎已迁至 backend/cyq_calculator.js (随包分发)
     binaries=binaries,
-    datas=datas,
+    datas=datas + [(r'D:\小光工作区\projects\stock-classroom\backend\cyq_calculator.js', 'backend')],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=['PyQt5', 'PySide6', 'matplotlib', 'PyQt6', 'scipy', 'torch',
-              'torchvision', 'sklearn', 'tensorflow',
-              'frontend.platform', 'frontend.plugins.agent', 'frontend.plugins.research.panel',
-              'frontend.plugins.research.companion', 'frontend.plugins.trainer.panel'],
+              'torchvision', 'sklearn', 'tensorflow'],
     noarchive=False,
     optimize=0,
 )

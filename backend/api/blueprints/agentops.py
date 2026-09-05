@@ -111,7 +111,7 @@ def portfolio_rebalance():
 def list_strategies():
     """List available strategy contracts with Chinese descriptions (真实5策略, 与研究页一致)."""
     try:
-        from frontend.plugins.research.worker import _strategy_contracts
+        from backend.paper_worker import _strategy_contracts
         from backend.strategy.describe import describe_contract
         out = []
         for name, c in _strategy_contracts(20).items():

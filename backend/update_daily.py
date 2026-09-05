@@ -173,7 +173,7 @@ def run(pool_only=False, skip_paper=False):
 
         # ③ 纸面盘
         if not skip_paper:
-            from frontend.plugins.research.worker import run_paper_multi
+            from backend.paper_worker import run_paper_multi
             lg.info('  纸面盘重算中(约5-8min)...')
             rr = run_paper_multi(hp=20, progress=lambda m, p=None: lg.info('   ' + str(m)))
             if isinstance(rr, dict) and not rr.get('error'):
@@ -208,7 +208,6 @@ def run(pool_only=False, skip_paper=False):
         # ⑥ 个股资讯深挖(🅰️ 选股前几只 → 豆包搜索+LLM主观判断补位)
         try:
             # 用当前选股 top_n 作为深挖候选
-            from frontend.plugins.picks.panel import PicksPanel
             import os as _os
             _db = _os.path.join(ROOT, 'data', 'kline.db')
             from factor_engine import FactorScorer, DEFAULT_FILTERS

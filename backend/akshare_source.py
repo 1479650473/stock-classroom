@@ -656,7 +656,7 @@ def ak_get_cyq_chip_data(code: str, days: int = 1250, window: int = 250) -> List
     except Exception as e:
         log.warning("cyq %s: kline fetch failed: %s", code, str(e)[:60])
         return []
-    js_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "cyq_calculator.js")
+    js_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cyq_calculator.js")
     try:
         with open(js_path, "r", encoding="utf-8") as f:
             js_code = f.read()

@@ -312,7 +312,7 @@ def api_diagnose():
 #  前端 & 静态文件
 # ════════════════════════════════════════════════════════
 
-FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
+FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")  # legacy: 已归档, 路由不再使用
 
 @app.route("/")
 def index():

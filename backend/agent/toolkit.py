@@ -156,7 +156,7 @@ def _do_cancel_order(order_id):
 def _research_worker(name: str, *a, **kw) -> dict:
     try:
         import importlib
-        mod = importlib.import_module("frontend.plugins.research.worker")
+        mod = importlib.import_module("backend.paper_worker")
         res = getattr(mod, name)(*a, **kw)
         return res if isinstance(res, dict) else {"result": res}
     except Exception as e:
@@ -235,7 +235,7 @@ def _do_get_research_snapshot(hp=20):
 def _do_get_strategies():
     """列出全部可用策略契约(真实5家族, 含中文描述)."""
     try:
-        from frontend.plugins.research.worker import _strategy_contracts
+        from backend.paper_worker import _strategy_contracts
         from backend.strategy.describe import describe_contract
         out = []
         for name, c in _strategy_contracts(20).items():
@@ -277,7 +277,7 @@ def _do_backtest_strategy(name=None, contract=None, start=None, end=None):
     """对指定策略(id)或自定义契约回测, 返回完整指标+净值摘要. 可能耗时数十秒."""
     from backend.strategy.portfolio_rebalance import SelectionContract, forward_paper_run
     from backend.strategy.metrics import compute_full_metrics
-    from frontend.plugins.research.worker import _load_frames, _strategy_contracts, _flatten_rebalance_trades
+    from backend.paper_worker import _load_frames, _strategy_contracts, _flatten_rebalance_trades
 
     frames = _load_frames()
     c = None
@@ -329,7 +329,7 @@ def _do_describe_strategy(name=None):
             return got
         names = "、".join(str(x.get("名称", "")) for x in got.get("策略列表", []) if isinstance(x, dict))
         return {"说明": "可用策略: " + names}
-    from frontend.plugins.research.worker import _strategy_contracts
+    from backend.paper_worker import _strategy_contracts
     from backend.strategy.describe import describe_contract
     c = _strategy_contracts(20).get(name)
     if c is None:

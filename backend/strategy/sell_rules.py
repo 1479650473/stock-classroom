@@ -22,13 +22,14 @@ from typing import Optional
 
 from backend.strategy.protection import ProtectionSpec   # 复用成熟保护引擎的参数载体
 
-# 默认保护参数 (保护优先于排名; 用户可选调整)
+# 默认保护参数 —— 与 build() 默认值完全一致(三驱动: 8%止损 + 移动止损10%/15%激活 + 无止盈)
+# 唯一事实来源: 直接构造 SellRuleSet() 与 SellRuleSet.build() 语义相同, 杜绝双默认值漂移.
 DEFAULT_PROTECTION = dict(
-    stop_loss_pct=0.05,          # 止损 5%
-    take_profit_pct=0.12,        # 止盈 12%
-    trailing_stop_pct=0.00,      # 移动止损(默认关, 可开)
-    trailing_activation_pct=0.00,
-    time_limit_bars=0,           # 时间止损: 0=用持有期; >0 覆写
+    stop_loss_pct=0.08,          # 条件止损 8% (兜底防大亏)
+    take_profit_pct=0.0,         # 无固定止盈(让利润奔跑)
+    trailing_stop_pct=0.10,      # 移动止损 10% 回撤
+    trailing_activation_pct=0.15,  # +15% 激活
+    time_limit_bars=0,           # 时间止损: 0=不设(与重平衡周期同长会致 rebalance_exit 永不触发)
 )
 
 

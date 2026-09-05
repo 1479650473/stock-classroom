@@ -9,13 +9,14 @@
 # 核心运行时（必须）
 flask==3.0.0
 flask-cors==4.0.0
-PyQt5>=5.15
-PyQt5-sip>=12.15
 akshare==1.18.64
 pandas==3.0.1
 requests==2.32.5
 py_mini_racer
 openai>=1.0
+
+# PyQt5 旧版已归档(archive/pyqt5-legacy-2026-09-05.zip):
+# 若需运行旧桌面版, 解压后另装: pip install PyQt5 PyQt5-sip
 
 # 可选（仅历史代码引用）
 # matplotlib==3.10.8
