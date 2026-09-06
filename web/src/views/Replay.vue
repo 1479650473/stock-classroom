@@ -71,10 +71,25 @@ const allEvents = ref<ReplayEventExt[]>([])
 const allSpans = ref<number[][]>([])
 const metrics = ref<ReplayResult['metrics'] | null>(null)
 
-// 渐进窗口
-const KEEP_BACK = 50
-const MIN_VISIBLE = 70
+// ── 播放指针(全局索引, 0-based) ──
 const cursor = ref(0)
+
+// 窗口参数: 固定显示 WINDOW_SIZE 根, 窗口左端随 cursor 移动
+const WINDOW_SIZE = 70
+const KEEP_BACK = 50   // cursor 左侧保留历史根数(窗口后 50 历史 + 20 未来预览)
+
+// 渲染窗口(显式计算, 不依赖全局 computed 联动避免时序歧义)
+function getWindow(): { start: number; end: number } {
+  const len = allBars.value.length
+  if (!len) return { start: 0, end: 0 }
+  const cur = Math.min(cursor.value, len - 1)
+  // cursor 在窗口 60% 处, 后面留 40% 未来预览; 窗口右端至少到 cursor
+  const idealStart = cur - KEEP_BACK
+  const start = Math.max(0, idealStart)
+  // 保证窗口至少 WINDOW_SIZE 根(开头向后借, 结尾向前截)
+  const end = Math.min(len - 1, Math.max(cur, start + WINDOW_SIZE - 1))
+  return { start, end }
+}
 
 // 播放
 const playing = ref(false)
@@ -89,20 +104,7 @@ const el = ref<HTMLDivElement>()
 const chart = ref<echarts.ECharts | null>(null)
 const isDark = computed(() => document.documentElement.getAttribute('data-theme') !== 'ivory')
 
-// ── 渐进窗口 ──
-const visibleStart = computed(() => Math.max(0, cursor.value - KEEP_BACK))
-const visibleEnd = computed(() => {
-  const minEnd = visibleStart.value + MIN_VISIBLE - 1
-  return Math.min(allBars.value.length - 1, Math.max(cursor.value, minEnd))
-})
-const visibleBars = computed(() =>
-  allBars.value.slice(visibleStart.value, visibleEnd.value + 1))
-
-function visibleDailyAt(idx: number): ReplayDailyExt | undefined {
-  return allDaily.value[visibleStart.value + idx]
-}
-
-// 当前状态
+// ── 当前状态(供面板/状态栏) ──
 const cursorBar = computed(() => allBars.value[cursor.value])
 const cursorDaily = computed(() => allDaily.value[cursor.value])
 const cursorEvent = computed(() => allEvents.value.find((e) => e.index === cursor.value))
@@ -208,32 +210,36 @@ function pickStock(s: StockRef) {
 
 // ── 回合控制 ──
 function startRound() {
-  // 任何"推进"动作都意味着回合开始: 之后设置锁定
   if (phase.value === 'setup') phase.value = 'trading'
 }
 
 function newRound() {
-  // 结算后开新回合: 回起点, 解锁设置
   stopPlay()
   cursor.value = 0
   phase.value = 'setup'
   settingsOpen.value = true
-  scheduleRender()
+  render()
 }
 
-// ── 图表 ──
+// ═══════════════════════════════════════════════════════════
+//  图表渲染 — 单一渲染管线: render() 依据当前 cursor 计算窗口后全量重绘
+//  每次 cursor 变化只会触发一次 render(经 rAF 合并), 图表与数据严格同步
+// ═══════════════════════════════════════════════════════════
 function buildOption(): echarts.EChartsCoreOption {
   const upColor = cssVar('--up', '#E84040')
   const downColor = cssVar('--down', '#2DB757')
   const gridText = isDark.value ? '#8A8F9A' : '#666'
   const gridLine = isDark.value ? '#2A2D35' : '#E5E7EB'
 
-  const bars = visibleBars.value
+  const { start, end } = getWindow()
+  const bars = allBars.value.slice(start, end + 1)
+  const total = bars.length
+  if (!total) return {}
   const dates = bars.map((b) => b.date)
   const ohlc = bars.map((b) => [b.open, b.close, b.low, b.high])
   const volumes = bars.map((b) => b.volume)
   const colors = bars.map((b) => (b.close >= b.open ? upColor : downColor))
-  const vStart = visibleStart.value
+  const curLocal = cursor.value - start
 
   const ma = (n: number) =>
     bars.map((_, i) => {
@@ -243,29 +249,36 @@ function buildOption(): echarts.EChartsCoreOption {
       return +(sum / n).toFixed(2)
     })
 
+  // 买卖点(仅显示到当前 cursor 为止的事件, 但保留全部标记便于观察)
   const markPoints: { coord: [number, number]; value: string; symbol: string; symbolSize: number; itemStyle: { color: string } }[] = []
-  const markAreas: Array<Array<{ xAxis: number; itemStyle?: { color: string } }>> = []
-
   for (const e of allEvents.value) {
-    const local = e.index - vStart
-    if (local < 0 || local >= bars.length) continue
+    if (e.index < start || e.index > end) continue
+    const local = e.index - start
     if (e.kind === 'entry') {
       markPoints.push({ coord: [local, e.price], value: 'B', symbol: 'pin', symbolSize: 24, itemStyle: { color: '#2DB757' } })
     } else {
       markPoints.push({ coord: [local, e.price], value: 'S', symbol: 'pin', symbolSize: 24, itemStyle: { color: '#E84040' } })
     }
   }
+
+  // 持仓区间(裁剪到当前窗口; 仅显示已经发生的持仓段, 即 exit <= cursor 或 正在持仓中)
+  const markAreas: Array<Array<{ xAxis: number; itemStyle?: { color: string } }>> = []
   for (const [s, e] of allSpans.value) {
-    const ls = s - vStart
-    const le = Math.min(e, cursor.value) - vStart
-    if (le < 0 || ls >= bars.length) continue
+    const visibleEnd = Math.min(e, cursor.value)   // 只显示已"发生"的持仓
+    if (visibleEnd < start || s > end) continue
+    const ls = Math.max(s, start)
+    const le = Math.min(visibleEnd, end)
+    if (le < ls) continue
     markAreas.push([
-      { xAxis: Math.max(0, ls), itemStyle: { color: 'rgba(45,183,87,0.13)' } },
-      { xAxis: Math.min(bars.length - 1, le) },
+      { xAxis: ls - start, itemStyle: { color: 'rgba(45,183,87,0.13)' } },
+      { xAxis: le - start },
     ])
   }
 
-  const curLocal = cursor.value - vStart
+  // 播放头竖线(独立 markLine)
+  const markLines = [
+    { xAxis: curLocal, lineStyle: { color: '#D4A574', type: 'dashed' as const, width: 1 } },
+  ]
 
   return {
     animation: false,
@@ -282,10 +295,11 @@ function buildOption(): echarts.EChartsCoreOption {
         if (!b) return ''
         const chg = ((b.close - b.open) / b.open * 100).toFixed(2)
         const color = b.close >= b.open ? upColor : downColor
-        const d = visibleDailyAt(p.dataIndex)
+        const absIdx = start + p.dataIndex
+        const d = allDaily.value[absIdx]
         const posTag = d?.position ? '<span style="color:#2DB757">●持仓</span>' : ''
         const sig = d?.signal_buy ? ' <b style="color:#2DB757">买入信号</b>' : d?.signal_sell ? ' <b style="color:#E84040">卖出信号</b>' : ''
-        const ev = allEvents.value.find((x) => x.index === vStart + p.dataIndex)
+        const ev = allEvents.value.find((x) => x.index === absIdx)
         const evTag = ev ? (ev.kind === 'entry'
           ? ' <b style="color:#2DB757">▲建仓 @' + ev.price + (ev.qty ? ' ×' + ev.qty + '股' : '') + '</b>'
           : ' <b style="color:#E84040">▼平仓 @' + ev.price + (ev.reason ? ' (' + reasonCn(ev.reason) + ')' : '') + (ev.net_pnl !== undefined ? ' 净盈亏' + (ev.net_pnl >= 0 ? '+' : '') + ev.net_pnl : '') + '</b>') : ''
@@ -352,6 +366,7 @@ function buildOption(): echarts.EChartsCoreOption {
           label: { show: true, color: '#fff', fontSize: 9, fontWeight: 'bold' },
           itemStyle: { borderColor: '#fff', borderWidth: 1 },
         },
+        markLine: { silent: true, symbol: 'none', data: markLines },
       },
       { name: 'MA5', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: ma(5), smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#E8B84B' } },
       { name: 'MA20', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: ma(20), smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#C16BE0' } },
@@ -365,7 +380,7 @@ function buildOption(): echarts.EChartsCoreOption {
         name: '权益',
         type: 'line',
         xAxisIndex: 2, yAxisIndex: 2,
-        data: bars.map((_, i) => visibleDailyAt(i)?.equity ?? null),
+        data: bars.map((_, i) => allDaily.value[start + i]?.equity ?? null),
         symbol: 'none',
         lineStyle: { width: 1.2, color: '#5B8FF9' },
         areaStyle: { color: 'rgba(91,143,249,0.12)' },
@@ -382,63 +397,21 @@ function reasonCn(r: string): string {
   return m[r] || r
 }
 
-// ── 渲染: 拆分全量渲染(窗口变化) 与 播放头轻量更新(仅 markLine) ──
-let rafPending = false
-function scheduleRender() {
-  if (rafPending) return
-  rafPending = true
-  requestAnimationFrame(() => {
-    rafPending = false
-    renderFull()
-  })
+// 渲染入口: 同步渲染(scheduleStep/单步/拖动/窗口变化直接渲染, 不依赖 rAF —— rAF 在隐藏页会挂起,
+// 且渲染量小(<70根K线 ~30ms), 600ms一拍完全可承受)
+function render() {
+  doRender()
 }
 
-function renderFull() {
-  if (!chart.value || !visibleBars.value.length) return
+function doRender() {
+  if (!chart.value || !allBars.value.length) return
   try {
     chart.value.setOption(buildOption(), true)
-    lastFullCursor = cursor.value
-    lastRenderedStart = visibleStart.value
-    renderPlayhead()
   } catch (e) {
     console.warn('chart setOption failed, re-init', e)
-    try {
-      chart.value?.dispose()
-    } catch { /* ignore */ }
+    try { chart.value?.dispose() } catch { /* ignore */ }
     chart.value = null
-    // 重建一次; 若再失败则放弃(避免无限递归)
-    try {
-      initChart()
-    } catch (e2) {
-      console.warn('chart re-init failed', e2)
-    }
-  }
-}
-
-// 仅更新播放头竖线: CSS 覆盖层(零 ECharts 重渲染成本)
-let lastFullCursor = -1
-let lastRenderedStart = -1
-function renderPlayhead() {
-  const curLocal = cursor.value - visibleStart.value
-  if (curLocal < 0 || curLocal >= visibleBars.value.length) {
-    renderFull()
-    return
-  }
-  // 持仓中每 4 根全量渲染一次(markArea 持仓带随播放生长); 空仓/普通推进仅移动播放头线
-  const d = allDaily.value[cursor.value]
-  const needFull = d?.position && (cursor.value - lastFullCursor >= 4)
-  if (needFull) {
-    renderFull()
-    return
-  }
-  const line = document.getElementById('playhead-line')
-  const chartEl = el.value
-  if (line && chartEl) {
-    const total = visibleBars.value.length
-    const contentW = chartEl.clientWidth - 80
-    const left = 60 + ((curLocal + 0.5) / total) * contentW
-    line.style.left = left + 'px'
-    line.style.display = 'block'
+    try { initChart() } catch (e2) { console.warn('chart re-init failed', e2) }
   }
 }
 
@@ -446,13 +419,14 @@ function initChart() {
   if (!el.value) return
   if (chart.value) { chart.value.dispose(); chart.value = null }
   chart.value = echarts.init(el.value, undefined, { renderer: 'canvas' })
-  renderFull()
+  doRender()
 }
 
-// ── 播放控制 ──
-// 播放控制 ── requestAnimationFrame 驱动(可见时精准; 隐藏时浏览器自动暂停rAF, 恢复后继续, 不积压) ──
-let rafId: number | null = null
-let lastStepAt = 0
+// ═══════════════════════════════════════════════════════════
+//  播放控制 — 一根一根: 每拍【推进1根 + 渲染】, 渲染完成后调度下一拍
+//  不使用自转时间轴(rAF/interval), 保证渲染与指针严格一致, 绝不跳帧
+// ═══════════════════════════════════════════════════════════
+let stepTimer: ReturnType<typeof setTimeout> | null = null
 
 function togglePlay() {
   if (!allBars.value.length || phase.value === 'settled') return
@@ -460,48 +434,41 @@ function togglePlay() {
   playing.value = !playing.value
   if (playing.value) {
     if (cursor.value >= allBars.value.length - 1) cursor.value = 0
-    lastStepAt = performance.now()
-    startTimer()
+    scheduleStep()
   } else {
     stopPlay()
   }
 }
 
-function startTimer() {
-  if (rafId !== null) return
-  const loop = (now: number) => {
-    rafId = null
+// 单拍: 推进 cursor(1根) → 同步渲染 → 调度下一拍(播放与渲染严格同步, 一根一根)
+function scheduleStep() {
+  if (!playing.value) return
+  const interval = SPEED_MS[speed.value] ?? 600
+  stepTimer = setTimeout(() => {
+    stepTimer = null
     if (!playing.value) return
-    const interval = SPEED_MS[speed.value] ?? 600
-    if (now - lastStepAt >= interval) {
-      lastStepAt = now
-      if (cursor.value >= allBars.value.length - 1) {
-        stopPlay()
-        phase.value = 'settled'
-        return
-      }
-      try {
-        cursor.value++
-      } catch (e) {
-        console.warn('tick failed', e)
-      }
+    if (cursor.value >= allBars.value.length - 1) {
+      stopPlay()
+      phase.value = 'settled'
+      return
     }
-    rafId = requestAnimationFrame(loop)
-  }
-  rafId = requestAnimationFrame(loop)
+    cursor.value++
+    render()
+    scheduleStep()
+  }, interval)
 }
 
 function stopPlay() {
   playing.value = false
-  if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null }
+  if (stepTimer) { clearTimeout(stepTimer); stepTimer = null }
 }
 
 function restartTimer() {
   const wasPlaying = playing.value
-  if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null }
+  stopPlay()
   if (wasPlaying) {
-    lastStepAt = performance.now()
-    startTimer()
+    playing.value = true
+    scheduleStep()
   }
 }
 
@@ -510,6 +477,7 @@ function stepFwd() {
   startRound()
   if (cursor.value < allBars.value.length - 1) {
     cursor.value++
+    render()
     if (cursor.value >= allBars.value.length - 1) phase.value = 'settled'
   }
 }
@@ -517,7 +485,10 @@ function stepFwd() {
 function stepBack() {
   if (phase.value === 'settled') return
   startRound()
-  if (cursor.value > 0) cursor.value--
+  if (cursor.value > 0) {
+    cursor.value--
+    render()
+  }
 }
 
 function onSliderInput(ev: Event) {
@@ -525,6 +496,7 @@ function onSliderInput(ev: Event) {
   startRound()
   const v = Number((ev.target as HTMLInputElement).value)
   cursor.value = v
+  render()
   if (v >= allBars.value.length - 1) {
     stopPlay()
     phase.value = 'settled'
@@ -532,14 +504,7 @@ function onSliderInput(ev: Event) {
 }
 
 watch(speed, () => { if (playing.value) restartTimer() })
-watch(cursor, () => {
-  // 窗口起点与上次渲染不一致 → 全量重绘(窗口滑动); 否则仅移动播放头
-  if (visibleStart.value !== lastRenderedStart) {
-    scheduleRender()
-  } else {
-    renderPlayhead()
-  }
-})
+watch(cursor, () => { /* 状态栏/账户面板已由响应式驱动; 图表由 render() 显式调用 */ })
 
 // 买入方式切换重置合理默认值
 watch(sizingMode, (m) => {
@@ -555,13 +520,13 @@ function fmtMoney(v: number) { return v.toLocaleString('zh-CN', { maximumFractio
 // 主题响应 + resize
 const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => {
   chart.value?.resize()
-  scheduleRender()
+  render()
 }) : null
 let mo: MutationObserver | null = null
 
 onMounted(() => {
   loadStrategies()
-  mo = new MutationObserver(() => { if (chart.value) renderFull() })
+  mo = new MutationObserver(() => { if (chart.value) render() })
   mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
 })
 
@@ -586,7 +551,7 @@ watch(() => allBars.value.length, async (len) => {
 watch(sideOpen, async () => {
   await nextTick()
   chart.value?.resize()
-  scheduleRender()
+  render()
 })
 
 watch(strategyId, (v) => {
@@ -736,7 +701,6 @@ watch(strategyId, (v) => {
             </div>
             <div class="chart-wrap">
               <div ref="el" class="chart"></div>
-              <div id="playhead-line" class="playhead-line"></div>
             </div>
           </Card>
 
@@ -1007,15 +971,10 @@ watch(strategyId, (v) => {
 .tag.idle { background: rgba(138,143,154,.15); }
 .tag.buy { background: rgba(45,183,87,.2); color: var(--down); font-weight: 600; }
 .tag.sell { background: rgba(232,64,64,.2); color: var(--up); font-weight: 600; }
+
+/* ── 图表 ── */
 .chart-wrap { position: relative; width: 100%; }
 .chart { width: 100%; height: 540px; min-height: 380px; }
-.playhead-line {
-  position: absolute; top: 20px; bottom: 260px;
-  width: 1px; background: #D4A574;
-  display: none; pointer-events: none;
-  box-shadow: 0 0 4px rgba(212, 165, 116, .6);
-  z-index: 5;
-}
 
 /* ── 账户/指标卡 ── */
 .acct-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-3); }
