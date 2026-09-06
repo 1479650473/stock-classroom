@@ -74,20 +74,41 @@ const metrics = ref<ReplayResult['metrics'] | null>(null)
 // ── 播放指针(全局索引, 0-based) ──
 const cursor = ref(0)
 
-// 窗口参数: 固定显示 WINDOW_SIZE 根, 窗口左端随 cursor 移动
-const WINDOW_SIZE = 70
-const KEEP_BACK = 50   // cursor 左侧保留历史根数(窗口后 50 历史 + 20 未来预览)
+// 图表
+const el = ref<HTMLDivElement>()
+const chart = ref<echarts.ECharts | null>(null)
+const isDark = computed(() => document.documentElement.getAttribute('data-theme') !== 'ivory')
 
-// 渲染窗口(显式计算, 不依赖全局 computed 联动避免时序歧义)
+// ── 自适应尺寸: 容器宽度决定 K线根数(每根恒定宽度不压缩) + 窄模式隐藏辅助子图 ──
+const chartW = ref(0)
+const chartH = ref(0)
+const K_BAR = 9                       // 每根K线目标宽度(px)
+const MAX_BARS = 90                   // 最宽时最多显示根数
+const MIN_BARS = 24                   // 最窄时最少显示根数
+const compactMode = ref(false)        // 窄模式: 隐藏成交量/权益子图, 保K线可读
+
+function updateChartSize() {
+  if (!el.value) return
+  chartW.value = el.value.clientWidth
+  chartH.value = el.value.clientHeight
+  compactMode.value = chartW.value < 480
+}
+
+// 窗口随宽度自适应: 数量=能容纳的根数(宽度/每根), K 线宽度恒定不压缩
 function getWindow(): { start: number; end: number } {
   const len = allBars.value.length
   if (!len) return { start: 0, end: 0 }
   const cur = Math.min(cursor.value, len - 1)
-  // cursor 在窗口 60% 处, 后面留 40% 未来预览; 窗口右端至少到 cursor
-  const idealStart = cur - KEEP_BACK
+  const w = chartW.value || 800
+  // 每根实际宽度: K_BAR 恒定, 但保证最少/最多根数
+  const barW = Math.max(6, Math.min(K_BAR, (w - 80) / MIN_BARS))
+  const maxPerWidth = Math.floor((w - 80) / barW)
+  const winSize = Math.max(MIN_BARS, Math.min(MAX_BARS, maxPerWidth))
+  const keepBack = Math.min(winSize - 1, 50)   // 左侧保留历史根数
+  const idealStart = cur - keepBack
   const start = Math.max(0, idealStart)
-  // 保证窗口至少 WINDOW_SIZE 根(开头向后借, 结尾向前截)
-  const end = Math.min(len - 1, Math.max(cur, start + WINDOW_SIZE - 1))
+  // 窗口右端至少到 cur(若 start+winSize-1 更右则向右取), 尾部截到数据末尾
+  const end = Math.min(len - 1, Math.max(cur, start + winSize - 1))
   return { start, end }
 }
 
@@ -98,11 +119,6 @@ const SPEED_MS: Record<number, number> = { 0.25: 2400, 0.5: 1200, 1: 600, 2: 300
 
 // 侧栏(交易明细)
 const sideOpen = ref(true)
-
-// 图表
-const el = ref<HTMLDivElement>()
-const chart = ref<echarts.ECharts | null>(null)
-const isDark = computed(() => document.documentElement.getAttribute('data-theme') !== 'ivory')
 
 // ── 当前状态(供面板/状态栏) ──
 const cursorBar = computed(() => allBars.value[cursor.value])
@@ -249,7 +265,7 @@ function buildOption(): echarts.EChartsCoreOption {
       return +(sum / n).toFixed(2)
     })
 
-  // 买卖点(仅显示到当前 cursor 为止的事件, 但保留全部标记便于观察)
+  // 买卖点(仅当前窗口内的, 保留全部标记便于观察)
   const markPoints: { coord: [number, number]; value: string; symbol: string; symbolSize: number; itemStyle: { color: string } }[] = []
   for (const e of allEvents.value) {
     if (e.index < start || e.index > end) continue
@@ -261,10 +277,10 @@ function buildOption(): echarts.EChartsCoreOption {
     }
   }
 
-  // 持仓区间(裁剪到当前窗口; 仅显示已经发生的持仓段, 即 exit <= cursor 或 正在持仓中)
+  // 持仓区间(裁剪到窗口; 仅显示已发生的持仓段)
   const markAreas: Array<Array<{ xAxis: number; itemStyle?: { color: string } }>> = []
   for (const [s, e] of allSpans.value) {
-    const visibleEnd = Math.min(e, cursor.value)   // 只显示已"发生"的持仓
+    const visibleEnd = Math.min(e, cursor.value)
     if (visibleEnd < start || s > end) continue
     const ls = Math.max(s, start)
     const le = Math.min(visibleEnd, end)
@@ -275,10 +291,103 @@ function buildOption(): echarts.EChartsCoreOption {
     ])
   }
 
-  // 播放头竖线(独立 markLine)
+  // 播放头竖线
   const markLines = [
     { xAxis: curLocal, lineStyle: { color: '#D4A574', type: 'dashed' as const, width: 1 } },
   ]
+
+  // 窄模式: 只保留 K 线主图(成交量/权益子图隐藏), K 线不横向压缩
+  const compact = compactMode.value
+  const grids = compact
+    ? [{ left: 60, right: 20, top: 20, bottom: 40 }]
+    : [
+        { left: 60, right: 20, top: 20, height: '52%' },
+        { left: 60, right: 20, top: '70%', height: '12%' },
+        { left: 60, right: 20, top: '85%', height: '8%' },
+      ]
+  const xAxes = compact
+    ? [{
+        type: 'category', data: dates, gridIndex: 0,
+        axisLine: { lineStyle: { color: gridLine } },
+        axisLabel: { color: gridText, fontSize: 10 },
+        splitLine: { show: false },
+      }]
+    : [
+        {
+          type: 'category', data: dates, gridIndex: 0,
+          axisLine: { lineStyle: { color: gridLine } },
+          axisLabel: { show: false },
+          splitLine: { show: false },
+        },
+        {
+          type: 'category', data: dates, gridIndex: 1,
+          axisLine: { lineStyle: { color: gridLine } },
+          axisLabel: { show: false },
+          splitLine: { show: false },
+        },
+        {
+          type: 'category', data: dates, gridIndex: 2,
+          axisLine: { lineStyle: { color: gridLine } },
+          axisLabel: { color: gridText, fontSize: 10 },
+          splitLine: { show: false },
+        },
+      ]
+  const yAxes = compact
+    ? [{
+        type: 'value', gridIndex: 0, scale: true,
+        splitLine: { lineStyle: { color: gridLine, type: 'dashed' } },
+        axisLabel: { color: gridText, fontSize: 10 },
+      }]
+    : [
+        {
+          type: 'value', gridIndex: 0, scale: true,
+          splitLine: { lineStyle: { color: gridLine, type: 'dashed' } },
+          axisLabel: { color: gridText, fontSize: 10 },
+        },
+        {
+          type: 'value', gridIndex: 1, scale: true,
+          splitNumber: 2, axisLabel: { show: false }, splitLine: { show: false },
+        },
+        {
+          type: 'value', gridIndex: 2, scale: true,
+          splitNumber: 2, axisLabel: { show: false }, splitLine: { show: false },
+        },
+      ]
+
+  const series: unknown[] = [{
+    id: 'candlestick',
+    type: 'candlestick',
+    xAxisIndex: 0, yAxisIndex: 0,
+    data: ohlc,
+    barMaxWidth: K_BAR,
+    itemStyle: { color: upColor, color0: downColor, borderColor: upColor, borderColor0: downColor },
+    markArea: { silent: true, data: markAreas },
+    markPoint: {
+      symbol: 'pin', symbolSize: 24, data: markPoints,
+      label: { show: true, color: '#fff', fontSize: 9, fontWeight: 'bold' },
+      itemStyle: { borderColor: '#fff', borderWidth: 1 },
+    },
+    markLine: { silent: true, symbol: 'none', data: markLines },
+  }]
+  series.push({ name: 'MA5', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: ma(5), smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#E8B84B' } })
+  series.push({ name: 'MA20', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: ma(20), smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#C16BE0' } })
+  if (!compact) {
+    series.push({
+      type: 'bar',
+      xAxisIndex: 1, yAxisIndex: 1,
+      data: volumes.map((v, i) => ({ value: v, itemStyle: { color: colors[i] + '88' } })),
+      barMaxWidth: 8,
+    })
+    series.push({
+      name: '权益',
+      type: 'line',
+      xAxisIndex: 2, yAxisIndex: 2,
+      data: bars.map((_, i) => allDaily.value[start + i]?.equity ?? null),
+      symbol: 'none',
+      lineStyle: { width: 1.2, color: '#5B8FF9' },
+      areaStyle: { color: 'rgba(91,143,249,0.12)' },
+    })
+  }
 
   return {
     animation: false,
@@ -312,82 +421,13 @@ function buildOption(): echarts.EChartsCoreOption {
       },
     },
     axisPointer: { link: [{ xAxisIndex: [0, 1] }] },
-    grid: [
-      { left: 60, right: 20, top: 20, height: '52%' },
-      { left: 60, right: 20, top: '70%', height: '12%' },
-      { left: 60, right: 20, top: '85%', height: '8%' },
-    ],
-    xAxis: [
-      {
-        type: 'category', data: dates, gridIndex: 0,
-        axisLine: { lineStyle: { color: gridLine } },
-        axisLabel: { show: false },
-        splitLine: { show: false },
-      },
-      {
-        type: 'category', data: dates, gridIndex: 1,
-        axisLine: { lineStyle: { color: gridLine } },
-        axisLabel: { show: false },
-        splitLine: { show: false },
-      },
-      {
-        type: 'category', data: dates, gridIndex: 2,
-        axisLine: { lineStyle: { color: gridLine } },
-        axisLabel: { color: gridText, fontSize: 10 },
-        splitLine: { show: false },
-      },
-    ],
-    yAxis: [
-      {
-        type: 'value', gridIndex: 0, scale: true,
-        splitLine: { lineStyle: { color: gridLine, type: 'dashed' } },
-        axisLabel: { color: gridText, fontSize: 10 },
-      },
-      {
-        type: 'value', gridIndex: 1, scale: true,
-        splitNumber: 2, axisLabel: { show: false }, splitLine: { show: false },
-      },
-      {
-        type: 'value', gridIndex: 2, scale: true,
-        splitNumber: 2, axisLabel: { show: false }, splitLine: { show: false },
-      },
-    ],
-    series: [
-      {
-        id: 'candlestick',
-        type: 'candlestick',
-        xAxisIndex: 0, yAxisIndex: 0,
-        data: ohlc,
-        barMaxWidth: 11,
-        itemStyle: { color: upColor, color0: downColor, borderColor: upColor, borderColor0: downColor },
-        markArea: { silent: true, data: markAreas },
-        markPoint: {
-          symbol: 'pin', symbolSize: 24, data: markPoints,
-          label: { show: true, color: '#fff', fontSize: 9, fontWeight: 'bold' },
-          itemStyle: { borderColor: '#fff', borderWidth: 1 },
-        },
-        markLine: { silent: true, symbol: 'none', data: markLines },
-      },
-      { name: 'MA5', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: ma(5), smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#E8B84B' } },
-      { name: 'MA20', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: ma(20), smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#C16BE0' } },
-      {
-        type: 'bar',
-        xAxisIndex: 1, yAxisIndex: 1,
-        data: volumes.map((v, i) => ({ value: v, itemStyle: { color: colors[i] + '88' } })),
-        barMaxWidth: 8,
-      },
-      {
-        name: '权益',
-        type: 'line',
-        xAxisIndex: 2, yAxisIndex: 2,
-        data: bars.map((_, i) => allDaily.value[start + i]?.equity ?? null),
-        symbol: 'none',
-        lineStyle: { width: 1.2, color: '#5B8FF9' },
-        areaStyle: { color: 'rgba(91,143,249,0.12)' },
-      },
-    ],
+    grid: grids,
+    xAxis: xAxes,
+    yAxis: yAxes,
+    series,
   }
 }
+
 
 function reasonCn(r: string): string {
   const m: Record<string, string> = {
@@ -418,8 +458,10 @@ function doRender() {
 function initChart() {
   if (!el.value) return
   if (chart.value) { chart.value.dispose(); chart.value = null }
+  updateChartSize()
   chart.value = echarts.init(el.value, undefined, { renderer: 'canvas' })
   doRender()
+  if (ro && el.value) ro.observe(el.value)
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -517,8 +559,9 @@ watch(sizingMode, (m) => {
 function fmtPct(v: number) { return (v >= 0 ? '+' : '') + (v * 100).toFixed(2) + '%' }
 function fmtMoney(v: number) { return v.toLocaleString('zh-CN', { maximumFractionDigits: 0 }) }
 
-// 主题响应 + resize
+// 主题响应 + resize(尺寸变化时更新窗口参数并重绘)
 const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => {
+  updateChartSize()
   chart.value?.resize()
   render()
 }) : null
@@ -550,6 +593,7 @@ watch(() => allBars.value.length, async (len) => {
 // 侧栏开合时图表尺寸自适应 + 重绘
 watch(sideOpen, async () => {
   await nextTick()
+  updateChartSize()
   chart.value?.resize()
   render()
 })
@@ -700,7 +744,7 @@ watch(strategyId, (v) => {
               </span>
             </div>
             <div class="chart-wrap">
-              <div ref="el" class="chart"></div>
+              <div ref="el" class="chart" :style="{ height: chartH || 'clamp(380px, 55vh, 640px)' }"></div>
             </div>
           </Card>
 
@@ -974,7 +1018,7 @@ watch(strategyId, (v) => {
 
 /* ── 图表 ── */
 .chart-wrap { position: relative; width: 100%; }
-.chart { width: 100%; height: 540px; min-height: 380px; }
+.chart { width: 100%; min-height: 380px; height: clamp(380px, 55vh, 640px); }
 
 /* ── 账户/指标卡 ── */
 .acct-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-3); }
