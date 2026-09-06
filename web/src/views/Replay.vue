@@ -82,9 +82,9 @@ const isDark = computed(() => document.documentElement.getAttribute('data-theme'
 // ── 自适应尺寸: 容器宽度决定 K线根数(每根恒定宽度不压缩) + 窄模式隐藏辅助子图 ──
 const chartW = ref(0)
 const chartH = ref(0)
-const K_BAR = 9                       // 每根K线目标宽度(px)
+const K_BAR = 10                      // 每根K线目标宽度(px)
 const MAX_BARS = 90                   // 最宽时最多显示根数
-const MIN_BARS = 24                   // 最窄时最少显示根数
+const MIN_BARS = 12                   // 最窄时最少显示根数(保证可读性,宽时>12)
 const compactMode = ref(false)        // 窄模式: 隐藏成交量/权益子图, 保K线可读
 
 function updateChartSize() {
@@ -100,14 +100,14 @@ function getWindow(): { start: number; end: number } {
   if (!len) return { start: 0, end: 0 }
   const cur = Math.min(cursor.value, len - 1)
   const w = chartW.value || 800
-  // 每根实际宽度: K_BAR 恒定, 但保证最少/最多根数
-  const barW = Math.max(6, Math.min(K_BAR, (w - 80) / MIN_BARS))
-  const maxPerWidth = Math.floor((w - 80) / barW)
-  const winSize = Math.max(MIN_BARS, Math.min(MAX_BARS, maxPerWidth))
+  // 可用绘图宽度 = 容器减去 yAxis 标签等 (~80px)
+  const availW = Math.max(80, w - 80)
+  // 按目标宽度 K_BAR 计算能放多少根, 但最少 MIN_BARS 根
+  const winSize = Math.max(MIN_BARS, Math.min(MAX_BARS, Math.floor(availW / K_BAR)))
   const keepBack = Math.min(winSize - 1, 50)   // 左侧保留历史根数
   const idealStart = cur - keepBack
   const start = Math.max(0, idealStart)
-  // 窗口右端至少到 cur(若 start+winSize-1 更右则向右取), 尾部截到数据末尾
+  // 窗口右端至少到 cur, 尾部截到数据末尾
   const end = Math.min(len - 1, Math.max(cur, start + winSize - 1))
   return { start, end }
 }
@@ -359,7 +359,7 @@ function buildOption(): echarts.EChartsCoreOption {
     type: 'candlestick',
     xAxisIndex: 0, yAxisIndex: 0,
     data: ohlc,
-    barMaxWidth: K_BAR,
+    barWidth: K_BAR,
     itemStyle: { color: upColor, color0: downColor, borderColor: upColor, borderColor0: downColor },
     markArea: { silent: true, data: markAreas },
     markPoint: {
@@ -376,7 +376,7 @@ function buildOption(): echarts.EChartsCoreOption {
       type: 'bar',
       xAxisIndex: 1, yAxisIndex: 1,
       data: volumes.map((v, i) => ({ value: v, itemStyle: { color: colors[i] + '88' } })),
-      barMaxWidth: 8,
+      barWidth: 6,
     })
     series.push({
       name: '权益',
@@ -420,7 +420,7 @@ function buildOption(): echarts.EChartsCoreOption {
         </div>`
       },
     },
-    axisPointer: { link: [{ xAxisIndex: [0, 1] }] },
+    ...(compact ? {} : { axisPointer: { link: [{ xAxisIndex: [0, 1, 2] }] } }),
     grid: grids,
     xAxis: xAxes,
     yAxis: yAxes,
@@ -744,7 +744,7 @@ watch(strategyId, (v) => {
               </span>
             </div>
             <div class="chart-wrap">
-              <div ref="el" class="chart" :style="{ height: chartH || 'clamp(380px, 55vh, 640px)' }"></div>
+              <div ref="el" class="chart"></div>
             </div>
           </Card>
 
