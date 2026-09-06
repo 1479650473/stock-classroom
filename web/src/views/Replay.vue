@@ -257,11 +257,13 @@ function buildOption(): echarts.EChartsCoreOption {
   const colors = bars.map((b) => (b.close >= b.open ? upColor : downColor))
   const curLocal = cursor.value - start
 
+  // MA 线应基于全局历史数据(否则窗口内根数 < n 时整条线为 null 不可见)
   const ma = (n: number) =>
     bars.map((_, i) => {
-      if (i < n - 1) return null
+      const g = start + i   // 窗口内第 i 根对应的全局索引
+      if (g < n - 1) return null
       let sum = 0
-      for (let j = i - n + 1; j <= i; j++) sum += bars[j].close
+      for (let j = g - n + 1; j <= g; j++) sum += allBars.value[j].close
       return +(sum / n).toFixed(2)
     })
 
