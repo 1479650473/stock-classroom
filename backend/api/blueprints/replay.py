@@ -85,13 +85,14 @@ def replay():
         from indicators import enrich_kline
         from backend.strategy.replay import replay_contract
 
-        kd = get_kline_data(code, days)
+        # 统一多取 warmup 根(指标/因子预热用): 默认回放最近 days 根, 预热段不出现在展示区
+        warmup = 150
+        kd = get_kline_data(code, days + warmup)
         if not kd:
             return err(404, "no_kline", f"{code} 无K线数据")
         kd = enrich_kline(kd)
 
         # 日期区间截取(含预热窗口): 展示区间= [start, end], 预热窗口取 start 前 150 根
-        warmup = 150
         start_compact = start_date.replace("-", "")[:8] if start_date else ""
         end_compact = end_date.replace("-", "")[:8] if end_date else ""
         warmup_bars = 0
@@ -117,6 +118,11 @@ def replay():
                 warmup_bars = 0
             else:
                 warmup_bars = min(warmup, warmup_bars)
+        else:
+            # 默认: 数据已多取 warmup 根, 优先保留 warmup 根作预热(均线/因子准确),
+            # 展示段=预热后的全部(数据不足 days 则展示较少, 如早期上市股);
+            # 不裁剪, 由 replay_contract 按 warmup_bars 跳过预热段输出展示区
+            warmup_bars = warmup if len(kd) > warmup else 0
 
         contract = None
         if sid.startswith("db-"):

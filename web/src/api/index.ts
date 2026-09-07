@@ -362,6 +362,7 @@ export interface ReplayDaily {
 }
 export interface ReplayBar {
   date: string; open: number; high: number; low: number; close: number; volume: number
+  ma5?: number | null; ma10?: number | null; ma20?: number | null; ma60?: number | null
 }
 export interface ReplayResult {
   code: string; contract_name: string

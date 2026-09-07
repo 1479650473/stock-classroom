@@ -20,7 +20,10 @@ echarts.use([
 ])
 
 // ── 数据结构 ──
-interface ReplayBar { date: string; open: number; high: number; low: number; close: number; volume: number }
+interface ReplayBar {
+  date: string; open: number; high: number; low: number; close: number; volume: number
+  ma5?: number | null; ma10?: number | null; ma20?: number | null; ma60?: number | null
+}
 interface ReplayDailyExt {
   i: number; date: string; close: number
   signal_buy: boolean; signal_sell: boolean; position: boolean
@@ -95,21 +98,21 @@ function updateChartSize() {
 }
 
 // 窗口随宽度自适应: 数量=能容纳的根数(宽度/每根), K 线宽度恒定不压缩
-function getWindow(): { start: number; end: number } {
+// 渲染窗口严格裁剪到播放头(end=cur): 未来K线不可见, 右侧空槽(blanks)纯留白
+function getWindow(): { start: number; end: number; winSize: number; blanks: number } {
   const len = allBars.value.length
-  if (!len) return { start: 0, end: 0 }
+  if (!len) return { start: 0, end: 0, winSize: 0, blanks: 0 }
   const cur = Math.min(cursor.value, len - 1)
   const w = chartW.value || 800
   // 可用绘图宽度 = 容器减去 yAxis 标签等 (~80px)
   const availW = Math.max(80, w - 80)
   // 按目标宽度 K_BAR 计算能放多少根, 但最少 MIN_BARS 根
   const winSize = Math.max(MIN_BARS, Math.min(MAX_BARS, Math.floor(availW / K_BAR)))
-  const keepBack = Math.min(winSize - 1, 50)   // 左侧保留历史根数
-  const idealStart = cur - keepBack
-  const start = Math.max(0, idealStart)
-  // 窗口右端至少到 cur, 尾部截到数据末尾
-  const end = Math.min(len - 1, Math.max(cur, start + winSize - 1))
-  return { start, end }
+  // 播放头固定在窗口右缘: 左端留 winSize-1 根历史, 右端绝不越界到未来
+  const start = Math.max(0, cur - (winSize - 1))
+  const end = cur
+  const blanks = Math.max(0, winSize - (end - start + 1))
+  return { start, end, winSize, blanks }
 }
 
 // 播放
@@ -247,25 +250,20 @@ function buildOption(): echarts.EChartsCoreOption {
   const gridText = isDark.value ? '#8A8F9A' : '#666'
   const gridLine = isDark.value ? '#2A2D35' : '#E5E7EB'
 
-  const { start, end } = getWindow()
+  const { start, end, blanks } = getWindow()
   const bars = allBars.value.slice(start, end + 1)
   const total = bars.length
   if (!total) return {}
-  const dates = bars.map((b) => b.date)
+  // 轴保留全部槽位(空串占位=右侧留白); 系列 data 只给已播放段 —
+  // ⚠ candlestick(boxplot底层) data 混入 null 会抛错, 不能补位
+  const dates = [...bars.map((b) => b.date), ...Array<string>(blanks).fill('')]
   const ohlc = bars.map((b) => [b.open, b.close, b.low, b.high])
   const volumes = bars.map((b) => b.volume)
   const colors = bars.map((b) => (b.close >= b.open ? upColor : downColor))
-  const curLocal = cursor.value - start
+  const curLocal = cursor.value - start   // 播放头=窗口右缘
 
-  // MA 线应基于全局历史数据(否则窗口内根数 < n 时整条线为 null 不可见)
-  const ma = (n: number) =>
-    bars.map((_, i) => {
-      const g = start + i   // 窗口内第 i 根对应的全局索引
-      if (g < n - 1) return null
-      let sum = 0
-      for (let j = g - n + 1; j <= g; j++) sum += allBars.value[j].close
-      return +(sum / n).toFixed(2)
-    })
+  // MA 值由后端在含预热段的完整序列上计算(播放头第一根即有值), 前端直接取用
+  const maData = (n: 5 | 20) => bars.map((b) => b[`ma${n}`] ?? null)
 
   // 买卖点(仅当前窗口内的, 保留全部标记便于观察)
   const markPoints: { coord: [number, number]; value: string; symbol: string; symbolSize: number; itemStyle: { color: string } }[] = []
@@ -371,8 +369,8 @@ function buildOption(): echarts.EChartsCoreOption {
     },
     markLine: { silent: true, symbol: 'none', data: markLines },
   }]
-  series.push({ name: 'MA5', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: ma(5), smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#E8B84B' } })
-  series.push({ name: 'MA20', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: ma(20), smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#C16BE0' } })
+  series.push({ name: 'MA5', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: maData(5), smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#E8B84B' } })
+  series.push({ name: 'MA20', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: maData(20), smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#C16BE0' } })
   if (!compact) {
     series.push({
       type: 'bar',
@@ -439,22 +437,53 @@ function reasonCn(r: string): string {
   return m[r] || r
 }
 
-// 渲染入口: 同步渲染(scheduleStep/单步/拖动/窗口变化直接渲染, 不依赖 rAF —— rAF 在隐藏页会挂起,
-// 且渲染量小(<70根K线 ~30ms), 600ms一拍完全可承受)
+// 渲染入口: 播放拍/单步/拖动用同步渲染(确定性, 与指针严格一致);
+// 尺寸/主题等低频变更经 rAF 合并到同一帧(多来源去重, 避免双重重绘卡顿)
+let rafId: number | null = null
+let lastStruct = ''
+let reinitFails = 0   // setOption 连续失败计数: 超过上限停止重建, 防止死循环冻结页面
+
 function render() {
   doRender()
 }
 
 function doRender() {
   if (!chart.value || !allBars.value.length) return
+  // 容器未布局(宽为0)时跳过, 待 ResizeObserver 回调再画, 避免空白帧
+  if (el.value && el.value.clientWidth === 0) return
+  if (reinitFails > 2) return
+  const struct = `${compactMode.value}|${chartW.value}`
   try {
-    chart.value.setOption(buildOption(), true)
+    if (struct !== lastStruct) {
+      // 结构变化(grid/x/y轴数量/窗口容量): 全量重建一次, 避免 merge 残留
+      lastStruct = struct
+      chart.value.setOption(buildOption(), true)
+    } else {
+      // 播放拍: merge 增量 — tooltip/axisPointer 保持单例不重建(避免标签堆积),
+      // 且只 diff 变化的K线/标记, 更流畅
+      chart.value.setOption(buildOption(), { notMerge: false })
+    }
+    reinitFails = 0
   } catch (e) {
-    console.warn('chart setOption failed, re-init', e)
-    try { chart.value?.dispose() } catch { /* ignore */ }
-    chart.value = null
-    try { initChart() } catch (e2) { console.warn('chart re-init failed', e2) }
+    reinitFails++
+    if (reinitFails <= 2) {
+      console.warn('chart setOption failed, re-init', e)
+      try { chart.value?.dispose() } catch { /* ignore */ }
+      chart.value = null
+      try { initChart() } catch (e2) { console.warn('chart re-init failed', e2) }
+    } else {
+      console.error('replay chart repeatedly failed, rendering stopped', e)
+    }
   }
+}
+
+// 多来源(RO/主题/侧栏开合)合并到同一帧, 每帧最多画一次
+function scheduleRender() {
+  if (rafId !== null) return
+  rafId = requestAnimationFrame(() => {
+    rafId = null
+    render()
+  })
 }
 
 function initChart() {
@@ -478,6 +507,7 @@ function togglePlay() {
   playing.value = !playing.value
   if (playing.value) {
     if (cursor.value >= allBars.value.length - 1) cursor.value = 0
+    render()
     scheduleStep()
   } else {
     stopPlay()
@@ -492,8 +522,7 @@ function scheduleStep() {
     stepTimer = null
     if (!playing.value) return
     if (cursor.value >= allBars.value.length - 1) {
-      stopPlay()
-      phase.value = 'settled'
+      stopPlay()      // 停在末尾自动暂停, 不弹结算; 由用户点「✓ 结算」触发
       return
     }
     cursor.value++
@@ -517,17 +546,22 @@ function restartTimer() {
 }
 
 function stepFwd() {
-  if (phase.value === 'settled') return
   startRound()
   if (cursor.value < allBars.value.length - 1) {
     cursor.value++
     render()
-    if (cursor.value >= allBars.value.length - 1) phase.value = 'settled'
+  } else {
+    settle()      // 已到末尾: 用户显式确认 → 弹结算
   }
 }
 
+function settle() {
+  stopPlay()
+  phase.value = 'settled'
+  render()
+}
+
 function stepBack() {
-  if (phase.value === 'settled') return
   startRound()
   if (cursor.value > 0) {
     cursor.value--
@@ -536,15 +570,11 @@ function stepBack() {
 }
 
 function onSliderInput(ev: Event) {
-  if (phase.value === 'settled') return
   startRound()
+  if (playing.value) stopPlay()   // 拖动即暂停: 避免进度与播放节奏冲突
   const v = Number((ev.target as HTMLInputElement).value)
   cursor.value = v
   render()
-  if (v >= allBars.value.length - 1) {
-    stopPlay()
-    phase.value = 'settled'
-  }
 }
 
 watch(speed, () => { if (playing.value) restartTimer() })
@@ -561,22 +591,23 @@ watch(sizingMode, (m) => {
 function fmtPct(v: number) { return (v >= 0 ? '+' : '') + (v * 100).toFixed(2) + '%' }
 function fmtMoney(v: number) { return v.toLocaleString('zh-CN', { maximumFractionDigits: 0 }) }
 
-// 主题响应 + resize(尺寸变化时更新窗口参数并重绘)
+// 主题响应 + resize(尺寸变化时更新窗口参数并重绘; 回调经 rAF 合并, 避免 resize+render 双重重绘)
 const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => {
   updateChartSize()
   chart.value?.resize()
-  render()
+  scheduleRender()
 }) : null
 let mo: MutationObserver | null = null
 
 onMounted(() => {
   loadStrategies()
-  mo = new MutationObserver(() => { if (chart.value) render() })
+  mo = new MutationObserver(() => { if (chart.value) scheduleRender() })
   mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
 })
 
 onBeforeUnmount(() => {
   stopPlay()
+  if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null }
   ro?.disconnect()
   mo?.disconnect()
   chart.value?.dispose()
@@ -597,7 +628,7 @@ watch(sideOpen, async () => {
   await nextTick()
   updateChartSize()
   chart.value?.resize()
-  render()
+  scheduleRender()
 })
 
 watch(strategyId, (v) => {
@@ -701,7 +732,7 @@ watch(strategyId, (v) => {
             </div>
           </div>
           <div class="settings-actions">
-            <span v-if="!startDate && !endDate" class="muted note">未设日期时回放最近约500根K线(区间前自动预热150根因子)</span>
+            <span v-if="!startDate && !endDate" class="muted note">未设日期时回放最近约2500根K线(自动保留150根预热, 均线/因子从第一天起准确)</span>
             <button class="btn primary" @click="load" :disabled="loading || !strategyId">应用设置并重新回放</button>
           </div>
         </fieldset>
@@ -720,7 +751,11 @@ watch(strategyId, (v) => {
               <button class="btn primary play-btn" @click="togglePlay" :disabled="phase === 'settled'">
                 {{ phase === 'settled' ? '已结束' : playing ? '⏸ 暂停' : '▶ 播放' }}
               </button>
-              <button class="btn" @click="stepFwd" title="下一根" :disabled="phase === 'settled'">▶</button>
+              <button class="btn" @click="stepFwd"
+                      :title="phase === 'trading' && cursor >= allBars.length - 1 ? '结算本轮' : '下一根'"
+                      :disabled="phase === 'settled'">
+                {{ phase === 'trading' && cursor >= allBars.length - 1 ? '✓ 结算' : '▶' }}
+              </button>
               <select v-model="speed" class="sel speed-sel" title="播放速度">
                 <option :value="0.25">0.25x 慢放</option>
                 <option :value="0.5">0.5x</option>

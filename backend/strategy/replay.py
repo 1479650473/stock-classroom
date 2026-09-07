@@ -310,6 +310,9 @@ def replay_contract(klines: list, contract: dict, overrides: dict = None,
                 "open": float(bar["open"]), "high": float(bar["high"]),
                 "low": float(bar["low"]), "close": close,
                 "volume": float(bar.get("volume", 0) or 0),
+                # 均线由 enrich_kline 在含预热段的完整序列上计算, 播放头第一根即有值
+                "ma5": bar.get("ma5"), "ma10": bar.get("ma10"),
+                "ma20": bar.get("ma20"), "ma60": bar.get("ma60"),
             })
             daily.append({
                 "i": i - warmup_bars,
