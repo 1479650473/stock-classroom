@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, onBeforeUnmount } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
 // 嵌入模式: 隐藏页面标题(供数据页 Tab 内嵌)
 withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
@@ -9,18 +9,21 @@ import StatCard from '@/components/StatCard.vue'
 import Skeleton from '@/components/Skeleton.vue'
 import Icon from '@/components/Icon.vue'
 import { useToastStore } from '@/stores/toast'
-import { streamJob } from '@/api/client'
+import { useJobsStore } from '@/stores/jobs'
 import { getPipelineStats, getPipelineStatus, triggerPipelineUpdate } from '@/api'
 import type { PipelineStats, PipelineStatus } from '@/api'
 
 const toast = useToastStore()
+const jobs = useJobsStore()
 const stats = ref<PipelineStats | null>(null)
 const status = ref<PipelineStatus | null>(null)
 const loading = ref(true)
-const updating = ref(false)
-const progress = ref(0)
-const progressMsg = ref('')
-let closeStream: (() => void) | null = null
+
+// 进度来自全局任务中心：切 Tab / 切页面 / 刷新页面都不会丢失
+const job = computed(() => jobs.activeByKind('pipeline'))
+const updating = computed(() => !!job.value)
+const progress = computed(() => job.value?.pct ?? 0)
+const progressMsg = computed(() => job.value?.msg ?? '')
 
 onMounted(async () => {
   try {
@@ -32,36 +35,19 @@ onMounted(async () => {
   } finally { loading.value = false }
 })
 
-onBeforeUnmount(() => closeStream?.())
+// 任务完成（成功或失败）后刷新管道状态
+watch(
+  () => jobs.byKind('pipeline')[0]?.doneTick ?? 0,
+  (t) => { if (t) refreshStats() },
+)
 
 async function startUpdate(poolOnly = false) {
-  updating.value = true; progress.value = 0; progressMsg.value = '提交中…'
-  try {
-    const job = await triggerPipelineUpdate(poolOnly)
-    progressMsg.value = '任务已提交，等待执行…'
-    closeStream?.()
-    closeStream = streamJob(job.job_id, {
-      onProgress: (frame) => {
-        progress.value = typeof frame.pct === 'number' ? frame.pct : Math.min(95, progress.value + 8)
-        progressMsg.value = String(frame.msg || frame.message || '更新中…')
-      },
-      onResult: () => {
-        progress.value = 100
-        progressMsg.value = '更新完成'
-        updating.value = false
-        toast.success('数据更新完成')
-        refreshStats()
-      },
-      onError: (m) => {
-        progressMsg.value = '出错：' + m
-        updating.value = false
-        toast.error('更新失败：' + m)
-      },
-    })
-  } catch (e: unknown) {
-    toast.error('提交失败：' + (e instanceof Error ? e.message : String(e)))
-    updating.value = false
-  }
+  await jobs.run({
+    kind: 'pipeline',
+    title: poolOnly ? '更新量化池' : '全量数据更新',
+    route: '/data?tab=pipeline',
+    submit: () => triggerPipelineUpdate(poolOnly),
+  })
 }
 
 async function refreshStats() {
@@ -124,6 +110,17 @@ async function refreshStats() {
       <div v-else class="muted">尚未执行过更新</div>
     </Card>
 
+    <!-- 更新指引 -->
+    <Card class="guide">
+      <template #header><span class="card-title">更新说明</span></template>
+      <ol class="guide-list">
+        <li>点「全量更新」拉取全市场最新交易日 K 线，约 5000 只股票，预计 3–10 分钟。</li>
+        <li>更新在后台运行：可以切到其他页面继续操作，顶栏「后台任务」随时查看进度。</li>
+        <li>完成后上方「最新日期」会刷新到最新交易日；若仍显示过期，请检查网络或数据源。</li>
+      </ol>
+      <p class="guide-tip">日常增量更新用「仅更新量化池」更快，适合盘中或盘后快速同步。</p>
+    </Card>
+
     <!-- action buttons -->
     <div class="actions">
       <button class="btn primary" @click="startUpdate(false)" :disabled="updating">
@@ -163,6 +160,10 @@ async function refreshStats() {
 .btn.primary { background: var(--gold); color: var(--on-gold); border-color: var(--gold); font-weight: 600; }
 .btn.primary:hover { background: var(--gold-hover); }
 .muted { color: var(--text-faint); font-size: var(--fs-sm); }
+.guide { margin-top: var(--sp-4); }
+.guide-list { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: var(--sp-2); }
+.guide-list li { font-size: var(--fs-sm); color: var(--text-sub); line-height: 1.6; }
+.guide-tip { margin: var(--sp-3) 0 0; font-size: var(--fs-xs); color: var(--text-faint); }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 </style>

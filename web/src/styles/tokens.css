@@ -33,6 +33,7 @@
   --up: #e5484d;
   --down: #3fb950;
   --warn: #d29922;
+  --ok: #3fb950;
   --info: #7aa2f7;
 
   --sel-bg: rgba(122, 162, 247, 0.16);
@@ -81,6 +82,7 @@
   --up: #e0564d;
   --down: #3fb950;
   --warn: #e9b44c;
+  --ok: #3fb950;
   --info: #e0a050;
 
   --sel-bg: rgba(224, 160, 80, 0.16);
@@ -129,6 +131,7 @@
   --up: #8e3a2f;
   --down: #3f7d50;
   --warn: #b07a2a;
+  --ok: #3f7d50;
   --info: #8e3a2f;
 
   --sel-bg: rgba(142, 58, 47, 0.12);

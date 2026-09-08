@@ -19,6 +19,7 @@ import {
 } from '@/api'
 import type { AccountSummary, Position, Order, PickItem } from '@/api'
 import { useEChart, cssVar } from '@/composables/useEChart'
+import { usePersistedRef } from '@/composables/usePersistedRef'
 
 type Tab = 'positions' | 'order' | 'orders' | 'picks'
 
@@ -35,7 +36,8 @@ const TABS = [
 
 const tab = ref<Tab>(normalizeTab(route.query.tab))
 const accounts = ref<AccountSummary[]>([])
-const selectedId = ref<number | null>(null)
+// 记住上次选择的账户与下单表单
+const selectedId = usePersistedRef<number | null>('trade.accountId', null)
 const loading = ref(true)
 const loadError = ref('')
 
@@ -48,7 +50,7 @@ const nav = ref<number[]>([])
 const navEl = ref<HTMLElement | null>(null)
 const advancedOpen = ref(false)
 
-const form = ref({
+const form = usePersistedRef('trade.form', {
   side: 'buy' as 'buy' | 'sell',
   code: '',
   name: '',

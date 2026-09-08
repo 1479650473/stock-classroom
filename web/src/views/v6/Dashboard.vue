@@ -7,12 +7,15 @@ import StatTile from '@/components/ui/StatTile.vue'
 import EmptyGuide from '@/components/ui/EmptyGuide.vue'
 import LoadingBlock from '@/components/ui/LoadingBlock.vue'
 import Icon from '@/components/Icon.vue'
-import { getOverview, getPicks } from '@/api'
-import type { OverviewData, PickItem } from '@/api'
+import { getBootstrap, getOverview, getPicks } from '@/api'
+import type { Bootstrap, OverviewData, PickItem } from '@/api'
+import { useJobsStore } from '@/stores/jobs'
 
 const router = useRouter()
+const jobs = useJobsStore()
 const data = ref<OverviewData | null>(null)
 const picks = ref<PickItem[]>([])
+const boot = ref<Bootstrap | null>(null)
 const loading = ref(true)
 const error = ref('')
 
@@ -25,10 +28,11 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [ov, pk] = await Promise.allSettled([getOverview(), getPicks(5)])
+    const [ov, pk, bs] = await Promise.allSettled([getOverview(), getPicks(5), getBootstrap()])
     if (ov.status === 'fulfilled') data.value = ov.value
     else throw ov.reason
     if (pk.status === 'fulfilled') picks.value = pk.value.items
+    if (bs.status === 'fulfilled') boot.value = bs.value
   } catch (e) {
     error.value = e instanceof Error ? e.message : '加载失败'
   } finally {
@@ -36,6 +40,36 @@ async function load() {
   }
 }
 onMounted(load)
+
+// ── 数据新鲜度：引导用户手动更新数据 ──
+function fmtDate(s: string) {
+  return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`
+}
+
+const fresh = computed(() => {
+  const b = boot.value
+  if (!b) return null
+  const max = b.kline?.max
+  if (b.needs_init || !max) {
+    return { level: 'bad' as const, label: '尚未初始化', days: null as number | null, max: '—', rows: 0 }
+  }
+  const s = String(max).replace(/-/g, '')
+  const d = new Date(Number(s.slice(0, 4)), Number(s.slice(4, 6)) - 1, Number(s.slice(6, 8)))
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const days = Math.max(0, Math.round((today.getTime() - d.getTime()) / 86400000))
+  const base = { days, max: fmtDate(s), rows: b.kline?.rows ?? 0 }
+  if (days <= 3) return { ...base, level: 'ok' as const, label: '数据较新' }
+  if (days <= 7) return { ...base, level: 'warn' as const, label: '建议更新' }
+  return { ...base, level: 'bad' as const, label: '数据过期' }
+})
+
+const updating = computed(() => !!jobs.activeByKind('pipeline'))
+const updateJob = computed(() => jobs.activeByKind('pipeline'))
+
+function goUpdate() {
+  router.push('/data?tab=pipeline')
+}
 
 function go(path: string) { router.push(path) }
 
@@ -141,6 +175,33 @@ const QUICK = [
           <EmptyGuide v-else icon="market" title="暂无行情数据" />
         </SectionCard>
       </div>
+
+      <!-- 数据新鲜度 -->
+      <SectionCard v-if="fresh" title="数据状态" desc="行情数据更新时间与新鲜度，过期会影响选股与回测">
+        <template #actions>
+          <button class="ui-btn ui-btn--sm" :disabled="updating" @click="goUpdate">
+            <Icon :name="updating ? 'refresh' : 'pipeline'" :size="13" :class="{ spin: updating }" />
+            <span>{{ updating ? '更新中…' : '去更新' }}</span>
+          </button>
+        </template>
+        <div class="fresh" :class="'fresh--' + fresh.level">
+          <span class="fresh__dot" />
+          <div class="fresh__main">
+            <div class="fresh__label">{{ fresh.label }}</div>
+            <div class="fresh__desc">
+              最新交易日 <b class="mono">{{ fresh.max }}</b>
+              <template v-if="fresh.days !== null"> · 距今 {{ fresh.days }} 天</template>
+              <template v-if="fresh.rows"> · 共 {{ (fresh.rows / 1e6).toFixed(1) }}M 行</template>
+            </div>
+            <div v-if="updating" class="fresh__progress">
+              {{ updateJob?.msg }} <span class="mono">{{ updateJob?.pct }}%</span>
+            </div>
+          </div>
+        </div>
+        <p v-if="fresh.level === 'bad' && !updating" class="fresh__hint">
+          数据过期会让选股、回测与回放的结果偏离真实市场。点“去更新”按引导完成数据更新。
+        </p>
+      </SectionCard>
 
       <!-- 快捷流程 -->
       <SectionCard title="快捷流程" desc="常用操作一键直达">
@@ -255,4 +316,32 @@ const QUICK = [
 .quick-item__desc { font-size: var(--fs-xs); color: var(--text-faint); }
 .quick-item__arrow { color: var(--text-faint); flex: none; }
 .as-of { margin: 0; font-size: var(--fs-xs); }
+
+.fresh {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-5);
+}
+.fresh__dot {
+  width: 10px;
+  height: 10px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  flex: none;
+}
+.fresh--ok .fresh__dot { background: var(--ok); }
+.fresh--warn .fresh__dot { background: var(--warn); }
+.fresh--bad .fresh__dot { background: var(--up); }
+.fresh__main { flex: 1; min-width: 0; }
+.fresh__label { font-size: var(--fs-md); font-weight: 600; }
+.fresh--ok .fresh__label { color: var(--ok); }
+.fresh--warn .fresh__label { color: var(--warn); }
+.fresh--bad .fresh__label { color: var(--up); }
+.fresh__desc { margin-top: 3px; font-size: var(--fs-sm); color: var(--text-sub); }
+.fresh__progress { margin-top: var(--sp-2); font-size: var(--fs-sm); color: var(--gold); }
+.fresh__hint { margin: 0; padding: 0 var(--sp-5) var(--sp-4); font-size: var(--fs-xs); color: var(--text-faint); }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 </style>

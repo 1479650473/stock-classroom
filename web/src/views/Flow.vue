@@ -4,11 +4,12 @@ import PageHeader from '@/components/PageHeader.vue'
 import Card from '@/components/Card.vue'
 import Icon from '@/components/Icon.vue'
 import { useToastStore } from '@/stores/toast'
-import { streamJob } from '@/api/client'
+import { useJobsStore } from '@/stores/jobs'
 import { getOverview, getPicks, getRegime, triggerPipelineUpdate, listAccounts, portfolioRebalance } from '@/api'
 import type { PortfolioSnapshot } from '@/api'
 
 const toast = useToastStore()
+const jobs = useJobsStore()
 const running = ref(false)
 
 interface Step {
@@ -25,15 +26,10 @@ const steps = ref<Step[]>([
   { id: 'snapshot', icon: 'wallet', title: '净值快照', desc: '账户净值记录', status: 'pending' },
 ])
 
-// 等待 job 真正完成(streamJob 收到 result/error 为止)
-function waitJob(jobId: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const close = streamJob(jobId, {
-      onProgress: () => {},
-      onResult: () => { close(); resolve() },
-      onError: (m) => { close(); reject(new Error(m)) },
-    })
-  })
+// 等待 job 真正完成（连接由全局任务中心持有，切页面不会断）
+async function waitJob(jobId: string): Promise<void> {
+  const r = await jobs.waitDone(jobId)
+  if (!r.ok) throw new Error(r.error || '任务失败')
 }
 
 async function runPipeline() {
@@ -44,6 +40,17 @@ async function runPipeline() {
   steps.value[0].status = 'running'
   try {
     const job = await triggerPipelineUpdate(true)
+    jobs.upsert({
+      id: job.job_id,
+      kind: 'pipeline',
+      title: '全流程 · 数据更新',
+      status: 'queued',
+      pct: 0,
+      msg: '排队中…',
+      startedAt: Date.now(),
+      route: '/data?tab=pipeline',
+    })
+    jobs.attach(job.job_id)
     steps.value[0].detail = `任务 ${job.job_id.slice(0, 8)} 执行中…`
     await waitJob(job.job_id)
     steps.value[0].detail = `任务 ${job.job_id.slice(0, 8)} 完成`

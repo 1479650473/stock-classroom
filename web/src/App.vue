@@ -1,15 +1,21 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useAppStore } from '@/stores/app'
+import { useJobsStore } from '@/stores/jobs'
 import TitleBar from '@/components/TitleBar.vue'
 import SideNav from '@/components/SideNav.vue'
 import ToastHost from '@/components/ToastHost.vue'
 import SearchPalette from '@/components/SearchPalette.vue'
 
 const app = useAppStore()
+const jobs = useJobsStore()
 const searchOpen = ref(false)
 
-onMounted(() => app.init())
+onMounted(() => {
+  app.init()
+  // 恢复上次会话中未完成/刚完成的后台任务（刷新页面后进度不丢）
+  jobs.restore()
+})
 </script>
 
 <template>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, shallowRef, computed, onBeforeUnmount } from 'vue'
+import { onMounted, ref, shallowRef, computed } from 'vue'
 
 // 嵌入模式: 隐藏页面标题, 只保留操作区(供策略页 Tab 内嵌)
 withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
@@ -10,7 +10,7 @@ import Skeleton from '@/components/Skeleton.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import Icon from '@/components/Icon.vue'
 import { useToastStore } from '@/stores/toast'
-import { api, type JobHandle } from '@/api/client'
+import { useJobsStore } from '@/stores/jobs'
 import {
   getRegime, getFactors, getStrategies,
   runBacktest, runStudy, runCompare,
@@ -19,6 +19,7 @@ import {
 import { useEChart, cssVar } from '@/composables/useEChart'
 
 const toast = useToastStore()
+const jobs = useJobsStore()
 const regime = ref<RegimeData | null>(null)
 const factors = ref<FactorDef[]>([])
 const strategies = ref<StrategyDef[]>([])
@@ -83,29 +84,19 @@ const { draw: drawBtChart } = useEChart(btChartEl, () => ({
   }],
 }))
 
-// 轮询 job 状态(替代 SSE, 避开 vite proxy 对 event-stream 的缓冲问题)
-const pollTimers: ReturnType<typeof setInterval>[] = []
-onBeforeUnmount(() => pollTimers.forEach((t) => clearInterval(t)))
-
-function pollJob<T>(job: JobHandle, onDone: (res: T) => void, onErr: (m: string) => void) {
-  const id = job.job_id
-  let tries = 0
-  const timer = setInterval(async () => {
-    tries++
-    try {
-      const rec = await api.get<{ status: string; result: T | null; error: string | null }>(`/api/jobs/${id}`)
-      if (rec.status === 'succeeded') {
-        clearInterval(timer)
-        if (rec.result !== null && rec.result !== undefined) onDone(rec.result)
-        else onErr('任务完成但结果为空')
-      } else if (rec.status === 'failed' || rec.status === 'cancelled') {
-        clearInterval(timer); onErr(rec.error || (rec.status === 'cancelled' ? '任务已取消' : '任务失败'))
-      } else if (tries > 200) {
-        clearInterval(timer); onErr('任务超时')
-      }
-    } catch { /* 忽略瞬时错误 */ }
-  }, 1500)
-  pollTimers.push(timer)
+// 任务统一交给全局任务中心：切页面不中断、顶栏可见进度、完成时全局通知
+function trackJob(jobId: string, kind: string, title: string) {
+  jobs.upsert({
+    id: jobId,
+    kind,
+    title,
+    status: 'queued',
+    pct: 0,
+    msg: '排队中…',
+    startedAt: Date.now(),
+    route: '/strategy?tab=research',
+  })
+  jobs.attach(jobId)
 }
 
 async function doBacktest() {
@@ -115,11 +106,14 @@ async function doBacktest() {
   toast.info('回测排队中…')
   try {
     const job = await runBacktest({ id: btContractName.value }, btStart.value, btEnd.value)
-    pollJob<BacktestResult>(job, (res) => {
+    trackJob(job.job_id, 'backtest', `回测 · ${btContractName.value}`)
+    const r = await jobs.waitDone(job.job_id)
+    if (!r.ok) { toast.error(r.error || '回测失败'); return }
+    const res = r.result as BacktestResult
+    if (res) {
       btResult.value = res
       btChartEl.value && drawBtChart()
-      toast.success('回测完成')
-    }, (m) => toast.error(m))
+    }
   } catch (e) {
     toast.error('回测失败：' + (e instanceof Error ? e.message : String(e)))
   } finally { btRunning.value = false }
@@ -133,7 +127,10 @@ async function doStudy() {
   studyRunning.value = true; studyResult.value = null; toast.info('因子研究排队…')
   try {
     const job = await runStudy(studyFactor.value, { holding_period: 20, start: '2023-01-01' })
-    pollJob<Record<string, unknown>>(job, (res) => { studyResult.value = res; toast.success('研究完成') }, (m) => toast.error(m))
+    trackJob(job.job_id, 'research', `因子研究 · ${studyFactor.value}`)
+    const r = await jobs.waitDone(job.job_id)
+    if (!r.ok) { toast.error(r.error || '研究失败'); return }
+    studyResult.value = (r.result || {}) as Record<string, unknown>
   } catch (e) { toast.error('研究失败：' + (e instanceof Error ? e.message : String(e))) }
   finally { studyRunning.value = false }
 }
@@ -146,7 +143,10 @@ async function doCompare() {
   try {
     const r = defaultRange()
     const job = await runCompare(r.start, r.end)
-    pollJob<{ strategies: typeof cmpResult.value }>(job, (res) => { cmpResult.value = res.strategies; toast.success('对比完成') }, (m) => toast.error(m))
+    trackJob(job.job_id, 'compare', '策略对比')
+    const res = await jobs.waitDone(job.job_id)
+    if (!res.ok) { toast.error(res.error || '对比失败'); return }
+    cmpResult.value = ((res.result || {}) as { strategies: typeof cmpResult.value }).strategies
   } catch (e) { toast.error('对比失败：' + (e instanceof Error ? e.message : String(e))) }
   finally { cmpRunning.value = false }
 }

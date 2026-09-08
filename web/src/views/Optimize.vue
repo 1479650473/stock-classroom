@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import type { Ref } from 'vue'
 
 // 嵌入模式: 隐藏页面标题, 只保留操作区(供策略页 Tab 内嵌)
@@ -11,7 +11,8 @@ import EmptyState from '@/components/EmptyState.vue'
 import Skeleton from '@/components/Skeleton.vue'
 import Icon from '@/components/Icon.vue'
 import { useToastStore } from '@/stores/toast'
-import { api, streamJob } from '@/api/client'
+import { useJobsStore } from '@/stores/jobs'
+import { api } from '@/api/client'
 import { getStrategies } from '@/api'
 import {
   optimizeFamilies, optimizePropose, optimizeBacktest, optimizeVerdict, optimizeAll,
@@ -19,6 +20,7 @@ import {
 } from '@/api'
 
 const toast = useToastStore()
+const jobs = useJobsStore()
 const strategies = ref<StrategyDef[]>([])
 const hp = ref(20)
 const useLlm = ref(true)
@@ -40,25 +42,35 @@ const newDescribe = ref<string>('')
 const verdict = ref<'accept' | 'reject' | null>(null)
 const written = ref(false)
 
-let closeStream: (() => void) | null = null
-
 onMounted(async () => {
   try { strategies.value = await getStrategies() } catch { /* ignore */ }
+  // 切回页面时，若进化任务仍在后台跑，恢复运行态显示
+  const active = jobs.activeByKind('optimize')
+  if (active) {
+    running.value = true
+    progress.value = active.pct
+    progressMsg.value = active.msg
+  }
 })
-onBeforeUnmount(() => closeStream?.())
 
-function waitJob(job: { job_id: string }): Promise<Record<string, unknown>> {
-  return new Promise((resolve, reject) => {
-    closeStream?.()
-    closeStream = streamJob(job.job_id, {
-      onProgress: (f) => {
-        if (typeof f.pct === 'number') progress.value = f.pct
-        progressMsg.value = String(f.msg || f.message || '')
-      },
-      onResult: (res) => { closeStream = null; resolve((res || {}) as Record<string, unknown>) },
-      onError: (m) => { closeStream = null; reject(new Error(m)) },
-    })
-  })
+// 任务由 jobs store 在后台持有，组件卸载不再断开；这里只同步进度显示
+watch(
+  () => jobs.activeByKind('optimize'),
+  (j) => {
+    if (j) {
+      running.value = true
+      progress.value = j.pct
+      progressMsg.value = j.msg
+    } else if (running.value) {
+      running.value = false
+    }
+  },
+)
+
+async function waitJob(job: { job_id: string }): Promise<Record<string, unknown>> {
+  const r = await jobs.waitDone(job.job_id)
+  if (!r.ok) throw new Error(r.error || '任务失败')
+  return (r.result || {}) as Record<string, unknown>
 }
 
 function setStage(s: Ref<StageState>, st: StageState['status'], detail?: string) {

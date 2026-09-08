@@ -14,6 +14,7 @@ import KlineChart from '@/components/charts/KlineChart.vue'
 import Icon from '@/components/Icon.vue'
 import { getIndices, getSectors, getNorthFlow, getKline } from '@/api'
 import type { IndexQuote, KlineBar, StockRef } from '@/api'
+import { usePersistedRef } from '@/composables/usePersistedRef'
 
 type Tab = 'market' | 'stock'
 
@@ -26,9 +27,10 @@ const TABS = [
 ]
 
 const tab = ref<Tab>(route.query.tab === 'stock' ? 'stock' : 'market')
-const code = ref(String(route.query.code || ''))
+// 记住上次查看的股票与周期，下次打开自动恢复
+const code = usePersistedRef('market.code', String(route.query.code || ''))
 const stockName = ref('')
-const days = ref('250')
+const days = usePersistedRef('market.days', '250')
 
 const indices = ref<IndexQuote[]>([])
 const sectors = ref<Record<string, unknown>[]>([])
