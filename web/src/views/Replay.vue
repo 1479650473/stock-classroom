@@ -73,6 +73,9 @@ const allDaily = ref<ReplayDailyExt[]>([])
 const allEvents = ref<ReplayEventExt[]>([])
 const allSpans = ref<number[][]>([])
 const metrics = ref<ReplayResult['metrics'] | null>(null)
+// 上下文K线(起始日期之前的历史段): 仅展示用于判断所处阶段, 不参与交易回放
+const contextBars = ref<ReplayBar[]>([])
+const contextLen = computed(() => contextBars.value.length)
 
 // ── 播放指针(全局索引, 0-based) ──
 const cursor = ref(0)
@@ -124,14 +127,18 @@ const SPEED_MS: Record<number, number> = { 0.25: 2400, 0.5: 1200, 1: 600, 2: 300
 const sideOpen = ref(true)
 
 // ── 当前状态(供面板/状态栏) ──
+// allBars 含上下文段(前 contextLen 根), 而 daily/events/spans 均为展示区相对索引,
+// 统一换算: chartIdx = dispIdx + contextLen
 const cursorBar = computed(() => allBars.value[cursor.value])
-const cursorDaily = computed(() => allDaily.value[cursor.value])
-const cursorEvent = computed(() => allEvents.value.find((e) => e.index === cursor.value))
+const cursorDaily = computed(() =>
+  cursor.value >= contextLen.value ? allDaily.value[cursor.value - contextLen.value] : undefined)
+const cursorEvent = computed(() =>
+  allEvents.value.find((e) => e.index === cursor.value - contextLen.value))
 
 const holdingState = computed(() => {
   const d = cursorDaily.value
   if (!d || !d.position) return null
-  const bars = (cursor.value - (d.entry_index >= 0 ? d.entry_index : 0)) + 1
+  const bars = (cursor.value - contextLen.value - (d.entry_index >= 0 ? d.entry_index : 0)) + 1
   return { ...d, hold_bars: bars }
 })
 
@@ -149,9 +156,11 @@ const settingsSummary = computed(() => {
   return parts.join(' · ')
 })
 
-// 回合进度
-const roundProgress = computed(() =>
-  allBars.value.length ? Math.round((cursor.value / (allBars.value.length - 1)) * 100) : 0)
+// 回合进度(仅展示区, 不含上下文段)
+const roundProgress = computed(() => {
+  const denom = allBars.value.length - contextLen.value - 1
+  return denom > 0 ? Math.round(((cursor.value - contextLen.value) / denom) * 100) : 0
+})
 
 // 当前策略名(结算弹窗用)
 const strategyName = computed(() =>
@@ -183,6 +192,11 @@ function buildQuery() {
   }
 }
 
+// 设置快照: 记录最近一次加载所用设置, 检测「改了设置但未重新加载」的情况
+const loadedSig = ref('')
+const settingsDirty = computed(() =>
+  allBars.value.length > 0 && JSON.stringify(buildQuery()) !== loadedSig.value)
+
 async function load() {
   if (!code.value || !strategyId.value) return
   loading.value = true
@@ -191,18 +205,27 @@ async function load() {
   phase.value = 'setup'
   try {
     const r = await getReplay(code.value, strategyId.value, 2500, buildQuery())
-    allBars.value = r.bars
+    contextBars.value = r.context_bars ?? []
+    allBars.value = [...contextBars.value, ...r.bars]
     allDaily.value = r.daily
     allEvents.value = r.events
     allSpans.value = r.holding_spans
     metrics.value = r.metrics
-    cursor.value = 0
+    cursor.value = contextLen.value   // 播放头定位到展示区起点(起始日期), 其左为上下文历史
+    loadedSig.value = JSON.stringify(buildQuery())
     await nextTick()
-    initChart()
+    // 单一初始化路径: 首次创建图表, 重载时强制全量重建(避免 dispose+重建竞态)
+    if (chart.value) {
+      lastStruct = ''
+      render()
+    } else if (el.value) {
+      initChart()
+    }
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : '加载失败'
     allBars.value = []
     allDaily.value = []
+    contextBars.value = []
   } finally {
     loading.value = false
   }
@@ -234,7 +257,7 @@ function startRound() {
 
 function newRound() {
   stopPlay()
-  cursor.value = 0
+  cursor.value = contextLen.value
   phase.value = 'setup'
   settingsOpen.value = true
   render()
@@ -265,11 +288,12 @@ function buildOption(): echarts.EChartsCoreOption {
   // MA 值由后端在含预热段的完整序列上计算(播放头第一根即有值), 前端直接取用
   const maData = (n: 5 | 20) => bars.map((b) => b[`ma${n}`] ?? null)
 
-  // 买卖点(仅当前窗口内的, 保留全部标记便于观察)
+  // 买卖点(仅当前窗口内的, 保留全部标记便于观察; 事件索引为展示区相对 → +contextLen 换算)
   const markPoints: { coord: [number, number]; value: string; symbol: string; symbolSize: number; itemStyle: { color: string } }[] = []
   for (const e of allEvents.value) {
-    if (e.index < start || e.index > end) continue
-    const local = e.index - start
+    const ci = e.index + contextLen.value
+    if (ci < start || ci > end) continue
+    const local = ci - start
     if (e.kind === 'entry') {
       markPoints.push({ coord: [local, e.price], value: 'B', symbol: 'pin', symbolSize: 24, itemStyle: { color: '#2DB757' } })
     } else {
@@ -280,15 +304,28 @@ function buildOption(): echarts.EChartsCoreOption {
   // 持仓区间(裁剪到窗口; 仅显示已发生的持仓段)
   const markAreas: Array<Array<{ xAxis: number; itemStyle?: { color: string } }>> = []
   for (const [s, e] of allSpans.value) {
-    const visibleEnd = Math.min(e, cursor.value)
-    if (visibleEnd < start || s > end) continue
-    const ls = Math.max(s, start)
-    const le = Math.min(visibleEnd, end)
+    const cs = s + contextLen.value
+    const ce = Math.min(e, cursor.value - contextLen.value) + contextLen.value
+    if (ce < start || cs > end) continue
+    const ls = Math.max(cs, start)
+    const le = Math.min(ce, end)
     if (le < ls) continue
     markAreas.push([
       { xAxis: ls - start, itemStyle: { color: 'rgba(45,183,87,0.13)' } },
       { xAxis: le - start },
     ])
+  }
+
+  // 上下文段底色(起始日期之前的历史, 仅展示): 与回放区区分, 播放头竖线为分界
+  if (contextLen.value > 0) {
+    const cs = Math.max(0, start)
+    const ce = Math.min(contextLen.value - 1, end)
+    if (ce >= cs) {
+      markAreas.push([
+        { xAxis: cs - start, itemStyle: { color: 'rgba(138,143,154,0.10)' } },
+        { xAxis: ce - start },
+      ])
+    }
   }
 
   // 播放头竖线
@@ -404,11 +441,12 @@ function buildOption(): echarts.EChartsCoreOption {
         if (!b) return ''
         const chg = ((b.close - b.open) / b.open * 100).toFixed(2)
         const color = b.close >= b.open ? upColor : downColor
-        const absIdx = start + p.dataIndex
-        const d = allDaily.value[absIdx]
+        const absIdx = start + p.dataIndex          // 图表坐标(含上下文段)
+        const dispIdx = absIdx - contextLen.value   // 展示区相对
+        const d = dispIdx >= 0 ? allDaily.value[dispIdx] : undefined
         const posTag = d?.position ? '<span style="color:#2DB757">●持仓</span>' : ''
         const sig = d?.signal_buy ? ' <b style="color:#2DB757">买入信号</b>' : d?.signal_sell ? ' <b style="color:#E84040">卖出信号</b>' : ''
-        const ev = allEvents.value.find((x) => x.index === absIdx)
+        const ev = dispIdx >= 0 ? allEvents.value.find((x) => x.index === dispIdx) : undefined
         const evTag = ev ? (ev.kind === 'entry'
           ? ' <b style="color:#2DB757">▲建仓 @' + ev.price + (ev.qty ? ' ×' + ev.qty + '股' : '') + '</b>'
           : ' <b style="color:#E84040">▼平仓 @' + ev.price + (ev.reason ? ' (' + reasonCn(ev.reason) + ')' : '') + (ev.net_pnl !== undefined ? ' 净盈亏' + (ev.net_pnl >= 0 ? '+' : '') + ev.net_pnl : '') + '</b>') : ''
@@ -501,12 +539,17 @@ function initChart() {
 // ═══════════════════════════════════════════════════════════
 let stepTimer: ReturnType<typeof setTimeout> | null = null
 
-function togglePlay() {
+async function togglePlay() {
   if (!allBars.value.length || phase.value === 'settled') return
+  // 设置已变更未加载: 播放前自动应用(按设置日期/参数重新回放)
+  if (phase.value === 'setup' && settingsDirty.value) {
+    await load()
+    if (!allBars.value.length) return
+  }
   startRound()
   playing.value = !playing.value
   if (playing.value) {
-    if (cursor.value >= allBars.value.length - 1) cursor.value = 0
+    if (cursor.value >= allBars.value.length - 1) cursor.value = contextLen.value
     render()
     scheduleStep()
   } else {
@@ -545,7 +588,11 @@ function restartTimer() {
   }
 }
 
-function stepFwd() {
+async function stepFwd() {
+  if (phase.value === 'setup' && settingsDirty.value) {
+    await load()
+    if (!allBars.value.length) return
+  }
   startRound()
   if (cursor.value < allBars.value.length - 1) {
     cursor.value++
@@ -563,7 +610,7 @@ function settle() {
 
 function stepBack() {
   startRound()
-  if (cursor.value > 0) {
+  if (cursor.value > contextLen.value) {   // 只回退到展示区起点, 不进入上下文段
     cursor.value--
     render()
   }
@@ -573,7 +620,7 @@ function onSliderInput(ev: Event) {
   startRound()
   if (playing.value) stopPlay()   // 拖动即暂停: 避免进度与播放节奏冲突
   const v = Number((ev.target as HTMLInputElement).value)
-  cursor.value = v
+  cursor.value = Math.max(contextLen.value, v)
   render()
 }
 
@@ -611,16 +658,6 @@ onBeforeUnmount(() => {
   ro?.disconnect()
   mo?.disconnect()
   chart.value?.dispose()
-})
-
-watch(() => allBars.value.length, async (len) => {
-  if (len > 0) {
-    await nextTick()
-    if (el.value && !chart.value) {
-      initChart()
-      if (ro && el.value) ro.observe(el.value)
-    }
-  }
 })
 
 // 侧栏开合时图表尺寸自适应 + 重绘
@@ -679,6 +716,7 @@ watch(strategyId, (v) => {
           {{ settingsOpen ? '▲ 收起设置' : '▾ 回放设置' }}
         </button>
         <span class="summary muted">{{ settingsSummary }}</span>
+        <span v-if="settingsDirty" class="tag dirty-note">⚠ 设置已变更 · 播放时自动应用</span>
         <span v-if="name" class="stock-name">{{ name }}</span>
         <span v-if="phase !== 'setup'" class="lock-note">
           <span class="lock-icon">🔒</span> 回合中 — 设置已锁定
@@ -732,7 +770,7 @@ watch(strategyId, (v) => {
             </div>
           </div>
           <div class="settings-actions">
-            <span v-if="!startDate && !endDate" class="muted note">未设日期时回放最近约2500根K线(自动保留150根预热, 均线/因子从第一天起准确)</span>
+            <span class="muted note">起始日期前的历史K线作为上下文一并显示(左侧浅色区, 便于判断所处阶段), 不参与交易回放</span>
             <button class="btn primary" @click="load" :disabled="loading || !strategyId">应用设置并重新回放</button>
           </div>
         </fieldset>
@@ -764,8 +802,8 @@ watch(strategyId, (v) => {
                 <option :value="4">4x</option>
                 <option :value="8">8x 快放</option>
               </select>
-              <input type="range" class="slider" :min="0" :max="allBars.length - 1" :value="cursor" @input="onSliderInput" />
-              <span class="mono pos">{{ cursor + 1 }}/{{ allBars.length }}</span>
+              <input type="range" class="slider" :min="contextLen" :max="allBars.length - 1" :value="cursor" @input="onSliderInput" />
+              <span class="mono pos">{{ cursor + 1 - contextLen }}/{{ allBars.length - contextLen }}</span>
               <span class="round-pct muted">{{ roundProgress }}%</span>
             </div>
             <div class="status-line">
@@ -857,7 +895,7 @@ watch(strategyId, (v) => {
             <h4 class="side-title">交易明细 <span class="muted">({{ exitEvents.length }}笔)</span></h4>
             <div v-if="!exitEvents.length" class="side-empty muted">暂无交易</div>
             <div v-for="(e, i) in exitEvents" :key="i" class="trade-item"
-                 :class="{ done: e.index <= cursor }">
+                 :class="{ done: e.index + contextLen <= cursor }">
               <div class="trade-head">
                 <span class="trade-idx">#{{ exitEvents.length - i }}</span>
                 <span class="mono muted">{{ e.entry_date }} → {{ e.date }}</span>
@@ -887,7 +925,7 @@ watch(strategyId, (v) => {
           <span class="muted">{{ name }} · {{ strategyName }}</span>
         </div>
         <div class="settle-range mono muted">
-          {{ allBars[0]?.date }} ~ {{ allBars[allBars.length - 1]?.date }} · {{ allBars.length }} 根K线
+          {{ allBars[contextLen]?.date }} ~ {{ allBars[allBars.length - 1]?.date }} · {{ allBars.length - contextLen }} 根K线
         </div>
         <div class="settle-hero">
           <div class="settle-main" :class="metrics.total_return >= 0 ? 'up' : 'down'">
@@ -1052,6 +1090,7 @@ watch(strategyId, (v) => {
 .tag.idle { background: rgba(138,143,154,.15); }
 .tag.buy { background: rgba(45,183,87,.2); color: var(--down); font-weight: 600; }
 .tag.sell { background: rgba(232,64,64,.2); color: var(--up); font-weight: 600; }
+.dirty-note { background: rgba(232,181,75,.18); color: var(--gold); font-weight: 600; }
 
 /* ── 图表 ── */
 .chart-wrap { position: relative; width: 100%; }

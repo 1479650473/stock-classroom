@@ -368,6 +368,7 @@ export interface ReplayResult {
   code: string; contract_name: string
   bars: ReplayBar[]; daily: ReplayDaily[]; events: ReplayEvent[]
   holding_spans: number[][]
+  context_bars?: ReplayBar[]
   metrics: {
     total_return: number; final_equity: number; initial_balance: number
     num_trades: number; win_rate: number; profit_factor: number

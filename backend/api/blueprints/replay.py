@@ -199,6 +199,15 @@ def replay():
         result = replay_contract(kd, contract, overrides=overrides, warmup_bars=warmup_bars)
         if "error" in result:
             return err(500, "replay_error", result["error"])
+        # 上下文K线(起始日期前的预热段): 前端展示用于判断所处阶段/趋势, 不参与交易回放
+        result["context_bars"] = [{
+            "date": str(b["date"]),
+            "open": float(b["open"]), "high": float(b["high"]),
+            "low": float(b["low"]), "close": float(b["close"]),
+            "volume": float(b.get("volume", 0) or 0),
+            "ma5": b.get("ma5"), "ma10": b.get("ma10"),
+            "ma20": b.get("ma20"), "ma60": b.get("ma60"),
+        } for b in kd[:warmup_bars]]
         return ok(result)
     except Exception as e:
         return err(500, "replay_error", str(e))
