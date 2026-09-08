@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref, watch, nextTick } from 'vue'
+
+// 嵌入模式: 隐藏页面标题, 只保留操作区(供策略页 Tab 内嵌)
+withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
 import * as echarts from 'echarts/core'
 import { CandlestickChart, BarChart, LineChart, CustomChart } from 'echarts/charts'
 import {
@@ -675,7 +678,7 @@ watch(strategyId, (v) => {
 
 <template>
   <div>
-    <PageHeader title="策略回放" subtitle="真实交易环境模拟 — 逐日播放买卖点 / 持仓盈亏 / 账户权益">
+    <PageHeader title="策略回放" subtitle="真实交易环境模拟 — 逐日播放买卖点 / 持仓盈亏 / 账户权益" :embedded="embedded">
       <template #right>
         <div class="hdr-actions">
           <input v-model="code" class="code-input" placeholder="股票代码"

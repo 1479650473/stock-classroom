@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, ref } from 'vue'
 import type { Ref } from 'vue'
+
+// 嵌入模式: 隐藏页面标题, 只保留操作区(供策略页 Tab 内嵌)
+withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
 import PageHeader from '@/components/PageHeader.vue'
 import Card from '@/components/Card.vue'
 import StatCard from '@/components/StatCard.vue'
@@ -192,7 +195,7 @@ function fmtW(v: number) { return v === 1.0 ? '1.0' : v.toFixed(2) }
 
 <template>
   <div class="optimize">
-    <PageHeader title="策略进化" subtitle="AI 提案 → 回测 → 裁决 → 模拟盘（自主迭代）">
+    <PageHeader title="策略进化" subtitle="AI 提案 → 回测 → 裁决 → 模拟盘（自主迭代）" :embedded="embedded">
       <template #right>
         <select v-model="hp" class="sel" title="持有期">
           <option :value="10">10 bar</option>

@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref, onBeforeUnmount } from 'vue'
+
+// 嵌入模式: 隐藏页面标题(供数据页 Tab 内嵌)
+withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
 import PageHeader from '@/components/PageHeader.vue'
 import Card from '@/components/Card.vue'
 import StatCard from '@/components/StatCard.vue'
@@ -71,7 +74,7 @@ async function refreshStats() {
 
 <template>
   <div class="pipeline">
-    <PageHeader title="数据管道" subtitle="K线数据更新与状态监控">
+    <PageHeader title="数据管道" subtitle="K线数据更新与状态监控" :embedded="embedded">
       <template #right>
         <button class="btn" @click="refreshStats" :disabled="loading">
           <Icon name="refresh" :size="14" /> 刷新

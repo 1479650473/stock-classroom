@@ -56,6 +56,8 @@ button { font-family: inherit; }
 /* muted text */
 .muted { color: var(--text-sub); }
 .faint { color: var(--text-faint); }
+.mono { font-family: var(--font-mono); }
+.gold { color: var(--gold); }
 
 /* generic table polish (页面自建 .tbl 均受益: 财务数字 tabular 对齐) */
 .tbl th {

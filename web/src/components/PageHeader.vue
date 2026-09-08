@@ -1,11 +1,11 @@
 <script setup lang="ts">
-defineProps<{ title: string; subtitle?: string }>()
+withDefaults(defineProps<{ title: string; subtitle?: string; embedded?: boolean }>(), { embedded: false })
 defineSlots<{ right?: {} }>()
 </script>
 
 <template>
-  <div class="page-header">
-    <div>
+  <div class="page-header" :class="{ 'page-header--embedded': embedded }">
+    <div v-if="!embedded">
       <h1 class="title">{{ title }}</h1>
       <p v-if="subtitle" class="sub">{{ subtitle }}</p>
     </div>
@@ -33,6 +33,10 @@ defineSlots<{ right?: {} }>()
   margin: var(--sp-1) 0 0;
   color: var(--text-sub);
   font-size: var(--fs-md);
+}
+.page-header--embedded {
+  margin-bottom: var(--sp-3);
+  justify-content: flex-end;
 }
 .right {
   display: flex;

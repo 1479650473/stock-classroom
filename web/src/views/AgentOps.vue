@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+
+// 嵌入模式: 隐藏页面标题, 只保留内容(供 AI 页 Tab 内嵌)
+withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
 import PageHeader from '@/components/PageHeader.vue'
 import Card from '@/components/Card.vue'
 import StatCard from '@/components/StatCard.vue'
@@ -85,7 +88,7 @@ function verdictColor(v: string) {
 
 <template>
   <div class="agentops">
-    <PageHeader title="AI 操盘" subtitle="信号扫描 · 个股深挖 · 组合重平衡" />
+    <PageHeader title="AI 操盘" subtitle="信号扫描 · 个股深挖 · 组合重平衡" :embedded="embedded" />
 
     <Skeleton v-if="loading" />
 

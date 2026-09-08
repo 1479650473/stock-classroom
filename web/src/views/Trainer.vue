@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+
+// 嵌入模式: 隐藏页面标题(供数据页 Tab 内嵌)
+withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
 import PageHeader from '@/components/PageHeader.vue'
 import Card from '@/components/Card.vue'
 import StatCard from '@/components/StatCard.vue'
@@ -93,7 +96,7 @@ function fmtMoney(v: number) {
 
 <template>
   <div>
-    <PageHeader title="训练" subtitle="K线回放交易模拟器">
+    <PageHeader title="训练" subtitle="K线回放交易模拟器" :embedded="embedded">
       <template #right>
         <div class="start-row" v-if="!sid">
           <input v-model="code" class="inp code-inp" placeholder="股票代码" @keyup.enter="start" />

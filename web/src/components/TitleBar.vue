@@ -31,7 +31,7 @@ const inTauri = isTauri()
     <div class="brand" @mousedown="winStartDrag">
       <img src="/logo.svg" alt="logo" class="logo" draggable="false" />
       <span class="name">股票教室</span>
-      <span class="ver">v5.0</span>
+      <span class="ver">v6.0</span>
     </div>
 
     <button class="search" @click="emit('open-search')" title="搜索股票 (Ctrl+K)">
@@ -44,7 +44,7 @@ const inTauri = isTauri()
       <button class="tb-btn" @click="cycleTheme" :title="'切换主题（当前：' + themes.find(t=>t.key===app.theme)?.label + '）'">
         <Icon name="layers" :size="16" />
       </button>
-      <router-link to="/agent" class="tb-btn" title="AI 操盘台">
+      <router-link to="/ai" class="tb-btn" title="AI 操盘台">
         <Icon name="chat" :size="16" />
       </router-link>
       <router-link to="/settings" class="tb-btn" title="设置">

@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, nextTick, ref } from 'vue'
 import { useRoute } from 'vue-router'
+
+// 嵌入模式: 隐藏页面标题, 只保留内容(供 AI 页 Tab 内嵌)
+withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
 import PageHeader from '@/components/PageHeader.vue'
 import Icon from '@/components/Icon.vue'
 import { useToastStore } from '@/stores/toast'
@@ -180,7 +183,7 @@ function escapeHtml(s: string): string {
 
 <template>
   <div class="agent">
-    <PageHeader title="AI 操盘台" subtitle="自由调用软件工具：查行情 · 写策略 · 回测 · 盯账户 · 下单">
+    <PageHeader title="AI 操盘台" subtitle="自由调用软件工具：查行情 · 写策略 · 回测 · 盯账户 · 下单" :embedded="embedded">
       <template #right>
         <span v-if="health" :class="['live-badge', health.llm_configured ? 'ok' : 'off']">
           <span class="dot" />{{ health.llm_configured ? `${health.model} 已连接` : '未配置 LLM' }}

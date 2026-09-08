@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref, shallowRef, computed, onBeforeUnmount } from 'vue'
+
+// 嵌入模式: 隐藏页面标题, 只保留操作区(供策略页 Tab 内嵌)
+withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
 import PageHeader from '@/components/PageHeader.vue'
 import Card from '@/components/Card.vue'
 import StatCard from '@/components/StatCard.vue'
@@ -163,7 +166,7 @@ const fmtNum = (v: unknown, d = 2) => typeof v === 'number' ? v.toFixed(d) : '�
 
 <template>
   <div class="research">
-    <PageHeader title="研究" subtitle="市场环境 · 因子研究 · 策略回测" />
+    <PageHeader title="研究" subtitle="市场环境 · 因子研究 · 策略回测" :embedded="embedded" />
 
     <!-- 市场环境条 -->
     <section class="sec">

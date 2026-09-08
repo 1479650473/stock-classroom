@@ -8,15 +8,15 @@ const route = useRoute()
 
 <template>
   <nav class="sidenav">
-    <div v-for="group in NAV" :key="group.label" class="group">
-      <div class="group-label">{{ group.label }}</div>
+    <div v-for="(group, gi) in NAV" :key="gi" class="group">
+      <div v-if="group.label" class="group-label">{{ group.label }}</div>
       <router-link
         v-for="item in group.items"
         :key="item.path"
         :to="item.path"
         class="nav-item"
         :class="{ active: route.path === item.path }"
-        :title="item.title"
+        :title="item.hint || item.title"
       >
         <span class="bar" />
         <Icon :name="item.icon" :size="17" class="ic" />
@@ -24,7 +24,7 @@ const route = useRoute()
       </router-link>
     </div>
     <div class="spacer" />
-    <div class="foot muted">v5.0 · Web</div>
+    <div class="foot muted">v6.0 · Web</div>
   </nav>
 </template>
 

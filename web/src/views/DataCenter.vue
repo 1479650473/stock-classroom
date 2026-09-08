@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref, computed } from 'vue'
+
+// 嵌入模式: 隐藏页面标题(供数据页 Tab 内嵌)
+withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
 import PageHeader from '@/components/PageHeader.vue'
 import Card from '@/components/Card.vue'
 import StatCard from '@/components/StatCard.vue'
@@ -56,7 +59,7 @@ const tableRows = computed(() => {
 
 <template>
   <div>
-    <PageHeader title="数据中心" subtitle="数据库状态 · 各业务库统计" />
+    <PageHeader title="数据中心" subtitle="数据库状态 · 各业务库统计" :embedded="embedded" />
 
     <Skeleton v-if="loading && !b" />
 

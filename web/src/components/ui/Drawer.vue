@@ -16,10 +16,15 @@ const props = withDefaults(
   { width: 400 },
 )
 
-const emit = defineEmits<{ close: [] }>()
+const emit = defineEmits<{ close: []; 'update:open': [v: boolean] }>()
+
+function close() {
+  emit('update:open', false)
+  emit('close')
+}
 
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') emit('close')
+  if (e.key === 'Escape') close()
 }
 
 watch(
@@ -41,14 +46,14 @@ onBeforeUnmount(() => {
   <Teleport to="body">
     <Transition name="drawer">
       <div v-if="open" class="drawer-root">
-        <div class="drawer-mask" @click="emit('close')" />
+        <div class="drawer-mask" @click="close" />
         <aside class="drawer" :style="{ width: `${width}px` }" role="dialog" aria-modal="true">
           <header class="drawer__head">
             <div>
               <h3 v-if="title" class="drawer__title">{{ title }}</h3>
               <p v-if="desc" class="drawer__desc">{{ desc }}</p>
             </div>
-            <button class="ui-btn ui-btn--ghost ui-btn--icon ui-btn--sm" title="关闭" @click="emit('close')">
+            <button class="ui-btn ui-btn--ghost ui-btn--icon ui-btn--sm" title="关闭" @click="close">
               <Icon name="close" :size="15" />
             </button>
           </header>
