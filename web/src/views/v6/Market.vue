@@ -10,7 +10,7 @@ import SearchInput from '@/components/ui/SearchInput.vue'
 import EmptyGuide from '@/components/ui/EmptyGuide.vue'
 import LoadingBlock from '@/components/ui/LoadingBlock.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
-import KlineChart from '@/components/KlineChart.vue'
+import KlineChart from '@/components/charts/KlineChart.vue'
 import Icon from '@/components/Icon.vue'
 import { getIndices, getSectors, getNorthFlow, getKline } from '@/api'
 import type { IndexQuote, KlineBar, StockRef } from '@/api'
@@ -42,6 +42,21 @@ const klineError = ref('')
 
 const lastBar = computed(() => kline.value[kline.value.length - 1] ?? null)
 const firstBar = computed(() => kline.value[0] ?? null)
+
+/** YYYYMMDD -> YYYY-MM-DD (lightweight-charts 要求) */
+function lwcTime(d: string): string {
+  return /^\d{8}$/.test(d) ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}` : d
+}
+const lwcBars = computed(() =>
+  kline.value.map((b) => ({
+    time: lwcTime(b.date),
+    open: b.open,
+    high: b.high,
+    low: b.low,
+    close: b.close,
+    volume: b.volume,
+  })),
+)
 const changePct = computed(() => {
   if (!lastBar.value || !firstBar.value) return 0
   const prev = firstBar.value.close
@@ -241,7 +256,7 @@ onMounted(() => {
               <span class="num" :class="changePct >= 0 ? 'up' : 'down'">{{ fmtPct(changePct) }}</span>
             </div>
           </div>
-          <KlineChart :bars="kline" />
+          <KlineChart :bars="lwcBars" :height="460" />
           <div class="detail-table">
             <h3 class="sub-title">历史数据（近 {{ Math.min(kline.length, 60) }} 条）</h3>
             <DataTable
