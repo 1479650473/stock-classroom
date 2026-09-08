@@ -388,3 +388,60 @@ export interface ReplayParams {
 export const getReplayStrategies = () => api.get<ReplayStrategy[]>('/api/replay/strategies')
 export const getReplay = (code: string, strategy: string, days = 2500, params: ReplayParams = {}) =>
   api.get<ReplayResult>('/api/replay', { code, strategy, days, ...params })
+
+// ---- AI 操盘手 (长期自主 LLM 交易员) ----
+export interface TraderOrder {
+  code: string; name?: string; side: 'buy' | 'sell'
+  order_type?: 'market' | 'limit'; price?: number; qty: number; reason?: string
+}
+export interface TraderExecution extends TraderOrder {
+  ok: boolean; detail: string; commission?: number; stamp_tax?: number; order_id?: number
+}
+export interface TraderNewsItem { title: string; summary?: string; time?: string; url?: string }
+export interface TraderStockNews { code: string; name: string; news: TraderNewsItem[] }
+export interface TraderDecision {
+  id: number; profile_id: number; trade_date: string; as_of?: string
+  status: 'running' | 'done' | 'error' | 'skipped'; trigger: string
+  thinking: string; reflection: string
+  context: Record<string, unknown>
+  news: { market?: TraderNewsItem[]; stocks?: TraderStockNews[] }
+  plan: TraderOrder[]; executions: TraderExecution[]
+  nav_before?: number; nav_after?: number
+  total_assets_before?: number; total_assets_after?: number
+  error?: string; created_at: string; finished_at?: string
+}
+export interface TraderMemory {
+  id: number; profile_id: number; kind: string; code: string
+  content: string; active: number; created_at: string; decision_id?: number
+}
+export interface TraderProfile {
+  id: number; name: string; account_id: number; persona: string
+  risk_rules: Record<string, unknown>; initial_capital: number
+  auto_execute: number; enabled: number; created_at: string
+}
+export interface TraderState {
+  profile: TraderProfile
+  summary: AccountSummary
+  today: string
+  today_decision: TraderDecision | null
+  latest_decision: TraderDecision | null
+  memory_count: number
+  llm_configured: boolean
+  model: string
+}
+
+export const getTraderState = () => api.get<TraderState>('/api/trader/state')
+export const getTraderDecisions = (limit = 30, offset = 0) =>
+  api.get<{ items: TraderDecision[] }>('/api/trader/decisions', { limit, offset })
+export const getTraderDecision = (date: string) =>
+  api.get<TraderDecision>(`/api/trader/decision/${date}`)
+export const getTraderMemory = (kind?: string, active = true) =>
+  api.get<{ items: TraderMemory[] }>('/api/trader/memory', { kind, active: active ? 1 : 0 })
+export const toggleTraderMemory = (id: number, active: boolean) =>
+  api.post<{ id: number; active: boolean }>(`/api/trader/memory/${id}/toggle`, { active })
+export const saveTraderProfile = (fields: Partial<TraderProfile>) =>
+  api.post<{ profile: TraderProfile }>('/api/trader/profile', fields)
+export const runTrader = (opts: { force?: boolean; dry_run?: boolean } = {}) =>
+  api.post<JobHandle>('/api/trader/run', opts)
+export const getTraderNews = (limit = 15) =>
+  api.get<{ items: TraderNewsItem[] }>('/api/trader/news', { limit })

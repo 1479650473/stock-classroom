@@ -61,13 +61,13 @@ class LLMClient:
         return ""
 
     def chat_with_tools(self, messages: list, tools: list, max_tokens: int = 2200,
-                        temperature: float = 0.6) -> dict:
+                        temperature: float = 0.6, tool_choice="auto") -> dict:
         """Tool-calling 单轮: 返回 {"content": str} 或 {"tool_calls": [..openai格式..]}。"""
         resp = self._client.chat.completions.create(
             model=self.model,
             messages=messages,
             tools=tools,
-            tool_choice="auto",
+            tool_choice=tool_choice,
             max_tokens=max_tokens,
             temperature=temperature,
         )

@@ -248,6 +248,35 @@ def run(pool_only=False, skip_paper=False):
             out['steps']['nav_snapshot'] = str(e)[:80]
             lg.warning('  净值快照失败: %s', str(e)[:60])
 
+        # ⑨ AI 操盘手决策 (LLM 自主交易员: 读账户/持仓/新闻 → 思考 → 买卖/保持 → 记长期记忆)
+        #    与策略进化闭环不同: 这里模型直接操作自己的专属账户, 不写策略/不跑回测.
+        try:
+            from backend.trader import account as _tacct
+            _prof = _tacct.ensure_profile()
+            if _prof and _prof.get('enabled'):
+                from backend.trader.daily import run_daily_decision
+                lg.info('  AI操盘手决策中(账户 #%s)...', _prof.get('account_id'))
+                _dec = run_daily_decision(
+                    profile_id=int(_prof['id']), trigger='auto',
+                    progress=lambda m: lg.info('   [操盘手] %s',
+                                               (m.get('msg') if isinstance(m, dict) else str(m))))
+                _ex = _dec.get('executions') or []
+                out['steps']['trader'] = {
+                    'status': _dec.get('status'),
+                    'orders': len(_dec.get('plan') or []),
+                    'filled': sum(1 for e in _ex if e.get('ok')),
+                    'nav': _dec.get('nav_after'),
+                }
+                lg.info('  AI操盘手: status=%s 委托=%d 成交=%d 净值=%s',
+                        _dec.get('status'), len(_dec.get('plan') or []),
+                        sum(1 for e in _ex if e.get('ok')), _dec.get('nav_after'))
+            else:
+                out['steps']['trader'] = 'disabled'
+                lg.info('  AI操盘手: 已停用, 跳过')
+        except Exception as e:
+            out['steps']['trader'] = str(e)[:120]
+            lg.warning('  AI操盘手决策失败: %s', str(e)[:80])
+
     out['finished'] = datetime.now().isoformat(timespec='seconds')
     out['elapsed'] = round(time.time() - t0, 1)
     out['ok'] = True

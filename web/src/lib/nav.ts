@@ -22,7 +22,7 @@ export const NAV: NavGroup[] = [
       { path: '/market', name: 'market', title: '行情', icon: 'market', hint: '市场全景 · 个股K线' },
       { path: '/strategy', name: 'strategy', title: '策略', icon: 'research', hint: '环境 · 回测 · 进化 · 回放' },
       { path: '/trade', name: 'trade', title: '交易', icon: 'trade', hint: '持仓 · 下单 · 订单 · 选股' },
-      { path: '/ai', name: 'ai', title: 'AI', icon: 'chat', hint: '对话操盘 · 自动操盘' },
+      { path: '/ai', name: 'ai', title: 'AI', icon: 'chat', hint: 'AI 操盘手 · 对话操盘 · 工具台' },
       { path: '/data', name: 'data', title: '数据', icon: 'database', hint: '数据管道 · 数据库 · 训练' },
     ],
   },

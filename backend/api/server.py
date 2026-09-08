@@ -67,6 +67,9 @@ def create_app():
     # 策略回放器 (K线逐日回放: 买卖点/持仓高亮)
     from .blueprints import replay
     app.register_blueprint(replay.bp)
+    # AI 操盘手 (长期自主 LLM 交易员: 专属账户 + 每日决策 + 长期记忆)
+    from .blueprints import trader
+    app.register_blueprint(trader.bp)
 
     @app.route("/")
     def root():
