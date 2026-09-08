@@ -1140,7 +1140,8 @@ watch(strategyId, (v) => {
 
 @media (max-width: 1200px) {
   .acct-grid, .metric-grid { grid-template-columns: repeat(2, 1fr); }
-  .replay-layout { flex-direction: column; }
+  .replay-layout { flex-direction: column; align-items: stretch; }
+  .main-col { width: 100%; }
   .side-col, .side-col:not(.open) { width: 100%; }
 }
 </style>
