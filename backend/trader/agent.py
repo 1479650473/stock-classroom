@@ -68,14 +68,15 @@ def _fmt_context(ctx: dict) -> str:
 class TraderAgent:
     def __init__(self, account_id: int, profile_id: int, risk_rules: Optional[dict] = None,
                  llm: Optional[LLMClient] = None, decision_id: Optional[int] = None,
-                 dry_run: bool = False):
+                 dry_run: bool = False, model: Optional[str] = None):
         self.tools = TraderTools(account_id, profile_id, risk_rules,
                                  decision_id=decision_id, dry_run=dry_run)
         self._llm = llm
+        self._model = model or None
 
     def _client(self) -> LLMClient:
         if self._llm is None:
-            self._llm = LLMClient()
+            self._llm = LLMClient(model=self._model)
         return self._llm
 
     def decide(self, ctx: dict, progress: Optional[Callable] = None) -> dict:

@@ -31,37 +31,41 @@ Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
 
 ## Web 前端(web/src)
 - **信息架构 v6**: 6 主页面 + 设置 — 工作台 `/` / 行情 `/market` / 策略 `/strategy` / 交易 `/trade` / AI `/ai` / 数据 `/data`; 旧路由 (`/overview /flow /kline /picks /holdings /agentops /agent /optimize /replay /research /datacenter /pipeline /trainer`) 全部重定向
-- **AI 页三页签**: `AI 操盘手`(v6/Trader.vue) / `对话操盘`(Agent.vue) / `自动操盘台`(AgentOps.vue)
+- **AI 页三页签**: `AI 操盘手`(v6/TraderHub.vue: 总览对比 TraderOverview + 交易员详情 Trader) / `对话操盘`(Agent.vue) / `自动操盘台`(AgentOps.vue)
 - **组件库**: `components/ui/` (AppPage/PageToolbar/SectionCard/StatTile/DataTable/Drawer/FormField/EmptyGuide/LoadingBlock/SearchInput/SegmentedControl)
 - **图表**: `components/charts/KlineChart.vue` 封装 TradingView Lightweight Charts v5; 回放器仍用 ECharts (`composables/useEChart.ts`)
 - **全局任务中心**: `stores/jobs.ts` (SSE 由 store 持有，切页面不断连) + `components/TaskCenter.vue`
 - **设置持久化**: `composables/usePersistedRef.ts` (localStorage `sc_` 前缀)
 - **主题**: `styles/tokens.css` 三主题 graphite / obsidian / ivory (含 `--ok`)
 
-## AI 操盘手(backend/trader/) — 长期自主 LLM 交易员
+## AI 操盘手(backend/trader/) — 长期自主 LLM 交易员（支持多个）
 **与「策略进化闭环」机制不同**：策略进化是 LLM 写策略契约→回测→裁决；AI 操盘手是 LLM 直接扮演交易员，操作专属账户做买卖决策。
+
+- **多交易员**：每个交易员 = 独立档案 + 独立模拟账户 + 可选独立模型（`trader_profile.model`，空=全局）；可自定义新建/编辑/停用/删除（`/api/trader/profiles`）。前端 AI 页「AI 操盘手」= 总览对比（净值曲线 vs 沪深300 + 时间范围 + 对比表）+ 交易员详情（切换）。
 
 | 文件 | 作用 |
 |------|------|
-| `account.py` | 专属「AI操盘手」账户 (与聊天的「AI账户」分离)；`trader_engine()` 解除项目级单票 30% 限制 |
-| `store.py` | `data/ai_trader.db`: `trader_profile` / `trader_decision` / `trader_memory` (轻量迁移 trace 列) |
+| `account.py` | 交易员档案/账户生命周期：`ensure_profile`(兼容单例) / `create_trader` / `delete_trader` / `list_traders`；`trader_engine()` 解除项目级单票 30% 限制 |
+| `store.py` | `data/ai_trader.db`: `trader_profile`(含 model) / `trader_decision`(含 trace) / `trader_memory` (轻量迁移) |
 | `news.py` | 东财全球财经 + 个股新闻 (豆包可选)，按日缓存、失败降级 |
 | `context.py` | 每日上下文: 账户/持仓(持有天数)/待成交委托/净值/regime/沪深300/候选/事件池/新闻/历史决策/自我风格 |
 | `tools.py` | 13 工具: 查询 + `preview_order` + **`place_order`(直接下单)** + `cancel_order` + `remember` + `submit_decision` |
-| `agent.py` | TraderAgent: LLM tool-calling 循环，产出思考/复盘 + 工具轨迹 |
-| `daily.py` | `run_daily_decision()`: 构建上下文→LLM 操作交易系统→落库/净值快照；同日幂等 |
+| `agent.py` | TraderAgent: LLM tool-calling 循环，产出思考/复盘 + 工具轨迹；支持 profile 级 model |
+| `daily.py` | `run_daily_decision(profile_id)` 单交易员；`run_all_daily_decisions()` 遍历所有 enabled；同日幂等 |
 
 - **规则归系统**: 本金固定与 A 股规则**不写进提示词**，由 TradeEngine 强制执行，违规返回错误让模型自行调整（像用券商软件）。
 - **风格自定**: 无预设人设；AI 把自我认知写入 `kind='style'` 长期记忆（同类只保留最新 active），持仓逻辑 `kind='thesis'`，另有 `lesson`/`note`/`market`。
-- **触发**: `update_daily.py` 第⑨步（非交易日/已决策跳过）+ `/api/trader/run`（页面「立即决策」）。
-- **API**: `/api/trader/{state,profile,decisions,memory,run,news}`。
+- **触发**: `update_daily.py` 第⑨步（对每个 enabled 档案逐个跑）+ `/api/trader/run`（单交易员）/ `/api/trader/run-all`（全部启用）。
+- **API**: `/api/trader/{profiles,overview,state,profile,decisions,memory,run,run-all,news}`（state/decisions/memory/run 按 `profile_id`）。
 
 ## Key Files
 | Layer | Files | Purpose |
 |-------|-------|---------|
 | Web | `web/src/router/index.ts` | v6 路由 + 旧路由重定向 |
 | Web | `web/src/views/v6/*.vue` | 6 主页面 (Dashboard/Market/Strategy/Trade/AI/Data) |
-| Web | `web/src/views/v6/Trader.vue` | AI 操盘手页 |
+| Web | `web/src/views/v6/TraderHub.vue` | AI 操盘手容器：交易员切换/新建/删除 + 总览/详情 |
+| Web | `web/src/views/v6/TraderOverview.vue` | 总览对比：净值曲线 vs 沪深300 + 对比表 |
+| Web | `web/src/views/v6/Trader.vue` | 单个交易员详情页 |
 | Backend | `backend/data_manager.py` | SQLite CRUD, AKShare dispatch, update_pool |
 | Backend | `backend/akshare_source.py` | ~18 API wrappers + 3源回退 + 硬超时 |
 | Backend | `backend/paper_worker.py` | 纸面盘 (原 frontend.plugins.research.worker 迁入) |

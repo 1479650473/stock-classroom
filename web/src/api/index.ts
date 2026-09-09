@@ -121,10 +121,10 @@ export interface PickItem {
 }
 
 export interface Bootstrap {
-  kline: { exists: boolean; max: string | null; rows: number }
+  kline: { exists: boolean; max: string | null; rows: number | null }
   stock_list_rows: number
   cache: { exists: boolean; max: string | null; rows: number }
-  fundamental: { exists: boolean; max: string | null; rows: number }
+  fundamental: { exists: boolean; max: string | null; rows: number | null }
   needs_init: boolean
   settings: { theme: string; font_size: number }
   ai_configured: boolean
@@ -328,7 +328,7 @@ export const getPipelineStats = () => api.get<PipelineStats>('/api/pipeline/stat
 export interface TrainerSnapshot {
   cursor: number; total_bars: number; progress: number; balance: number;
   floating_pnl: number; total_equity: number; realized_pnl: number; win_rate: number;
-  open_orders: unknown[]; closed_orders: unknown[]; current_price: number; current_date: string
+  open_orders: number; closed_orders: number; current_price: number; current_date: string
 }
 
 export const startTrainer = (code: string, days?: number, initial_balance?: number) =>
@@ -418,8 +418,25 @@ export interface TraderMemory {
 }
 export interface TraderProfile {
   id: number; name: string; account_id: number; persona: string
+  model: string
   risk_rules: Record<string, unknown>; initial_capital: number
   auto_execute: number; enabled: number; created_at: string
+  summary?: TraderSummary
+}
+export interface TraderSummary {
+  initial_capital?: number; balance?: number; market_value?: number
+  total_assets?: number; total_profit?: number; total_profit_pct?: number
+  positions?: number; total_trades?: number
+}
+export interface TraderNavPoint { date: string; nav: number; total_assets: number }
+export interface TraderOverview {
+  as_of: string
+  benchmark: { name: string; dates: string[]; values: number[] }
+  traders: {
+    profile_id: number; name: string; model: string; enabled: number
+    created_at?: string; initial_capital?: number; summary?: TraderSummary
+    nav: TraderNavPoint[]; nav_format: string
+  }[]
 }
 export interface TraderState {
   profile: TraderProfile
@@ -430,20 +447,32 @@ export interface TraderState {
   memory_count: number
   llm_configured: boolean
   model: string
+  default_model?: string
 }
 
-export const getTraderState = () => api.get<TraderState>('/api/trader/state')
-export const getTraderDecisions = (limit = 30, offset = 0) =>
-  api.get<{ items: TraderDecision[] }>('/api/trader/decisions', { limit, offset })
-export const getTraderDecision = (date: string) =>
-  api.get<TraderDecision>(`/api/trader/decision/${date}`)
-export const getTraderMemory = (kind?: string, active = true) =>
-  api.get<{ items: TraderMemory[] }>('/api/trader/memory', { kind, active: active ? 1 : 0 })
+export const getTraderProfiles = () => api.get<{ items: TraderProfile[] }>('/api/trader/profiles')
+export const createTraderProfile = (fields: { name: string; initial_capital: number; model?: string; persona?: string }) =>
+  api.post<{ profile: TraderProfile; summary: TraderSummary }>('/api/trader/profiles', fields)
+export const updateTraderProfile = (id: number, fields: Partial<TraderProfile>) =>
+  api.post<{ profile: TraderProfile }>(`/api/trader/profiles/${id}`, fields)
+export const deleteTraderProfile = (id: number) =>
+  api.del<{ deleted: number }>(`/api/trader/profiles/${id}`)
+export const getTraderOverview = () => api.get<TraderOverview>('/api/trader/overview')
+export const getTraderState = (profile_id?: number) =>
+  api.get<TraderState>('/api/trader/state', { profile_id })
+export const getTraderDecisions = (limit = 30, offset = 0, profile_id?: number) =>
+  api.get<{ items: TraderDecision[] }>('/api/trader/decisions', { limit, offset, profile_id })
+export const getTraderDecision = (date: string, profile_id?: number) =>
+  api.get<TraderDecision>(`/api/trader/decision/${date}`, { profile_id })
+export const getTraderMemory = (kind?: string, active = true, profile_id?: number) =>
+  api.get<{ items: TraderMemory[] }>('/api/trader/memory', { kind, active: active ? 1 : 0, profile_id })
 export const toggleTraderMemory = (id: number, active: boolean) =>
   api.post<{ id: number; active: boolean }>(`/api/trader/memory/${id}/toggle`, { active })
 export const saveTraderProfile = (fields: Partial<TraderProfile>) =>
   api.post<{ profile: TraderProfile }>('/api/trader/profile', fields)
-export const runTrader = (opts: { force?: boolean; dry_run?: boolean } = {}) =>
+export const runTrader = (opts: { force?: boolean; dry_run?: boolean; profile_id?: number } = {}) =>
   api.post<JobHandle>('/api/trader/run', opts)
+export const runTraderAll = (opts: { force?: boolean; dry_run?: boolean } = {}) =>
+  api.post<JobHandle>('/api/trader/run-all', opts)
 export const getTraderNews = (limit = 15) =>
   api.get<{ items: TraderNewsItem[] }>('/api/trader/news', { limit })

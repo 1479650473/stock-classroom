@@ -6,7 +6,7 @@ import PageToolbar from '@/components/ui/PageToolbar.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import Agent from '@/views/Agent.vue'
 import AgentOps from '@/views/AgentOps.vue'
-import Trader from '@/views/v6/Trader.vue'
+import Trader from '@/views/v6/TraderHub.vue'
 
 type Tab = 'trader' | 'chat' | 'auto'
 

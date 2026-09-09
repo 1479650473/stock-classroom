@@ -11,12 +11,14 @@ import { useToastStore } from '@/stores/toast'
 import { useJobsStore } from '@/stores/jobs'
 import {
   getTraderState, getTraderDecisions, getTraderMemory, toggleTraderMemory,
-  saveTraderProfile, runTrader,
+  updateTraderProfile, runTrader,
 } from '@/api'
 import type { TraderState, TraderDecision, TraderMemory } from '@/api'
 
 const toast = useToastStore()
 const jobs = useJobsStore()
+
+const props = withDefaults(defineProps<{ profileId?: number }>(), { profileId: undefined })
 
 const state = ref<TraderState | null>(null)
 const decisions = ref<TraderDecision[]>([])
@@ -45,7 +47,7 @@ const doneSignal = computed(() =>
 async function load() {
   error.value = ''
   try {
-    const st = await getTraderState()
+    const st = await getTraderState(props.profileId)
     state.value = st
     draft.value = { enabled: st.profile.enabled }
   } catch (e) {
@@ -58,9 +60,9 @@ async function load() {
 async function loadLists() {
   try {
     const [d, m, s] = await Promise.all([
-      getTraderDecisions(30),
-      getTraderMemory(memKind.value),
-      getTraderMemory('style'),
+      getTraderDecisions(30, 0, props.profileId),
+      getTraderMemory(memKind.value, true, props.profileId),
+      getTraderMemory('style', true, props.profileId),
     ])
     decisions.value = d.items
     memory.value = m.items
@@ -87,7 +89,7 @@ function runNow() {
   jobs.run({
     kind: 'trader',
     title: 'AI 操盘手决策',
-    submit: () => runTrader({ force: true }),
+    submit: () => runTrader({ force: true, profile_id: props.profileId }),
     route: '/ai?tab=trader',
   })
 }
@@ -95,7 +97,7 @@ function runNow() {
 async function saveSettings() {
   saving.value = true
   try {
-    await saveTraderProfile({ enabled: draft.value.enabled })
+    await updateTraderProfile(props.profileId ?? 0, { enabled: draft.value.enabled })
     toast.success('已保存')
     settingsOpen.value = false
     await load()
@@ -140,6 +142,11 @@ function actionSummary(d: TraderDecision) {
 function navDelta(d: TraderDecision) {
   if (d.nav_before == null || d.nav_after == null) return null
   return (d.nav_after - d.nav_before) * 100
+}
+function navTone(d: TraderDecision): 'up' | 'down' | 'flat' {
+  const v = navDelta(d)
+  if (v == null || Math.abs(v) < 0.005) return 'flat'
+  return v > 0 ? 'up' : 'down'
 }
 function toggleExpand(key: string) {
   expanded.value[key] = !expanded.value[key]
@@ -249,7 +256,7 @@ function toolLine(t: { tool: string; args?: Record<string, unknown>; error?: str
             <span class="tag" :class="latest.plan?.length ? 'tag--act' : 'tag--hold'">
               {{ latest.plan?.length ? `${latest.plan.length} 笔操作` : '保持现状' }}
             </span>
-            <span v-if="navDelta(latest) != null" class="navchg" :class="navDelta(latest)! >= 0 ? 'up' : 'down'">
+            <span v-if="navDelta(latest) != null" class="navchg" :class="navTone(latest)">
               净值 {{ fmtPct(navDelta(latest)) }}
             </span>
             <span class="muted">{{ latest.finished_at || latest.created_at }}</span>
@@ -336,7 +343,7 @@ function toolLine(t: { tool: string; args?: Record<string, unknown>; error?: str
               <span class="tag tag--sm" :class="d.plan?.length ? 'tag--act' : 'tag--hold'">
                 {{ actionSummary(d) }}
               </span>
-              <span v-if="navDelta(d) != null" class="tl-nav" :class="navDelta(d)! >= 0 ? 'up' : 'down'">
+              <span v-if="navDelta(d) != null" class="tl-nav" :class="navTone(d)">
                 {{ fmtPct(navDelta(d)) }}
               </span>
               <span class="tl-status" :class="d.status">{{ d.status === 'done' ? '已完成' : d.status === 'error' ? '失败' : d.status }}</span>

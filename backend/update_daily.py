@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """update_daily.py — 每日数据自动更新(独立脚本, 供 Windows 任务计划调用).
 
-刷新三层并保证 as_of 一致:
-  ① 量化池 K线 (update_pool, ~100s)          —— as_of 前进的关键
-  ② 基本面 EP/BP/ROE (fetch_fundamental)     —— 价值因子对齐(点时间)
-  ③ 组合纸面盘 paper_runs.json               —— 曲线/持仓台账刷新
+完整链路共 9 步并保证 as_of 一致:
+  ① 全市场/量化池 K线  ② 基本面 EP/BP/ROE  ③ 组合纸面盘  ④ regime
+  ⑤ 事件驱动池        ⑥ 个股资讯深挖        ⑦ 持仓守护      ⑧ 净值快照
+  ⑨ AI 操盘手决策
 
 用法:  python update_daily.py [--pool-only] [--skip-paper]
 结果写入 data/update_marker.json + logs/update_daily_YYYYMMDD.log
@@ -16,8 +16,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, 'backend'))
 
-DATA = os.path.join(ROOT, 'data')
-LOGDIR = os.path.join(ROOT, 'logs')
+from backend.api.paths import DATA_DIR, PROJECT_DIR  # noqa: E402
+
+ROOT = PROJECT_DIR
+DATA = DATA_DIR
+LOGDIR = os.path.join(DATA_DIR, 'logs')
 os.makedirs(LOGDIR, exist_ok=True)
 
 MARKER = os.path.join(DATA, 'update_marker.json')
@@ -250,29 +253,33 @@ def run(pool_only=False, skip_paper=False):
 
         # ⑨ AI 操盘手决策 (LLM 自主交易员: 读账户/持仓/新闻 → 思考 → 买卖/保持 → 记长期记忆)
         #    与策略进化闭环不同: 这里模型直接操作自己的专属账户, 不写策略/不跑回测.
+        #    支持多个交易员: 对每个 enabled 档案逐个执行(同日幂等).
         try:
-            from backend.trader import account as _tacct
-            _prof = _tacct.ensure_profile()
-            if _prof and _prof.get('enabled'):
+            from backend.trader import store as _tstore
+            _profs = [p for p in _tstore.list_profiles() if p.get('enabled')]
+            if _profs:
                 from backend.trader.daily import run_daily_decision
-                lg.info('  AI操盘手决策中(账户 #%s)...', _prof.get('account_id'))
-                _dec = run_daily_decision(
-                    profile_id=int(_prof['id']), trigger='auto',
-                    progress=lambda m: lg.info('   [操盘手] %s',
-                                               (m.get('msg') if isinstance(m, dict) else str(m))))
-                _ex = _dec.get('executions') or []
-                out['steps']['trader'] = {
-                    'status': _dec.get('status'),
-                    'orders': len(_dec.get('plan') or []),
-                    'filled': sum(1 for e in _ex if e.get('ok')),
-                    'nav': _dec.get('nav_after'),
-                }
-                lg.info('  AI操盘手: status=%s 委托=%d 成交=%d 净值=%s',
-                        _dec.get('status'), len(_dec.get('plan') or []),
-                        sum(1 for e in _ex if e.get('ok')), _dec.get('nav_after'))
+                _tres = []
+                for _p in _profs:
+                    lg.info('  AI操盘手[%s] 决策中(账户 #%s)...', _p.get('name'), _p.get('account_id'))
+                    _dec = run_daily_decision(
+                        profile_id=int(_p['id']), trigger='auto',
+                        progress=lambda m, _n=_p.get('name'): lg.info('   [操盘手·%s] %s', _n,
+                                                                    (m.get('msg') if isinstance(m, dict) else str(m))))
+                    _ex = _dec.get('executions') or []
+                    _tres.append({
+                        'name': _p.get('name'), 'status': _dec.get('status'),
+                        'orders': len(_dec.get('plan') or []),
+                        'filled': sum(1 for e in _ex if e.get('ok')),
+                        'nav': _dec.get('nav_after'),
+                    })
+                    lg.info('  AI操盘手[%s]: status=%s 委托=%d 成交=%d 净值=%s',
+                            _p.get('name'), _dec.get('status'), len(_dec.get('plan') or []),
+                            sum(1 for e in _ex if e.get('ok')), _dec.get('nav_after'))
+                out['steps']['trader'] = _tres
             else:
-                out['steps']['trader'] = 'disabled'
-                lg.info('  AI操盘手: 已停用, 跳过')
+                out['steps']['trader'] = 'no_enabled'
+                lg.info('  AI操盘手: 无启用的交易员, 跳过')
         except Exception as e:
             out['steps']['trader'] = str(e)[:120]
             lg.warning('  AI操盘手决策失败: %s', str(e)[:80])

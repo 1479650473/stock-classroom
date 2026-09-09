@@ -87,3 +87,61 @@ def ensure_profile(initial_capital: float = 100000.0,
     return store.create_profile(
         account_id=aid, name=TRADER_ACCOUNT_NAME, initial_capital=initial_capital,
         persona=persona or DEFAULT_PERSONA, risk_rules=DEFAULT_RISK_RULES)
+
+
+def create_trader(name: str, initial_capital: float = 100000.0,
+                  model: str = "", persona: str = "") -> dict:
+    """新建一个交易员：独立模拟账户 + 独立档案（可指定模型，默认用全局配置）。"""
+    store.ensure_schema()
+    name = (str(name or "").strip() or TRADER_ACCOUNT_NAME)
+    existing = [p for p in store.list_profiles() if p.get("name") == name]
+    if existing:
+        name = f"{name}-{len(existing) + 1}"
+    engine = TradeEngine()
+    cap = float(initial_capital or 100000)
+    aid = int(engine.create_account(name, cap))
+    return store.create_profile(
+        account_id=aid, name=name, initial_capital=cap,
+        persona=str(persona or "").strip(), model=str(model or "").strip(),
+        risk_rules=DEFAULT_RISK_RULES)
+
+
+def delete_trader(profile_id: int, drop_account: bool = True) -> bool:
+    """删除交易员：清档案/决策/记忆，并默认删除其模拟账户（不可恢复）。"""
+    store.ensure_schema()
+    prof = store.get_profile(profile_id)
+    if prof is None:
+        return False
+    con = store.get_conn()
+    try:
+        con.execute("DELETE FROM trader_memory WHERE profile_id=?", (profile_id,))
+        con.execute("DELETE FROM trader_decision WHERE profile_id=?", (profile_id,))
+        con.execute("DELETE FROM trader_profile WHERE id=?", (profile_id,))
+        con.commit()
+    finally:
+        con.close()
+    if drop_account:
+        try:
+            TradeEngine().delete_account(int(prof["account_id"]))
+        except Exception:
+            pass
+    return True
+
+
+def list_traders() -> list:
+    """列出全部交易员档案（含独立账户摘要）。"""
+    store.ensure_schema()
+    engine = TradeEngine()
+    out = []
+    for p in store.list_profiles():
+        try:
+            s = engine.get_summary(int(p["account_id"])) or {}
+            p = dict(p)
+            p["summary"] = {k: s.get(k) for k in (
+                "initial_capital", "balance", "market_value", "total_assets",
+                "total_profit", "total_profit_pct", "positions", "total_trades")}
+        except Exception:
+            p = dict(p)
+            p["summary"] = {}
+        out.append(p)
+    return out

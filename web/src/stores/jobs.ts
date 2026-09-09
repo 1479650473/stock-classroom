@@ -41,6 +41,7 @@ export const KIND_LABEL: Record<string, string> = {
   news: '事件驱动',
   guard: '持仓守护',
   trader: 'AI 操盘手决策',
+  trader_all: '全体交易员决策',
 }
 
 export const useJobsStore = defineStore('jobs', {

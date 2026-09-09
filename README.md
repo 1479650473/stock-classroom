@@ -21,11 +21,11 @@
 | 📊 **市场概览** | 三大指数实时行情 + 板块热度排行 |
 | 🔍 **多因子选股** | 43因子 DSL 条件引擎，Top 20 推荐 + 一键模拟买入 |
 | 💰 **模拟交易** | 账户/下单/撮合/持仓/T+1风控/费率 + 账户中心(改名/重置/删除) |
-| 🤖 **AI 操盘手** | **长期自主 LLM 交易员**: 专属账户，每日数据更新后自主读账户/持仓/行情/新闻，直接操作交易系统下单，形成长期记忆与自我风格 |
+| 🤖 **AI 操盘手** | **长期自主 LLM 交易员（可多个）**: 每个交易员独立账户/模型/风格，每日自主读账户/持仓/行情/新闻并直接操作交易系统下单，形成长期记忆；总览页对比各交易员净值曲线与沪深300，可自定义新建/删除 |
 | 🧠 **AI 对话操盘** | 16 工具 function calling，查行情→分析→下单，SSE 流式 |
 | 🗂 **AI 自动操盘台** | 单标的闭环 / 组合重平衡 / 个股深挖 (SSE tool-calling 流式) |
 | ♻ **策略进化闭环** | 5家族精确指标(α/年化/夏普)→LLM 提新契约→回测→裁决→模拟盘 |
-| 📈 **K线图表** | ECharts 渲染，MACD/RSI/BOLL |
+| 📈 **K线图表** | TradingView Lightweight Charts 主图 + ECharts 回放器 |
 | 📦 **持仓管理** | 纸面盘账本: 5策略收益曲线对比/每日持仓/每笔调仓 + 净值曲线 |
 | 🔄 **数据管道** | **每日自动更新(Windows计划任务 17:00)**: K线池/基本面/纸面盘/净值快照 |
 | 🛡 **卖出门三驱动** | **条件止损(8%)+移动止损(10%/15%激活)+策略卖出**, 无固定止盈, 保护优先于排名 |
@@ -45,7 +45,7 @@
 ```
 Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
   └─ Vue3 SPA (web/src: views/router/stores/composables)
-       └─ Flask API 127.0.0.1:5000 (backend/api/server.py, 12+ blueprints, 统一 envelope)
+       └─ Flask API 127.0.0.1:5000 (backend/api/server.py, 18 blueprints, 统一 envelope)
 ```
 
 - **前端信息架构 (v6)**: 6 个主页面 — 工作台 / 行情 / 策略 / 交易 / AI / 数据 + 设置；旧路由全部重定向。AI 页含「AI 操盘手 / 对话操盘 / 自动操盘台」三页签。
@@ -121,9 +121,9 @@ rem 输出: web\src-tauri\target\release\bundle\{msi,nsis}\StockClassroom_*.exe
 
 | 层 | 技术 |
 |----|------|
-| 前端 | Tauri 2 + Vue3 + TypeScript + ECharts + Pinia |
+| 前端 | Tauri 2 + Vue3 + TypeScript + Lightweight Charts + ECharts + Pinia |
 | 后端 | Flask (127.0.0.1:5000, 统一 envelope + jobman 线程池/SSE) |
-| 数据库 | SQLite × 多库 (kline.db + fundamental.db + stock_cache.db + sim_trade.db + macro.db + agent.db) |
+| 数据库 | SQLite × 多库 (kline.db + fundamental.db + stock_cache.db + sim_trade.db + ai_trader.db + macro.db + agent.db) |
 | 数据源 | AKShare / Sina API (三源回退 Sina主/TX/EM + 硬超时) |
 | 模拟交易 | 自研 TradeEngine（市价/限价、T+1、佣金+印花税、净值快照） |
 | 量化策略 | factor_engine + portfolio_rebalance (SelectionContract) + regime + sell_rules |

@@ -80,7 +80,8 @@ def run_daily_decision(profile_id: Optional[int] = None, trigger: str = "manual"
 
     agent = TraderAgent(int(profile["account_id"]), pid,
                         risk_rules=profile.get("risk_rules"),
-                        decision_id=decision_id, dry_run=dry_run)
+                        decision_id=decision_id, dry_run=dry_run,
+                        model=profile.get("model") or None)
     result = agent.decide(ctx, progress=lambda m: _emit(progress, m))
 
     # 委托与执行由工具直接产生（大模型操作交易系统的真实结果）
@@ -126,3 +127,26 @@ def run_daily_decision(profile_id: Optional[int] = None, trigger: str = "manual"
         error="", finished_at=datetime.now().isoformat(timespec="seconds"))
     _emit(progress, f"✓ 决策完成，净值 {nav_before} → {nav_after}", 100)
     return store.get_decision(pid, trade_date) or {}
+
+
+def run_all_daily_decisions(trigger: str = "manual", force: bool = False,
+                            dry_run: bool = False, with_candidates: bool = True,
+                            with_news: bool = True,
+                            progress: Optional[Callable] = None) -> list:
+    """对所有启用的交易员逐个跑一次决策（同日已 done 且非 force 则跳过）。"""
+    store.ensure_schema()
+    profiles = [p for p in store.list_profiles() if p.get("enabled")]
+    if not profiles:
+        _emit(progress, "没有启用的交易员")
+        return []
+    results = []
+    for i, p in enumerate(profiles, 1):
+        _emit(progress, f"[{i}/{len(profiles)}] {p.get('name')} 决策中…")
+        r = run_daily_decision(
+            profile_id=int(p["id"]), trigger=trigger, force=force, dry_run=dry_run,
+            with_candidates=with_candidates, with_news=with_news,
+            progress=lambda m: _emit(progress, f"[{p.get('name')}] " + (m.get("msg") if isinstance(m, dict) else str(m))))
+        results.append({"profile": p.get("name"), "profile_id": p.get("id"),
+                        "status": r.get("status"), "error": r.get("error")})
+        _emit(progress, f"[{i}/{len(profiles)}] {p.get('name')} → {r.get('status')}")
+    return results

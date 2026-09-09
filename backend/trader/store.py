@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS trader_profile(
     name TEXT NOT NULL DEFAULT 'AI操盘手',
     account_id INTEGER NOT NULL,
     persona TEXT DEFAULT '',
+    model TEXT DEFAULT '',
     risk_rules TEXT DEFAULT '{}',
     initial_capital REAL DEFAULT 100000,
     auto_execute INTEGER DEFAULT 1,
@@ -85,10 +86,13 @@ def ensure_schema() -> None:
     con = get_conn()
     try:
         con.executescript(SCHEMA)
-        # 轻量迁移：旧库补 trace 列
+        # 轻量迁移：旧库补 trace 列 / profile.model 列
         cols = {r[1] for r in con.execute("PRAGMA table_info(trader_decision)")}
         if "trace" not in cols:
             con.execute("ALTER TABLE trader_decision ADD COLUMN trace TEXT DEFAULT '[]'")
+        pcols = {r[1] for r in con.execute("PRAGMA table_info(trader_profile)")}
+        if "model" not in pcols:
+            con.execute("ALTER TABLE trader_profile ADD COLUMN model TEXT DEFAULT ''")
         con.commit()
     finally:
         con.close()
@@ -141,13 +145,13 @@ def list_profiles() -> list:
 
 def create_profile(account_id: int, name: str = "AI操盘手",
                    initial_capital: float = 100000.0, persona: str = "",
-                   risk_rules: Optional[dict] = None) -> dict:
+                   model: str = "", risk_rules: Optional[dict] = None) -> dict:
     con = get_conn()
     try:
         cur = con.execute(
-            "INSERT INTO trader_profile (name, account_id, persona, risk_rules, initial_capital) "
-            "VALUES (?,?,?,?,?)",
-            (name, account_id, persona,
+            "INSERT INTO trader_profile (name, account_id, persona, model, risk_rules, initial_capital) "
+            "VALUES (?,?,?,?,?,?)",
+            (name, account_id, persona, model,
              json.dumps(risk_rules or {}, ensure_ascii=False), initial_capital))
         con.commit()
         pid = cur.lastrowid
@@ -158,7 +162,7 @@ def create_profile(account_id: int, name: str = "AI操盘手",
 
 def update_profile(profile_id: int, **fields) -> Optional[dict]:
     allowed = {"name", "persona", "risk_rules", "auto_execute", "enabled",
-               "initial_capital", "account_id"}
+               "initial_capital", "account_id", "model"}
     sets, args = [], []
     for k, v in fields.items():
         if k not in allowed:
