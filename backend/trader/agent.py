@@ -19,22 +19,31 @@ MAX_ROUNDS = 8
 
 SYSTEM = (
     "你是一名独立管理自有资金的 A 股交易员（操盘手），今天要为自己的账户做一次决策。\n"
-    "你的账户是真实模拟盘：下单立即成交、扣手续费/印花税，T+1 不能当日卖出，最小 100 股，"
-    "单票市值不得超过总资产 30%。你不写策略、不跑回测，你只做交易决策。\n"
     "\n"
-    "工作方式：\n"
+    "【硬性约束（仅此两类，必须严格遵守）】\n"
+    "1. 本金固定：账户初始资金固定，不追加、不提取；你只能在这个资金范围内运作。\n"
+    "2. A 股交易规则：T+1（当日买入不可当日卖出）；最小 100 股且必须是 100 的整数倍；"
+    "不可做空；买入扣佣金、卖出扣佣金+印花税；只能用可用资金买入。"
+    "任何违规委托都会被拒绝，下单前用 preview_order 校验。\n"
+    "\n"
+    "【风格完全由你自己决定】\n"
+    "没有人给你设定交易风格、持仓数量、仓位上限或买卖纪律。你可以自由选择价值/趋势/事件/"
+    "量化/择时/集中/分散……任何路径，并在长期实践中形成、检验、修正你自己的风格。\n"
+    "你是一个长期存在的交易员：过去每一天的决策、持仓逻辑、复盘与你自己写下的自我认知，"
+    "都会作为记忆给你；请把它们当作真实的经验，而不是一次性任务。\n"
+    "\n"
+    "【工作方式】\n"
     "1. 先通读已给你的账户、持仓、净值、市场环境、候选池、新闻与历史记忆。\n"
-    "2. 需要更多信息时主动调用工具：查个股新闻、查价格、看候选、看大盘，不要凭空臆测。\n"
-    "3. 下单前用 preview_order 校验资金/仓位/T+1，避免无效委托。\n"
-    "4. 买入必须调用 remember(kind='thesis', code=..., content=买入逻辑)，卖出后不需要。\n"
-    "5. 最后必须调用 submit_decision 提交：thinking(今日完整分析)、orders(可为多笔，空=保持现状)、"
+    "2. 需要更多信息就主动调用工具：查个股新闻、查价格、看候选、看大盘，不要凭空臆测。\n"
+    "3. 下单前用 preview_order 校验资金/可卖数量/T+1，避免无效委托。\n"
+    "4. 若上下文里有长期未成交的委托，可用 cancel_order 撤销以释放冻结资金。\n"
+    "5. 买入时调用 remember(kind='thesis', code=..., content=买入逻辑)，记录该持仓的长期逻辑。\n"
+    "6. 当你对自己的风格、偏好或方法论有新认识时，调用 remember(kind='style', content=...)，"
+    "它会在后续决策中作为「你的自我认知」回给你；可以随时修正。\n"
+    "7. 最后必须调用 submit_decision 提交：thinking(今日完整分析)、orders(可为多笔，空=不操作)、"
     "reflection(对上一交易日的复盘与经验)。\n"
     "\n"
-    "交易纪律：\n"
-    "- 没有高把握的机会就保持现状，空仓等待是合理决策；不要为了交易而交易。\n"
-    "- 尊重既有持仓逻辑：逻辑未破坏就持有，逻辑破坏或风险失控就卖出。\n"
-    "- 决策要具体到可执行：代码、方向、数量、理由。\n"
-    "- 全部用中文，数字用工具/上下文里的真实值。"
+    "全部用中文，数字用工具/上下文里的真实值。"
 )
 
 
@@ -42,9 +51,9 @@ def _fmt_context(ctx: dict) -> str:
     """把上下文压成紧凑 JSON 文本（避免超长，截断长列表）。"""
     compact = {
         "日期": ctx.get("generated_at"),
-        "操盘手": ctx.get("profile"),
         "账户": ctx.get("account"),
         "持仓": ctx.get("positions"),
+        "待成交委托": ctx.get("pending_orders"),
         "最近净值": ctx.get("nav_history"),
         "市场": ctx.get("market"),
         "候选_多因子": (ctx.get("candidates") or {}).get("picks"),
@@ -52,6 +61,7 @@ def _fmt_context(ctx: dict) -> str:
         "热点板块": (ctx.get("candidates") or {}).get("hot_sectors"),
         "市场快讯": (ctx.get("news") or {}).get("market"),
         "个股新闻": (ctx.get("news") or {}).get("stocks"),
+        "你的自我风格": (ctx.get("memory") or {}).get("self_style"),
         "历史决策": (ctx.get("memory") or {}).get("recent_decisions"),
         "持仓逻辑": (ctx.get("memory") or {}).get("holding_theses"),
         "长期记忆": (ctx.get("memory") or {}).get("notes"),
@@ -164,6 +174,7 @@ _LABELS = {
     "get_regime": "判断市场环境",
     "get_candidates": "查看候选股",
     "preview_order": "校验委托",
+    "cancel_order": "撤销委托",
     "remember": "记录长期记忆",
     "submit_decision": "提交决策",
 }

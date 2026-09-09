@@ -30,7 +30,8 @@ class TraderTools:
 
     # ── 内部 ──
     def _engine(self) -> TradeEngine:
-        return TradeEngine()
+        from .account import trader_engine
+        return trader_engine()
 
     def _price(self, code: str) -> Optional[float]:
         from .context import refresh_prices
@@ -149,11 +150,15 @@ class TraderTools:
         return {"可执行": False, "原因": "方向必须是 buy 或 sell"}
 
     # ── 写入 ──
+    def cancel_order(self, order_id: int) -> dict:
+        ok, msg = self._engine().cancel_order(int(order_id))
+        return {"状态": "已撤单"} if ok else {"error": str(msg)}
+
     def remember(self, content: str, kind: str = "note", code: str = "") -> dict:
         content = str(content or "").strip()
         if not content:
             return {"error": "内容为空"}
-        self.notes.append({"kind": kind if kind in ("thesis", "lesson", "note", "market") else "note",
+        self.notes.append({"kind": kind if kind in ("thesis", "style", "lesson", "note", "market") else "note",
                            "code": str(code or ""), "content": content[:1000]})
         return {"状态": "已记入长期记忆"}
 
@@ -230,12 +235,20 @@ TOOL_SPECS = [
             "qty": {"type": "integer", "description": "数量，100 的整数倍"}},
             "required": ["code", "side", "qty"]}}},
     {"type": "function", "function": {
+        "name": "cancel_order",
+        "description": ("撤销一笔未成交的限价委托（order_id 见上下文中的「待成交委托」）。"
+                        "长期未成交的委托会冻结资金，如需重新决策请先撤销。"),
+        "parameters": {"type": "object", "properties": {
+            "order_id": {"type": "integer", "description": "委托单 ID"}},
+            "required": ["order_id"]}}},
+    {"type": "function", "function": {
         "name": "remember",
         "description": ("写入长期记忆。kind=thesis 记录某持仓的买入逻辑（买入时必须写）；"
+                        "kind=style 记录你对自己的风格/方法论的认识（会作为下次决策的自我认知回给你）；"
                         "kind=lesson 记录经验教训；kind=note 一般观察；kind=market 市场判断。"),
         "parameters": {"type": "object", "properties": {
             "content": {"type": "string", "description": "记忆内容，简洁具体"},
-            "kind": {"type": "string", "enum": ["thesis", "lesson", "note", "market"]},
+            "kind": {"type": "string", "enum": ["thesis", "style", "lesson", "note", "market"]},
             "code": {"type": "string", "description": "相关股票代码（thesis 必填）"}},
             "required": ["content"]}}},
     {"type": "function", "function": {
@@ -256,4 +269,4 @@ TOOL_SPECS = [
             "required": ["thinking"]}}},
 ]
 
-WRITE_TOOLS = {"submit_decision", "remember", "preview_order"}
+WRITE_TOOLS = {"submit_decision", "remember", "preview_order", "cancel_order"}

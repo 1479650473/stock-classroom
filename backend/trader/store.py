@@ -238,12 +238,18 @@ def add_memory(profile_id: int, content: str, kind: str = "note",
                code: str = "", decision_id: Optional[int] = None) -> int:
     con = get_conn()
     try:
-        # thesis 是「当前持仓逻辑」——同一股票只保留最新一条 active，避免重复堆积
-        if kind == "thesis" and code:
-            con.execute(
-                "UPDATE trader_memory SET active=0 "
-                "WHERE profile_id=? AND code=? AND kind='thesis' AND active=1",
-                (profile_id, code))
+        # thesis=当前持仓逻辑；style=当前自我认知 —— 同类只保留最新一条 active，历史保留
+        if kind in ("thesis", "style"):
+            if kind == "thesis" and code:
+                con.execute(
+                    "UPDATE trader_memory SET active=0 "
+                    "WHERE profile_id=? AND code=? AND kind='thesis' AND active=1",
+                    (profile_id, code))
+            elif kind == "style":
+                con.execute(
+                    "UPDATE trader_memory SET active=0 "
+                    "WHERE profile_id=? AND kind='style' AND active=1",
+                    (profile_id,))
         cur = con.execute(
             "INSERT INTO trader_memory (profile_id, kind, code, content, decision_id) "
             "VALUES (?,?,?,?,?)",

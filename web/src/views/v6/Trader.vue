@@ -21,15 +21,16 @@ const jobs = useJobsStore()
 const state = ref<TraderState | null>(null)
 const decisions = ref<TraderDecision[]>([])
 const memory = ref<TraderMemory[]>([])
+const styleMem = ref<TraderMemory | null>(null)
 const loading = ref(true)
 const error = ref('')
-const memKind = ref<'thesis' | 'lesson' | 'note'>('thesis')
+const memKind = ref<'style' | 'thesis' | 'lesson' | 'note'>('style')
 const expanded = ref<Record<string, boolean>>({})
 const settingsOpen = ref(false)
 const saving = ref(false)
 
-// 设置草稿
-const draft = ref({ persona: '', enabled: 1, max_positions: 8, min_cash_pct: 5, max_new_buys_per_day: 2 })
+// 设置草稿（仅自动开关；风格与仓位全由 AI 自定）
+const draft = ref({ enabled: 1 })
 
 const runningJob = computed(() => jobs.activeByKind('trader'))
 const isRunning = computed(() => !!runningJob.value)
@@ -46,14 +47,7 @@ async function load() {
   try {
     const st = await getTraderState()
     state.value = st
-    const rr = st.profile.risk_rules || {}
-    draft.value = {
-      persona: st.profile.persona || '',
-      enabled: st.profile.enabled,
-      max_positions: Number(rr.max_positions ?? 8),
-      min_cash_pct: Number(rr.min_cash_pct ?? 5),
-      max_new_buys_per_day: Number(rr.max_new_buys_per_day ?? 2),
-    }
+    draft.value = { enabled: st.profile.enabled }
   } catch (e) {
     error.value = e instanceof Error ? e.message : '加载失败'
   } finally {
@@ -63,12 +57,14 @@ async function load() {
 
 async function loadLists() {
   try {
-    const [d, m] = await Promise.all([
+    const [d, m, s] = await Promise.all([
       getTraderDecisions(30),
-      getTraderMemory(memKind.value === 'thesis' ? 'thesis' : memKind.value),
+      getTraderMemory(memKind.value),
+      getTraderMemory('style'),
     ])
     decisions.value = d.items
     memory.value = m.items
+    styleMem.value = s.items[0] || null
   } catch {
     /* 列表失败不阻塞主视图 */
   }
@@ -99,17 +95,7 @@ function runNow() {
 async function saveSettings() {
   saving.value = true
   try {
-    const cur = state.value?.profile.risk_rules || {}
-    await saveTraderProfile({
-      persona: draft.value.persona,
-      enabled: draft.value.enabled,
-      risk_rules: {
-        ...cur,
-        max_positions: Number(draft.value.max_positions),
-        min_cash_pct: Number(draft.value.min_cash_pct),
-        max_new_buys_per_day: Number(draft.value.max_new_buys_per_day),
-      },
-    })
+    await saveTraderProfile({ enabled: draft.value.enabled })
     toast.success('已保存')
     settingsOpen.value = false
     await load()
@@ -162,7 +148,9 @@ function execOf(d: TraderDecision, code: string, side: string) {
   return (d.executions || []).find((e) => e.code === code && e.side === side)
 }
 
-const KIND_LABEL: Record<string, string> = { thesis: '持仓逻辑', lesson: '经验教训', note: '观察笔记' }
+const KIND_LABEL: Record<string, string> = {
+  style: '自我风格', thesis: '持仓逻辑', lesson: '经验教训', note: '观察笔记',
+}
 </script>
 
 <template>
@@ -197,6 +185,8 @@ const KIND_LABEL: Record<string, string> = { thesis: '持仓逻辑', lesson: '�
           <span>每日数据更新后自动决策</span>
           <span class="sep">·</span>
           <span>{{ state.llm_configured ? `模型 ${state.model || '已配置'}` : '未配置大模型' }}</span>
+          <span class="sep">·</span>
+          <span>仅约束：本金固定 + A 股规则</span>
         </div>
         <div class="bar__actions">
           <button class="ui-btn" @click="settingsOpen = true"><Icon name="settings" :size="14" /><span>设置</span></button>
@@ -211,6 +201,14 @@ const KIND_LABEL: Record<string, string> = { thesis: '持仓逻辑', lesson: '�
         <div class="progress__bar"><div class="progress__fill" :style="{ width: (runningJob?.pct || 0) + '%' }" /></div>
         <div class="progress__msg">{{ runningJob?.msg || '执行中…' }}</div>
       </div>
+
+      <!-- 自我风格 -->
+      <SectionCard title="AI 自我风格" desc="由操盘手在长期决策中自行形成与修正">
+        <p v-if="styleMem" class="prose">{{ styleMem.content }}</p>
+        <p v-else class="prose prose--sub">
+          尚未形成。没有预设人设与仓位限制，AI 会在每日决策中逐步形成自己的风格，并写进长期记忆。
+        </p>
+      </SectionCard>
 
       <!-- 今日/最近决策 -->
       <SectionCard title="最新决策" :desc="latest ? `${latest.trade_date} · ${latest.trigger === 'auto' ? '自动' : '手动'} · ${latest.status === 'done' ? '已完成' : latest.status}` : ''">
@@ -325,7 +323,7 @@ const KIND_LABEL: Record<string, string> = { thesis: '持仓逻辑', lesson: '�
         <template #actions>
           <div class="seg">
             <button
-              v-for="k in (['thesis', 'lesson', 'note'] as const)"
+              v-for="k in (['style', 'thesis', 'lesson', 'note'] as const)"
               :key="k"
               class="seg__btn"
               :class="{ 'is-on': memKind === k }"
@@ -348,27 +346,24 @@ const KIND_LABEL: Record<string, string> = { thesis: '持仓逻辑', lesson: '�
     </template>
 
     <!-- 设置抽屉 -->
-    <Drawer :open="settingsOpen" title="操盘手设置" desc="人设与风险约束会影响每次决策" :width="440" @update:open="settingsOpen = $event">
+    <Drawer :open="settingsOpen" title="操盘手设置" desc="风格与仓位全由 AI 自行判断" :width="420" @update:open="settingsOpen = $event">
       <div class="form">
-        <FormField label="操盘手人设">
-          <textarea v-model="draft.persona" class="ui-input" rows="5" placeholder="描述交易风格与偏好" />
-        </FormField>
         <FormField label="自动决策">
           <label class="switch">
             <input v-model="draft.enabled" type="checkbox" :true-value="1" :false-value="0" />
             <span>每日数据更新后自动跑一次决策（并自动下单）</span>
           </label>
         </FormField>
-        <div class="form__grid">
-          <FormField label="最大持仓只数">
-            <input v-model.number="draft.max_positions" class="ui-input" type="number" min="1" max="30" />
-          </FormField>
-          <FormField label="现金下限 %">
-            <input v-model.number="draft.min_cash_pct" class="ui-input" type="number" min="0" max="90" />
-          </FormField>
-          <FormField label="单日最多新开仓">
-            <input v-model.number="draft.max_new_buys_per_day" class="ui-input" type="number" min="0" max="10" />
-          </FormField>
+        <div class="hard">
+          <div class="hard__title">硬约束（仅此两项）</div>
+          <ul class="hard__list">
+            <li><b>本金固定</b>：初始资金固定，不追加、不提取，只能在该范围内运作。</li>
+            <li>
+              <b>A 股规则</b>：T+1（当日买入不可当日卖出）、最小 100 股且为 100 的整数倍、
+              不可做空、买入扣佣金、卖出扣佣金+印花税、只能用可用资金买入。
+            </li>
+          </ul>
+          <p class="hard__note">没有持仓只数、仓位上限、现金比例或买卖纪律限制；风格由 AI 自定。</p>
         </div>
         <div class="form__foot">
           <button class="ui-btn" @click="settingsOpen = false">取消</button>
@@ -466,4 +461,10 @@ const KIND_LABEL: Record<string, string> = { thesis: '持仓逻辑', lesson: '�
 .form__foot { display: flex; justify-content: flex-end; gap: var(--sp-2); margin-top: var(--sp-2); }
 .switch { display: flex; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--text-sub); }
 textarea.ui-input { resize: vertical; font-family: inherit; }
+
+.hard { padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel-2); }
+.hard__title { font-size: var(--fs-xs); font-weight: 600; color: var(--text-sub); margin-bottom: 8px; }
+.hard__list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+.hard__list li { font-size: var(--fs-sm); line-height: 1.6; color: var(--text); }
+.hard__note { margin: 10px 0 0; font-size: var(--fs-xs); color: var(--text-faint); line-height: 1.6; }
 </style>

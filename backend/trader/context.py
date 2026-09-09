@@ -103,6 +103,11 @@ def build_account_block(account_id: int) -> dict:
             "price_src": px.get("src", ""),
         })
     pos_rows.sort(key=lambda x: x["market_value"], reverse=True)
+    pending = [{
+        "order_id": o["id"], "code": o["code"], "name": o["name"],
+        "side": o["side"], "price": round(float(o["price"]), 3),
+        "qty": o["qty"], "created_at": o["created_at"],
+    } for o in engine.get_orders(account_id, "pending")]
     nav = engine.get_nav_history(account_id) or {}
     nav_rows = [{"date": d, "nav": n, "total_assets": ta}
                 for d, n, ta in zip(nav.get("dates", []), nav.get("nav", []),
@@ -121,6 +126,7 @@ def build_account_block(account_id: int) -> dict:
             "pending_orders": s.get("pending_orders", 0),
         },
         "positions": pos_rows,
+        "pending_orders": pending,
         "nav_history": nav_rows[-15:],
         "prices": prices,
     }
@@ -238,17 +244,21 @@ def build_memory_block(profile_id: int, positions: List[dict], limit: int = 8) -
         })
     mem = store.list_memory(profile_id, active_only=True, limit=80)
     theses = {}
+    style = ""
     for m in mem:
         if m["kind"] == "thesis" and m.get("code") and m["code"] not in theses:
             theses[m["code"]] = m["content"]
+        elif m["kind"] == "style" and not style:
+            style = m["content"]
     held = [{"code": p["code"], "name": p["name"], "thesis": theses.get(p["code"], "")}
             for p in positions]
     return {
+        "self_style": style,
         "recent_decisions": history,
         "holding_theses": held,
         "notes": [{"kind": m["kind"], "code": m.get("code") or "",
                    "content": m["content"], "at": m["created_at"]}
-                  for m in mem if m["kind"] != "thesis"][:20],
+                  for m in mem if m["kind"] not in ("thesis", "style")][:20],
     }
 
 
@@ -273,6 +283,7 @@ def build_daily_context(profile: dict, with_candidates: bool = True,
         },
         "account": acct["summary"],
         "positions": acct["positions"],
+        "pending_orders": acct["pending_orders"],
         "nav_history": acct["nav_history"],
         "market": market,
         "candidates": cands,

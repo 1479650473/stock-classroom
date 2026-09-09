@@ -42,16 +42,17 @@ def _resolve_price(code: str, order_type: str, price) -> Optional[float]:
 
 def _execute_orders(profile: dict, plan: list, progress=None,
                     decision_id: Optional[int] = None) -> list:
-    """按风险约束执行委托，返回每笔结果。"""
-    engine = TradeEngine()
+    """执行委托，返回每笔结果。
+
+    不做任何自由裁量限制（不限制持仓数/仓位/新开仓数/现金比例）；
+    只由交易引擎强制 A 股规则与可用资金：T+1、100 股整数倍、不可超买、
+    单票限制已对操盘手账户解除（POSITION_LIMIT=1.0）。
+    """
+    from .account import trader_engine
+    engine = trader_engine()
     account_id = int(profile["account_id"])
-    rules = profile.get("risk_rules") or {}
-    max_new_buys = int(rules.get("max_new_buys_per_day", 2) or 2)
-    max_positions = int(rules.get("max_positions", 8) or 8)
-    min_cash_pct = float(rules.get("min_cash_pct", 5) or 0) / 100.0
 
     results = []
-    buys_done = 0
     for i, o in enumerate(plan or [], 1):
         if not isinstance(o, dict):
             continue
@@ -72,37 +73,11 @@ def _execute_orders(profile: dict, plan: list, progress=None,
             results.append(rec)
             continue
 
-        positions = engine.get_positions(account_id)
-        held_codes = {p["code"] for p in positions}
-        summary = engine.get_summary(account_id) or {}
-        total_assets = float(summary.get("total_assets", 0))
-
-        # 风险约束（买入）
-        if side == "buy":
-            if buys_done >= max_new_buys:
-                rec["detail"] = f"超过单日新开仓上限 {max_new_buys} 笔"
-                results.append(rec)
-                continue
-            if code not in held_codes and len(held_codes) >= max_positions:
-                rec["detail"] = f"超过最大持仓数 {max_positions} 只"
-                results.append(rec)
-                continue
-
         price = _resolve_price(code, otype, o.get("price"))
         if not price:
             rec["detail"] = "无法确定价格"
             results.append(rec)
             continue
-
-        # 现金下限（买入）
-        if side == "buy":
-            cost = price * qty * (1 + engine.COMMISSION_RATE)
-            if total_assets > 0:
-                after_cash = float(summary.get("balance", 0)) - cost
-                if after_cash < total_assets * min_cash_pct:
-                    rec["detail"] = f"会跌破现金下限 {min_cash_pct*100:.0f}%"
-                    results.append(rec)
-                    continue
 
         order, trade = engine.place_order(
             account_id, code, name or code, side, otype,
@@ -112,29 +87,43 @@ def _execute_orders(profile: dict, plan: list, progress=None,
             results.append(rec)
             continue
 
-        if trade:  # 市价成交
+        # 限价单挂单后立即尝试以当前价撮合（否则可能永远不成交、资金被冻结）
+        if trade is None:
+            try:
+                filled = engine.check_orders(account_id, code, price)
+            except Exception:
+                filled = []
+            if filled:
+                trade = filled[0]
+                order = None
+
+        if trade:  # 成交
             rec.update({"ok": True, "price": round(float(trade["price"]), 3),
                         "qty": int(trade["qty"]),
                         "commission": round(float(trade.get("commission") or 0), 2),
                         "stamp_tax": round(float(trade.get("stamp_tax") or 0), 2),
-                        "detail": "已成交"})
-            if side == "buy":
-                buys_done += 1
-                if reason:
-                    store.add_memory(int(profile["id"]), reason, kind="thesis",
-                                     code=code, decision_id=decision_id)
-            else:
-                # 清仓 → 该股持仓逻辑失效
-                still = [p for p in engine.get_positions(account_id) if p["code"] == code]
-                if not still:
-                    store.resolve_memory_by_code(int(profile["id"]), code, kind="thesis")
-        else:  # 限价挂单
+                        "detail": "已成交" if otype == "market" else "已成交(限价撮合)"})
+            _after_fill(engine, profile, account_id, side, code, reason, decision_id)
+        else:  # 限价挂单未成交
             rec.update({"ok": True, "price": round(float(order["price"]), 3),
                         "qty": int(order["qty"]), "order_id": order["id"],
                         "detail": "已挂限价单，未成交"})
         results.append(rec)
         _emit(progress, f"  委托 {i}/{len(plan)} {code} {side} {qty} → {rec['detail']}")
     return results
+
+
+def _after_fill(engine, profile: dict, account_id: int, side: str, code: str,
+                reason: str, decision_id: Optional[int]) -> None:
+    """成交后的记忆维护：买入记持仓逻辑，清仓则逻辑失效。"""
+    if side == "buy":
+        if reason:
+            store.add_memory(int(profile["id"]), reason, kind="thesis",
+                             code=code, decision_id=decision_id)
+    else:
+        still = [p for p in engine.get_positions(account_id) if p["code"] == code]
+        if not still:
+            store.resolve_memory_by_code(int(profile["id"]), code, kind="thesis")
 
 
 def run_daily_decision(profile_id: Optional[int] = None, trigger: str = "manual",
