@@ -27,6 +27,7 @@ Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
 - `paths.py`: PROJECT_DIR / DATA_DIR / 各 DB 路径 (frozen 安全)
 - `settings_store.py`: 读写 `backend/configs/settings.json` (白名单 theme/font_size/window_size/agent)
 - `agent_chat.py`: `/api/agent/chat` SSE tool-calling(16工具); `backend/agent/toolkit.py`
+- `agent/routes.py`: `/api/agent/v1` 能力分级网关 (R/W/B/T + 审计/幂等/限流/paper-only)，已挂载进 `create_app`（供外部 agent/MCP）；冒烟 `python backend/agent/smoke_test.py`
 
 ## Web 前端(web/src)
 - **信息架构 v6**: 6 主页面 + 设置 — 工作台 `/` / 行情 `/market` / 策略 `/strategy` / 交易 `/trade` / AI `/ai` / 数据 `/data`; 旧路由 (`/overview /flow /kline /picks /holdings /agentops /agent /optimize /replay /research /datacenter /pipeline /trainer`) 全部重定向
