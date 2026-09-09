@@ -28,7 +28,7 @@ hiddenimports += collect_submodules('backend.factor_engine')
 a = Analysis(
     [r'D:\小光工作区\projects\stock-classroom\package\run_web_api.py'],
     pathex=[root, r'D:\小光工作区\projects\stock-classroom\backend'],
-    # 注意: 不要把 frontend 加入 pathex —— 但该目录已归档删除, 此注释仅存历史警告.
+    # 注意: 不要把 frontend 加入 pathex —— 该目录已于 2026-09-05 归档删除, backend 不再依赖 frontend.*
     # 筹码分布 JS 引擎已迁至 backend/cyq_calculator.js (随包分发)
     binaries=binaries,
     datas=datas + [(r'D:\小光工作区\projects\stock-classroom\backend\cyq_calculator.js', 'backend')],

@@ -10,8 +10,8 @@ from ..envelope import ok, err
 
 bp = Blueprint("trainer", __name__, url_prefix="/api/trainer")
 
-# Make trainer engine importable (legacy: 旧版依赖 frontend/plugins/trainer 的 from engine import,
-# 已统一为 backend.trainer_engine, 此处 import 仅保证模块注册)
+# Make trainer engine importable (原 PyQt5 旧版从 frontend/plugins/trainer 的 engine import,
+# 已统一为 backend.trainer_engine; 此处 import 仅保证模块注册)
 import backend.trainer_engine  # noqa: F401
 
 # In-memory session store (per-server-process) + TTL 清理

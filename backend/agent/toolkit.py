@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """AI agent toolkit — function schemas + ToolExecutor for the Web agent chat.
 
-复用桌面版 frontend/plugins/agent/tools.py 的交易/研究工具, 并新增 Web 专属:
+交易/研究工具基于原桌面版能力迁移而来（frontend/ 已归档），并新增 Web 专属:
   策略类: get_strategies / backtest_strategy / describe_strategy / get_picks / get_regime
 
 所有重度导入都在函数体内执行(与 API blueprints 一致的启动纪律).

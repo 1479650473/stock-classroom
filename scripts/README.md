@@ -1,32 +1,26 @@
-﻿# 定时任务配置
+# scripts/ — 辅助脚本
 
-每日收盘后自动更新 A 股 K 线数据。
+> 每日数据自动化已统一到 **`backend/update_daily.py`**（由 Windows 计划任务 `StockClassroom-DailyUpdate`
+> 调用 `backend/update_daily.bat` 执行，触发时间 17:00）。
 
-## 安装定时任务
+## 每日数据更新（当前）
 
-```powershell
-# 以管理员身份运行
-schtasks /CREATE /XML "D:\小光工作区\projects\stock-classroom\scripts\daily_stock_update.xml" /TN "叶初\每日股票数据更新"
+```bat
+rem 手动跑一次（使用项目固定 venv .update-venv）
+backend\update_daily.bat
+
+rem 只更新量化池 K 线（跳过基本面/纸面盘等）
+backend\update_daily.bat --pool-only
 ```
 
-## 手动运行
+流程：全市场 K 线增量 → 基本面 → 纸面盘 → 净值快照 → regime → 事件驱动池 → 个股深挖
+→ 持仓守护(预览) → **AI 操盘手决策**。结果写入 `data/update_marker.json` 与 `logs/update_daily_YYYYMMDD.log`。
 
-```powershell
-powershell -ExecutionPolicy Bypass -File "D:\小光工作区\projects\stock-classroom\scripts\update_daily.ps1"
-```
+## 已移除的旧脚本
 
-或：
+`daily_maintenance.py` / `update_daily.ps1` / `update_daily.bat` / `daily_stock_update.xml` 属于旧架构
+（依赖已删除的 `run_server.py` + `backend/app.py` 旧 API，且未安装到系统任务），已删除。
 
-```cmd
-D:\小光工作区\projects\stock-classroom\scripts\update_daily.bat
-```
+## 其他
 
-## 任务配置
-
-- 触发器：每天 16:00（收盘后），重复每 5 分钟，持续 30 分钟
-- 操作：`powershell.exe -ExecutionPolicy Bypass -File scripts\update_daily.ps1`
-- 失败时：每隔 5 分钟重试一次，最多 3 次
-
-## 日志
-
-更新日志写入 `scripts/update_daily.log`，每次运行追加。
+- `generate_logo.py`：一次性生成项目 logo 资源。

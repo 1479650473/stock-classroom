@@ -4,7 +4,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-v5.0-3fb950" alt="version">
+  <img src="https://img.shields.io/badge/version-v5.1-3fb950" alt="version">
   <img src="https://img.shields.io/badge/python-3.14-blue" alt="python">
   <img src="https://img.shields.io/badge/platform-Windows-0078D4" alt="platform">
   <img src="https://img.shields.io/badge/gui-Tauri2+Vue3-41CD52" alt="gui">
@@ -21,8 +21,9 @@
 | 📊 **市场概览** | 三大指数实时行情 + 板块热度排行 |
 | 🔍 **多因子选股** | 43因子 DSL 条件引擎，Top 20 推荐 + 一键模拟买入 |
 | 💰 **模拟交易** | 账户/下单/撮合/持仓/T+1风控/费率 + 账户中心(改名/重置/删除) |
-| 🤖 **AI 自主交易** | 16工具 function calling，查行情→分析→下单全自动 |
-| 🧠 **AI操盘台** | 单标的闭环 / 组合重平衡 (SSE tool-calling 流式) |
+| 🤖 **AI 操盘手** | **长期自主 LLM 交易员**: 专属账户，每日数据更新后自主读账户/持仓/行情/新闻，直接操作交易系统下单，形成长期记忆与自我风格 |
+| 🧠 **AI 对话操盘** | 16 工具 function calling，查行情→分析→下单，SSE 流式 |
+| 🗂 **AI 自动操盘台** | 单标的闭环 / 组合重平衡 / 个股深挖 (SSE tool-calling 流式) |
 | ♻ **策略进化闭环** | 5家族精确指标(α/年化/夏普)→LLM 提新契约→回测→裁决→模拟盘 |
 | 📈 **K线图表** | ECharts 渲染，MACD/RSI/BOLL |
 | 📦 **持仓管理** | 纸面盘账本: 5策略收益曲线对比/每日持仓/每笔调仓 + 净值曲线 |
@@ -37,9 +38,9 @@
 | 🗄 **数据中心** | SQLite 多库浏览，表行数/列清单/日期范围 |
 | ⚙ **设置中心** | 字体 + 窗口大小 + AI 供应商预设 + AI定时交易卡 |
 
-## 🏗 架构 (v5.0 — 当前主线)
+## 🏗 架构 (v5.1 — 当前主线)
 
-**Web 栈为主开发线**（浏览器开发体验），PyQt5 旧版仍保留但不再发展（见 [ARCHITECTURE.md](docs/ARCHITECTURE.md)）。
+**Web 栈是唯一开发线**（浏览器开发体验）。PyQt5 旧版已于 2026-09-05 **归档移除**（`archive/pyqt5-legacy-2026-09-05.zip`），`frontend/` 目录已不存在，后端也无任何 `frontend.*` 依赖。
 
 ```
 Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
@@ -47,10 +48,10 @@ Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
        └─ Flask API 127.0.0.1:5000 (backend/api/server.py, 12+ blueprints, 统一 envelope)
 ```
 
+- **前端信息架构 (v6)**: 6 个主页面 — 工作台 / 行情 / 策略 / 交易 / AI / 数据 + 设置；旧路由全部重定向。AI 页含「AI 操盘手 / 对话操盘 / 自动操盘台」三页签。
 - **后端打包**: `package/stock_api.spec` → 单文件 `stock-api.exe` (PyInstaller, 含 akshare data)
 - **前端打包**: `web/src-tauri` → NSIS/MSI 安装包 (bundle.resources 内嵌 stock-api.exe)
-- **⚠️ 打包坑**: `frontend/platform/` 是名为 `platform` 的包, **绝不能**把 frontend 加入 PyInstaller pathex (遮蔽 stdlib platform → pandas 崩溃)
-- **遗留说明**: PyQt5 旧版已**归档压缩**至 `archive/pyqt5-legacy-2026-09-05.zip`（源文件已移除）。归档前已把 backend 依赖的纯逻辑迁移到 backend：`frontend.plugins.research.worker` → **`backend/paper_worker.py`**，`frontend.plugins.trainer.engine` → **`backend/trainer_engine.py`**，`frontend/cyq_calculator.js` → **`backend/cyq_calculator.js`**。
+- **归档迁移**: 归档前已把 backend 依赖的纯逻辑迁到 backend：`frontend.plugins.research.worker` → **`backend/paper_worker.py`**，`frontend.plugins.trainer.engine` → **`backend/trainer_engine.py`**，`frontend/cyq_calculator.js` → **`backend/cyq_calculator.js`**。
 
 ## 🔄 核心交易循环
 
@@ -78,8 +79,6 @@ cd web && npm run dev
 # 3) 桌面壳 (可选, 需 Rust + VS BuildTools)
 cd web/src-tauri && cargo tauri dev
 ```
-
-> PyQt5 旧版入口仍可运行: `python desktop_app.py`（需 PyQt5, 仅维护不发展）
 
 ## 📦 打包 (Web)
 
@@ -112,12 +111,11 @@ rem 输出: web\src-tauri\target\release\bundle\{msi,nsis}\StockClassroom_*.exe
 
 | 文档 | 内容 |
 |------|------|
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构设计、插件系统、目录结构（PyQt5 旧版） |
-| [TECH_MANUAL.md](docs/TECH_MANUAL.md) | 技术手册、交易引擎、AI 工具、数据库 |
-| [SESSION_PROMPT.md](docs/SESSION_PROMPT.md) | AI 对话提示词、API 路由 |
+| [Trading_Loop.md](docs/Trading_Loop.md) | **核心交易循环权威文档**（三驱动卖出门/回测口径/策略轮换） |
 | [RESEARCH_AGENT.md](docs/RESEARCH_AGENT.md) | backend/agent 量化研究代理层：闭环架构/因子库/安全/验证 |
 | [TASK_LOG.md](docs/TASK_LOG.md) | 量化研究里程碑：提交序列 + 验证状态 |
-| [Trading_Loop.md](docs/Trading_Loop.md) | **核心交易循环权威文档**（三驱动卖出门/回测口径/策略轮换） |
+| 数据字典 | `docs/数据字典/` |
+| `archive/docs-pyqt5-legacy/` | PyQt5 旧版文档（架构/插件/主题/技术手册/提示词，已归档） |
 
 ## 🛠 技术栈
 
@@ -127,15 +125,16 @@ rem 输出: web\src-tauri\target\release\bundle\{msi,nsis}\StockClassroom_*.exe
 | 后端 | Flask (127.0.0.1:5000, 统一 envelope + jobman 线程池/SSE) |
 | 数据库 | SQLite × 多库 (kline.db + fundamental.db + stock_cache.db + sim_trade.db + macro.db + agent.db) |
 | 数据源 | AKShare / Sina API (三源回退 Sina主/TX/EM + 硬超时) |
-| 模拟交易 | 自研 TradeEngine |
+| 模拟交易 | 自研 TradeEngine（市价/限价、T+1、佣金+印花税、净值快照） |
 | 量化策略 | factor_engine + portfolio_rebalance (SelectionContract) + regime + sell_rules |
-| LLM | openai SDK (DeepSeek 等), 16-tool function calling |
-| 自动化 | update_daily.py + Windows 计划任务 (项目 venv `.update-venv/`) |
+| LLM | openai SDK (DeepSeek 等)，对话操盘 16 工具 / AI 操盘手 13 工具 |
+| 自动化 | update_daily.py（含第⑨步 AI 操盘手决策）+ Windows 计划任务 (项目 venv `.update-venv/`) |
 
 ## 📝 版本
 
 | 版本 | 日期 | 要点 |
 |------|------|------|
+| v5.1 | 2026-09-09 | **AI 操盘手**（长期自主 LLM 交易员：专属账户 + 每日决策 + 长期记忆/自我风格，规则由交易系统强制）+ 前端 v6 信息架构（6 主页面 + 任务中心 + 设置记忆）+ PyQt5 残留清理归档 |
 | v5.0 | 2026-08-31 | **Web 栈迁移**: Vue3+Vite+TS+ECharts+Tauri2 + Flask API v2 (blueprints+统一envelope+jobman SSE) + AI操盘台16工具 + 策略进化闭环 + AI定时自主交易 |
 | v4.3 | 2026-08-27 | 总览 landing 页 / 策略进化闭环(α·年化·夏普精确指标) / 账户中心 / 净值曲线 / K线右栏抽屉 / 无边框自定义标题栏 / 每日自动更新(17:00计划任务) |
 | v4.2.0 | 2026-07-27 | 模拟交易系统、AI Agent 工具调用、dp缩放、窗口大小设置 |
