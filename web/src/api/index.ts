@@ -416,9 +416,14 @@ export interface TraderMemory {
   id: number; profile_id: number; kind: string; code: string
   content: string; active: number; created_at: string; decision_id?: number
 }
+export interface TraderReplayMeta {
+  source_profile_id: number; source_name: string; start_date: string
+  planned_days: number; cursor: string; done_days: number; status: string
+  initial_capital: number; note?: string
+}
 export interface TraderProfile {
   id: number; name: string; account_id: number; persona: string
-  model: string
+  model: string; kind?: string; meta?: TraderReplayMeta
   risk_rules: Record<string, unknown>; initial_capital: number
   auto_execute: number; enabled: number; created_at: string
   summary?: TraderSummary
@@ -474,5 +479,25 @@ export const runTrader = (opts: { force?: boolean; dry_run?: boolean; profile_id
   api.post<JobHandle>('/api/trader/run', opts)
 export const runTraderAll = (opts: { force?: boolean; dry_run?: boolean } = {}) =>
   api.post<JobHandle>('/api/trader/run-all', opts)
+
+// ---- 纵向回放 ----
+export interface TraderReplayDetail {
+  profile: TraderProfile
+  summary: TraderSummary
+  nav: TraderNavPoint[]
+  decisions: TraderDecision[]
+}
+export const getTraderReplays = () => api.get<{ items: TraderProfile[] }>('/api/trader/replays')
+export const createTraderReplay = (fields: {
+  source_profile_id: number; start_date: string; days: number
+  initial_capital?: number; model?: string
+}) => api.post<{ profile: TraderProfile; job: JobHandle }>('/api/trader/replay', fields)
+export const getTraderReplay = (id: number, limit = 60) =>
+  api.get<TraderReplayDetail>(`/api/trader/replay/${id}`, { limit })
+export const continueTraderReplay = (id: number, days = 30) =>
+  api.post<{ job: JobHandle }>(`/api/trader/replay/${id}/continue`, { days })
+export const distillTraderReplay = (id: number, target_profile_id: number) =>
+  api.post<{ copied: number; target: string; kinds: string[] }>(
+    `/api/trader/replay/${id}/distill`, { target_profile_id })
 export const getTraderNews = (limit = 15) =>
   api.get<{ items: TraderNewsItem[] }>('/api/trader/news', { limit })

@@ -297,3 +297,79 @@ def news_preview():
     from backend.trader import news as news_mod
     limit = int_arg(request.args.get("limit"), 15, 1, 50)
     return ok({"items": news_mod.market_news(limit=limit)})
+
+
+# ───────────────────────── 纵向回放 ─────────────────────────
+
+def _run_replay(payload, on_progress):
+    from backend.trader.replay import run_replay_batch
+    return run_replay_batch(
+        int((payload or {}).get("run_id") or 0),
+        days=int((payload or {}).get("days") or 30),
+        progress=lambda snap: on_progress(snap if isinstance(snap, dict) else {"msg": str(snap)}))
+
+
+@bp.route("/replays", methods=["GET"])
+def replays():
+    from backend.trader import account as acct_mod
+    return ok({"items": acct_mod.list_traders(kind="replay")})
+
+
+@bp.route("/replay", methods=["POST"])
+def create_replay_run():
+    from backend.trader.replay import create_replay
+    body = request.get_json(force=True, silent=True) or {}
+    try:
+        prof = create_replay(
+            int(body.get("source_profile_id") or 0),
+            str(body.get("start_date") or "").strip(),
+            days=int(body.get("days") or 30),
+            initial_capital=body.get("initial_capital"),
+            model=body.get("model"),
+        )
+    except Exception as e:
+        return err(400, "replay_create_failed", str(e)[:200], retriable=False)
+    job = jobman.submit("trader_replay", _run_replay,
+                        {"run_id": int(prof["id"]), "days": int(body.get("days") or 30)})
+    return ok({"profile": prof, "job": job})
+
+
+@bp.route("/replay/<int:rid>", methods=["GET"])
+def replay_detail(rid: int):
+    from backend.trader import store
+    from backend.trade_engine.engine import TradeEngine
+    p = store.get_profile(rid)
+    if p is None or p.get("kind") != "replay":
+        return err(404, "not_found", "回放档案不存在", retriable=False)
+    eng = TradeEngine()
+    nav = eng.get_nav_history(int(p["account_id"])) or {}
+    nav_rows = [{"date": d, "nav": n, "total_assets": ta}
+                for d, n, ta in zip(nav.get("dates", []), nav.get("nav", []), nav.get("total_assets", []))]
+    decisions = store.list_decisions(rid, limit=int_arg(request.args.get("limit"), 60, 1, 400))
+    return ok({"profile": p, "summary": _summary(p["account_id"]),
+               "nav": nav_rows, "decisions": decisions})
+
+
+@bp.route("/replay/<int:rid>/continue", methods=["POST"])
+def continue_replay(rid: int):
+    from backend.trader import store
+    body = request.get_json(force=True, silent=True) or {}
+    p = store.get_profile(rid)
+    if p is None or p.get("kind") != "replay":
+        return err(404, "not_found", "回放档案不存在", retriable=False)
+    days = int(body.get("days") or 30)
+    job = jobman.submit("trader_replay", _run_replay, {"run_id": rid, "days": days})
+    return ok({"job": job})
+
+
+@bp.route("/replay/<int:rid>/distill", methods=["POST"])
+def distill_replay(rid: int):
+    from backend.trader.replay import distill_to_live
+    body = request.get_json(force=True, silent=True) or {}
+    target = int(body.get("target_profile_id") or 0)
+    if not target:
+        return err(400, "missing_target", "target_profile_id 必填", retriable=False)
+    r = distill_to_live(rid, target)
+    if r.get("error"):
+        return err(400, "distill_failed", r["error"], retriable=False)
+    return ok(r)

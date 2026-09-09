@@ -25,12 +25,16 @@ class TraderTools:
 
     def __init__(self, account_id: int, profile_id: int,
                  risk_rules: Optional[dict] = None,
-                 decision_id: Optional[int] = None, dry_run: bool = False):
+                 decision_id: Optional[int] = None, dry_run: bool = False,
+                 trade_date: Optional[str] = None,
+                 price_fn: Optional[Any] = None):
         self.account_id = int(account_id)
         self.profile_id = int(profile_id)
         self.risk_rules = risk_rules or {}
         self.decision_id = decision_id
         self.dry_run = bool(dry_run)
+        self.trade_date = trade_date or None   # 回放: 历史交易日 YYYY-MM-DD
+        self.price_fn = price_fn               # 回放: 返回该日收盘价的函数; 为 None 时用实时
         self.decision: Optional[dict] = None   # submit_decision 捕获
         self.notes: list = []                  # remember 捕获
         self.log: list = []                    # 工具调用轨迹(供页面展示)
@@ -43,6 +47,11 @@ class TraderTools:
         return trader_engine()
 
     def _price(self, code: str) -> Optional[float]:
+        if self.price_fn is not None:
+            try:
+                return self.price_fn(str(code))
+            except Exception:
+                return None
         from .context import refresh_prices
         px = refresh_prices([code]).get(str(code)) or {}
         p = px.get("price")
@@ -151,7 +160,7 @@ class TraderTools:
             available = p["qty"] - p["frozen_qty"]
             if available < qty:
                 return {"可执行": False, "原因": f"可卖不足：持仓 {p['qty']}，冻结 {p['frozen_qty']}"}
-            today = __import__("datetime").date.today().isoformat()
+            today = self.trade_date or __import__("datetime").date.today().isoformat()
             if p.get("last_buy_date") and p["last_buy_date"] == today:
                 return {"可执行": False, "原因": "T+1：今日买入不可卖出"}
             proceeds = ref_price * qty * (1 - engine.COMMISSION_RATE - engine.STAMP_TAX_RATE)
@@ -181,7 +190,8 @@ class TraderTools:
 
         order, trade = engine.place_order(
             self.account_id, code, name or code, side, order_type,
-            ref if order_type == "limit" else 0, qty, current_price=ref)
+            ref if order_type == "limit" else 0, qty, current_price=ref,
+            trade_date=self.trade_date)
         rec = {"code": code, "name": name, "side": side, "order_type": order_type,
                "qty": qty, "reason": reason, "ok": False, "detail": ""}
 
@@ -194,7 +204,8 @@ class TraderTools:
         # 限价单挂单后立即以当前价尝试撮合（否则可能长期冻结资金）
         if trade is None:
             try:
-                filled = engine.check_orders(self.account_id, code, ref)
+                filled = engine.check_orders(self.account_id, code, ref,
+                                             trade_date=self.trade_date)
             except Exception:
                 filled = []
             if filled:

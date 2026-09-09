@@ -15,7 +15,7 @@ from typing import Callable, Optional
 from ..agent.llm_client import LLMClient, LLMError
 from .tools import TOOL_SPECS, TraderTools
 
-MAX_ROUNDS = 8
+MAX_ROUNDS = 10
 
 SYSTEM = (
     "你是一名独立管理自有资金的 A 股交易员（操盘手），今天要为自己的账户做一次决策。\n"
@@ -68,9 +68,11 @@ def _fmt_context(ctx: dict) -> str:
 class TraderAgent:
     def __init__(self, account_id: int, profile_id: int, risk_rules: Optional[dict] = None,
                  llm: Optional[LLMClient] = None, decision_id: Optional[int] = None,
-                 dry_run: bool = False, model: Optional[str] = None):
+                 dry_run: bool = False, model: Optional[str] = None,
+                 trade_date: Optional[str] = None, price_fn=None):
         self.tools = TraderTools(account_id, profile_id, risk_rules,
-                                 decision_id=decision_id, dry_run=dry_run)
+                                 decision_id=decision_id, dry_run=dry_run,
+                                 trade_date=trade_date, price_fn=price_fn)
         self._llm = llm
         self._model = model or None
 
@@ -131,23 +133,25 @@ class TraderAgent:
                 emit("提示操盘手提交决策…")
 
         if self.tools.decision is None:
-            # 强制结束（无 LLM 回复时也要留下记录）
+            # 强制结束（无 LLM 回复时也要留下记录），失败重试一次
             emit("强制操盘手给出最终决策…")
-            try:
-                llm = self._client()
-                spec = [t for t in TOOL_SPECS
-                        if t["function"]["name"] == "submit_decision"]
-                result = llm.chat_with_tools(
-                    messages, spec, max_tokens=2000,
-                    tool_choice={"type": "function",
-                                 "function": {"name": "submit_decision"}})
-                for tc in result.get("tool_calls") or []:
-                    try:
-                        self.tools.decision = json.loads(tc["function"]["arguments"] or "{}")
-                    except Exception:
-                        pass
-            except Exception as e:
-                emit(f"最终决策失败: {str(e)[:120]}")
+            spec = [t for t in TOOL_SPECS if t["function"]["name"] == "submit_decision"]
+            for _try in range(2):
+                try:
+                    llm = self._client()
+                    result = llm.chat_with_tools(
+                        messages, spec, max_tokens=2000,
+                        tool_choice={"type": "function",
+                                     "function": {"name": "submit_decision"}})
+                    for tc in result.get("tool_calls") or []:
+                        try:
+                            self.tools.decision = json.loads(tc["function"]["arguments"] or "{}")
+                        except Exception:
+                            pass
+                    if self.tools.decision is not None:
+                        break
+                except Exception as e:
+                    emit(f"最终决策失败({_try + 1}/2): {str(e)[:120]}")
 
         if self.tools.decision is None:
             return {"thinking": "", "reflection": "", "notes": self.tools.notes,

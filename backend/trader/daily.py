@@ -88,7 +88,7 @@ def run_daily_decision(profile_id: Optional[int] = None, trigger: str = "manual"
     plan = agent.tools.plan
     executions = agent.tools.executions
 
-    if result.get("error"):
+    if result.get("error") and not (result.get("thinking") or agent.tools.plan):
         store.upsert_decision(
             pid, trade_date, status="error", error=result["error"],
             thinking=result.get("thinking") or "", reflection=result.get("reflection") or "",

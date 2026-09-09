@@ -12,10 +12,11 @@ import { getTraderProfiles, createTraderProfile, updateTraderProfile, deleteTrad
 import type { TraderProfile } from '@/api'
 import TraderOverview from '@/views/v6/TraderOverview.vue'
 import TraderDetail from '@/views/v6/Trader.vue'
+import TraderReplay from '@/views/v6/Replay.vue'
 
 const toast = useToastStore()
 
-type Mode = 'overview' | 'detail'
+type Mode = 'overview' | 'detail' | 'replay'
 const mode = ref<Mode>('overview')
 const profiles = ref<TraderProfile[]>([])
 const currentId = ref<number | null>(null)
@@ -126,6 +127,9 @@ function select(id: number) {
             <button class="seg__btn" :class="{ 'is-on': mode === 'detail' }" :disabled="!current" @click="mode = 'detail'">
               <Icon name="agentops" :size="13" /><span>交易员详情</span>
             </button>
+            <button class="seg__btn" :class="{ 'is-on': mode === 'replay' }" @click="mode = 'replay'">
+              <Icon name="backtest" :size="13" /><span>纵向回放</span>
+            </button>
           </div>
           <label v-if="hasProfiles" class="sel">
             <select v-model="currentId" class="ui-select" @change="mode = 'detail'">
@@ -169,7 +173,8 @@ function select(id: number) {
       </EmptyGuide>
 
       <!-- 内容 -->
-      <TraderOverview v-if="mode === 'overview'" @select="select" />
+      <TraderReplay v-if="mode === 'replay'" />
+      <TraderOverview v-else-if="mode === 'overview'" @select="select" />
       <TraderDetail v-else-if="mode === 'detail' && currentId" :profile-id="currentId" :key="currentId" />
     </template>
 

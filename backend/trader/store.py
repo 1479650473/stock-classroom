@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS trader_profile(
     account_id INTEGER NOT NULL,
     persona TEXT DEFAULT '',
     model TEXT DEFAULT '',
+    kind TEXT DEFAULT 'live',
+    meta TEXT DEFAULT '{}',
     risk_rules TEXT DEFAULT '{}',
     initial_capital REAL DEFAULT 100000,
     auto_execute INTEGER DEFAULT 1,
@@ -93,6 +95,10 @@ def ensure_schema() -> None:
         pcols = {r[1] for r in con.execute("PRAGMA table_info(trader_profile)")}
         if "model" not in pcols:
             con.execute("ALTER TABLE trader_profile ADD COLUMN model TEXT DEFAULT ''")
+        if "kind" not in pcols:
+            con.execute("ALTER TABLE trader_profile ADD COLUMN kind TEXT DEFAULT 'live'")
+        if "meta" not in pcols:
+            con.execute("ALTER TABLE trader_profile ADD COLUMN meta TEXT DEFAULT '{}'")
         con.commit()
     finally:
         con.close()
@@ -130,28 +136,42 @@ def get_profile(profile_id: Optional[int] = None) -> Optional[dict]:
             return None
         d = dict(row)
         d["risk_rules"] = _loads(d.get("risk_rules"), {})
+        d["meta"] = _loads(d.get("meta"), {})
         return d
     finally:
         con.close()
 
 
-def list_profiles() -> list:
+def list_profiles(kind: Optional[str] = None) -> list:
     con = get_conn()
     try:
-        return [dict(r) for r in con.execute("SELECT * FROM trader_profile ORDER BY id")]
+        if kind:
+            rows = con.execute("SELECT * FROM trader_profile WHERE kind=? ORDER BY id", (kind,)).fetchall()
+        else:
+            rows = con.execute("SELECT * FROM trader_profile ORDER BY id").fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["risk_rules"] = _loads(d.get("risk_rules"), {})
+            d["meta"] = _loads(d.get("meta"), {})
+            out.append(d)
+        return out
     finally:
         con.close()
 
 
 def create_profile(account_id: int, name: str = "AI操盘手",
                    initial_capital: float = 100000.0, persona: str = "",
-                   model: str = "", risk_rules: Optional[dict] = None) -> dict:
+                   model: str = "", risk_rules: Optional[dict] = None,
+                   kind: str = "live", meta: Optional[dict] = None) -> dict:
     con = get_conn()
     try:
         cur = con.execute(
-            "INSERT INTO trader_profile (name, account_id, persona, model, risk_rules, initial_capital) "
-            "VALUES (?,?,?,?,?,?)",
-            (name, account_id, persona, model,
+            "INSERT INTO trader_profile "
+            "(name, account_id, persona, model, kind, meta, risk_rules, initial_capital) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (name, account_id, persona, model, kind or "live",
+             json.dumps(meta or {}, ensure_ascii=False),
              json.dumps(risk_rules or {}, ensure_ascii=False), initial_capital))
         con.commit()
         pid = cur.lastrowid
@@ -162,12 +182,12 @@ def create_profile(account_id: int, name: str = "AI操盘手",
 
 def update_profile(profile_id: int, **fields) -> Optional[dict]:
     allowed = {"name", "persona", "risk_rules", "auto_execute", "enabled",
-               "initial_capital", "account_id", "model"}
+               "initial_capital", "account_id", "model", "kind", "meta"}
     sets, args = [], []
     for k, v in fields.items():
         if k not in allowed:
             continue
-        if k == "risk_rules" and isinstance(v, dict):
+        if k in ("risk_rules", "meta") and isinstance(v, dict):
             v = json.dumps(v, ensure_ascii=False)
         sets.append(f"{k}=?")
         args.append(v)

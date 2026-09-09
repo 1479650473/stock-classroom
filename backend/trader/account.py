@@ -128,12 +128,12 @@ def delete_trader(profile_id: int, drop_account: bool = True) -> bool:
     return True
 
 
-def list_traders() -> list:
-    """列出全部交易员档案（含独立账户摘要）。"""
+def list_traders(kind: str = "live") -> list:
+    """列出交易员档案（含独立账户摘要）。kind='live' 只看实盘模拟盘，'replay' 只看回放。"""
     store.ensure_schema()
     engine = TradeEngine()
     out = []
-    for p in store.list_profiles():
+    for p in store.list_profiles(kind=kind if kind else None):
         try:
             s = engine.get_summary(int(p["account_id"])) or {}
             p = dict(p)
