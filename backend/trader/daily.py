@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
-"""每日决策编排 —— 构建上下文 → LLM 操盘手决策 → 校验执行 → 落长期记忆。
+"""每日决策编排 —— 构建上下文 → LLM 操盘手直接操作交易系统 → 落长期记忆。
 
 入口：run_daily_decision()。被两条路径调用：
   ① update_daily.py 末尾（数据更新后自动跑，非交易日跳过）
   ② /api/trader/run（页面手动补跑 / 调试）
+
+下单由 TraderTools.place_order 直接调用交易引擎完成（模拟券商软件），
+交易系统自行校验资金与规则并返回结果；本模块只负责上下文、记录与净值快照。
 
 幂等：同一交易日已 done 则默认跳过（force=True 重跑会覆盖当天记录）。
 """
@@ -26,104 +29,6 @@ def _emit(progress, msg: str, pct: Optional[int] = None):
         progress({"msg": msg, "pct": pct} if pct is not None else {"msg": msg})
     except Exception:
         pass
-
-
-def _resolve_price(code: str, order_type: str, price) -> Optional[float]:
-    if str(order_type).lower() == "limit" and price:
-        try:
-            p = float(price)
-            return p if p > 0 else None
-        except Exception:
-            return None
-    px = ctx_mod.refresh_prices([code]).get(str(code)) or {}
-    p = px.get("price")
-    return float(p) if p else None
-
-
-def _execute_orders(profile: dict, plan: list, progress=None,
-                    decision_id: Optional[int] = None) -> list:
-    """执行委托，返回每笔结果。
-
-    不做任何自由裁量限制（不限制持仓数/仓位/新开仓数/现金比例）；
-    只由交易引擎强制 A 股规则与可用资金：T+1、100 股整数倍、不可超买、
-    单票限制已对操盘手账户解除（POSITION_LIMIT=1.0）。
-    """
-    from .account import trader_engine
-    engine = trader_engine()
-    account_id = int(profile["account_id"])
-
-    results = []
-    for i, o in enumerate(plan or [], 1):
-        if not isinstance(o, dict):
-            continue
-        code = str(o.get("code") or "").strip()
-        name = str(o.get("name") or "").strip()
-        side = str(o.get("side") or "").lower()
-        otype = str(o.get("order_type") or "market").lower()
-        try:
-            qty = int(o.get("qty") or 0)
-        except Exception:
-            qty = 0
-        reason = str(o.get("reason") or "").strip()
-        rec = {"code": code, "name": name, "side": side, "order_type": otype,
-               "qty": qty, "reason": reason, "ok": False, "detail": ""}
-
-        if not code or side not in ("buy", "sell") or qty <= 0:
-            rec["detail"] = "参数非法"
-            results.append(rec)
-            continue
-
-        price = _resolve_price(code, otype, o.get("price"))
-        if not price:
-            rec["detail"] = "无法确定价格"
-            results.append(rec)
-            continue
-
-        order, trade = engine.place_order(
-            account_id, code, name or code, side, otype,
-            price if otype == "limit" else 0, qty, current_price=price)
-        if order is None:
-            rec["detail"] = str(trade)
-            results.append(rec)
-            continue
-
-        # 限价单挂单后立即尝试以当前价撮合（否则可能永远不成交、资金被冻结）
-        if trade is None:
-            try:
-                filled = engine.check_orders(account_id, code, price)
-            except Exception:
-                filled = []
-            if filled:
-                trade = filled[0]
-                order = None
-
-        if trade:  # 成交
-            rec.update({"ok": True, "price": round(float(trade["price"]), 3),
-                        "qty": int(trade["qty"]),
-                        "commission": round(float(trade.get("commission") or 0), 2),
-                        "stamp_tax": round(float(trade.get("stamp_tax") or 0), 2),
-                        "detail": "已成交" if otype == "market" else "已成交(限价撮合)"})
-            _after_fill(engine, profile, account_id, side, code, reason, decision_id)
-        else:  # 限价挂单未成交
-            rec.update({"ok": True, "price": round(float(order["price"]), 3),
-                        "qty": int(order["qty"]), "order_id": order["id"],
-                        "detail": "已挂限价单，未成交"})
-        results.append(rec)
-        _emit(progress, f"  委托 {i}/{len(plan)} {code} {side} {qty} → {rec['detail']}")
-    return results
-
-
-def _after_fill(engine, profile: dict, account_id: int, side: str, code: str,
-                reason: str, decision_id: Optional[int]) -> None:
-    """成交后的记忆维护：买入记持仓逻辑，清仓则逻辑失效。"""
-    if side == "buy":
-        if reason:
-            store.add_memory(int(profile["id"]), reason, kind="thesis",
-                             code=code, decision_id=decision_id)
-    else:
-        still = [p for p in engine.get_positions(account_id) if p["code"] == code]
-        if not still:
-            store.resolve_memory_by_code(int(profile["id"]), code, kind="thesis")
 
 
 def run_daily_decision(profile_id: Optional[int] = None, trigger: str = "manual",
@@ -174,27 +79,25 @@ def run_daily_decision(profile_id: Optional[int] = None, trigger: str = "manual"
                     f"候选 {(ctx.get('candidates') or {}).get('picks') and len(ctx['candidates']['picks']) or 0} 只", 25)
 
     agent = TraderAgent(int(profile["account_id"]), pid,
-                        risk_rules=profile.get("risk_rules"))
+                        risk_rules=profile.get("risk_rules"),
+                        decision_id=decision_id, dry_run=dry_run)
     result = agent.decide(ctx, progress=lambda m: _emit(progress, m))
+
+    # 委托与执行由工具直接产生（大模型操作交易系统的真实结果）
+    plan = agent.tools.plan
+    executions = agent.tools.executions
 
     if result.get("error"):
         store.upsert_decision(
             pid, trade_date, status="error", error=result["error"],
             thinking=result.get("thinking") or "", reflection=result.get("reflection") or "",
-            context=ctx, news=(ctx.get("news") or {}), plan=result.get("orders") or [],
+            context=ctx, news=(ctx.get("news") or {}), plan=plan, executions=executions,
             finished_at=datetime.now().isoformat(timespec="seconds"))
         _emit(progress, f"决策失败：{result['error']}")
         return store.get_decision(pid, trade_date) or {}
 
-    plan = result.get("orders") or []
-    _emit(progress, f"决策已生成：{'保持现状' if not plan else f'{len(plan)} 笔委托'}", 70)
-
-    executions = []
-    if dry_run:
-        executions = [{"code": o.get("code"), "side": o.get("side"), "qty": o.get("qty"),
-                       "ok": False, "detail": "dry_run 未执行"} for o in plan]
-    else:
-        executions = _execute_orders(profile, plan, progress, decision_id=decision_id)
+    filled = sum(1 for e in executions if e.get("ok") and "已成交" in str(e.get("detail") or ""))
+    _emit(progress, f"决策完成：{len(plan)} 笔委托，成交 {filled} 笔", 75)
 
     # 记录操盘手主动写入的长期记忆
     for n in result.get("notes") or []:
@@ -217,6 +120,7 @@ def run_daily_decision(profile_id: Optional[int] = None, trigger: str = "manual"
         pid, trade_date, status="done",
         thinking=result.get("thinking") or "", reflection=result.get("reflection") or "",
         context=ctx, news=(ctx.get("news") or {}), plan=plan, executions=executions,
+        trace=result.get("trace") or [],
         nav_before=nav_before, nav_after=nav_after,
         total_assets_before=ta_before, total_assets_after=ta_after,
         error="", finished_at=datetime.now().isoformat(timespec="seconds"))

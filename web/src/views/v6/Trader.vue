@@ -144,12 +144,31 @@ function navDelta(d: TraderDecision) {
 function toggleExpand(key: string) {
   expanded.value[key] = !expanded.value[key]
 }
-function execOf(d: TraderDecision, code: string, side: string) {
-  return (d.executions || []).find((e) => e.code === code && e.side === side)
+function execOf(d: TraderDecision, i: number) {
+  return (d.executions || [])[i]
 }
 
 const KIND_LABEL: Record<string, string> = {
   style: '自我风格', thesis: '持仓逻辑', lesson: '经验教训', note: '观察笔记',
+}
+
+const TOOL_LABEL: Record<string, string> = {
+  get_account_summary: '查看账户', get_positions: '查看持仓', get_stock_price: '查价格',
+  search_stock: '搜索股票', get_market_news: '读市场快讯', get_stock_news: '读个股新闻',
+  get_regime: '看市场环境', get_candidates: '看候选股', preview_order: '预检委托',
+  place_order: '下单', cancel_order: '撤单', remember: '记长期记忆', submit_decision: '结束决策',
+}
+function toolLine(t: { tool: string; args?: Record<string, unknown>; error?: string }) {
+  const label = TOOL_LABEL[t.tool] || t.tool
+  const a = t.args || {}
+  if (t.tool === 'place_order') {
+    const side = a.side === 'buy' ? '买入' : '卖出'
+    return `${label} ${side} ${a.code} ${a.qty}${t.error ? ' → ' + t.error : ''}`
+  }
+  if (['get_stock_price', 'get_stock_news', 'search_stock'].includes(t.tool) && a.code) {
+    return `${label} ${a.code}${t.error ? ' → ' + t.error : ''}`
+  }
+  return `${label}${t.error ? ' → ' + t.error : ''}`
 }
 </script>
 
@@ -186,7 +205,7 @@ const KIND_LABEL: Record<string, string> = {
           <span class="sep">·</span>
           <span>{{ state.llm_configured ? `模型 ${state.model || '已配置'}` : '未配置大模型' }}</span>
           <span class="sep">·</span>
-          <span>仅约束：本金固定 + A 股规则</span>
+          <span>交易规则由模拟券商系统强制执行</span>
         </div>
         <div class="bar__actions">
           <button class="ui-btn" @click="settingsOpen = true"><Icon name="settings" :size="14" /><span>设置</span></button>
@@ -252,10 +271,10 @@ const KIND_LABEL: Record<string, string> = {
                   <td>{{ o.name || o.code }}<span class="muted"> {{ o.code }}</span></td>
                   <td :class="o.side === 'buy' ? 'up' : 'down'">{{ sideLabel(o.side) }}</td>
                   <td class="ta-r">{{ o.qty }}</td>
-                  <td class="ta-r">{{ o.price || execOf(latest, o.code, o.side)?.price || '市价' }}</td>
+                  <td class="ta-r">{{ o.price || execOf(latest, i)?.price || '市价' }}</td>
                   <td>
-                    <span v-if="execOf(latest, o.code, o.side)?.ok" class="ok">{{ execOf(latest, o.code, o.side)?.detail }}</span>
-                    <span v-else class="bad">{{ execOf(latest, o.code, o.side)?.detail || '未执行' }}</span>
+                    <span v-if="execOf(latest, i)?.ok" class="ok">{{ execOf(latest, i)?.detail }}</span>
+                    <span v-else class="bad">{{ execOf(latest, i)?.detail || '未执行' }}</span>
                   </td>
                 </tr>
               </tbody>
@@ -265,6 +284,19 @@ const KIND_LABEL: Record<string, string> = {
           <div v-if="latest.reflection" class="block">
             <div class="block__title">复盘</div>
             <p class="prose">{{ latest.reflection }}</p>
+          </div>
+
+          <div v-if="latest.trace?.length" class="block">
+            <button class="collapse" @click="toggleExpand('trace')">
+              <Icon :name="expanded['trace'] ? 'chevron-down' : 'chevron-right'" :size="13" />
+              <span>工具调用（{{ latest.trace.length }} 步）</span>
+            </button>
+            <div v-if="expanded['trace']" class="trace">
+              <div v-for="(t, i) in latest.trace" :key="i" class="trace__item" :class="{ 'is-err': t.error }">
+                <span class="trace__idx">{{ i + 1 }}</span>
+                <span>{{ toolLine(t) }}</span>
+              </div>
+            </div>
           </div>
 
           <div v-if="latest.news?.market?.length || latest.news?.stocks?.length" class="block">
@@ -355,15 +387,15 @@ const KIND_LABEL: Record<string, string> = {
           </label>
         </FormField>
         <div class="hard">
-          <div class="hard__title">硬约束（仅此两项）</div>
+          <div class="hard__title">交易系统（模拟券商）</div>
           <ul class="hard__list">
-            <li><b>本金固定</b>：初始资金固定，不追加、不提取，只能在该范围内运作。</li>
+            <li>账户资金固定，不追加、不提取。</li>
             <li>
-              <b>A 股规则</b>：T+1（当日买入不可当日卖出）、最小 100 股且为 100 的整数倍、
-              不可做空、买入扣佣金、卖出扣佣金+印花税、只能用可用资金买入。
+              下单直接由交易系统执行：不符合 A 股规则或超出可用资金的委托会被系统拒绝并返回原因，
+              AI 根据返回结果自行调整，就像用券商软件下单一样。
             </li>
           </ul>
-          <p class="hard__note">没有持仓只数、仓位上限、现金比例或买卖纪律限制；风格由 AI 自定。</p>
+          <p class="hard__note">这些限制写在交易系统里，不写进 AI 提示词；风格与仓位完全由 AI 自定。</p>
         </div>
         <div class="form__foot">
           <button class="ui-btn" @click="settingsOpen = false">取消</button>
@@ -442,8 +474,12 @@ const KIND_LABEL: Record<string, string> = {
 .tl-chev { color: var(--text-faint); flex: none; }
 .tl-body { padding: 0 var(--sp-4) var(--sp-4) calc(92px + var(--sp-3) + var(--sp-4)); display: flex; flex-direction: column; gap: 6px; }
 
-.mem { display: flex; flex-direction: column; gap: var(--sp-2); }
-.mem__item { padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel-2); }
+.trace { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.trace__item { display: flex; gap: 8px; font-size: var(--fs-xs); color: var(--text-sub); line-height: 1.6; }
+.trace__item.is-err { color: var(--up); }
+.trace__idx { flex: none; width: 18px; color: var(--text-faint); text-align: right; }
+
+.mem { display: flex; flex-direction: column; gap: var(--sp-2); }.mem__item { padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel-2); }
 .mem__item.is-off { opacity: 0.5; }
 .mem__head { display: flex; align-items: center; gap: var(--sp-3); margin-bottom: 6px; }
 .mem__code { font-size: var(--fs-xs); font-weight: 600; color: var(--accent); }

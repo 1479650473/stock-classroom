@@ -399,6 +399,7 @@ export interface TraderExecution extends TraderOrder {
 }
 export interface TraderNewsItem { title: string; summary?: string; time?: string; url?: string }
 export interface TraderStockNews { code: string; name: string; news: TraderNewsItem[] }
+export interface TraderTrace { tool: string; args?: Record<string, unknown>; error?: string }
 export interface TraderDecision {
   id: number; profile_id: number; trade_date: string; as_of?: string
   status: 'running' | 'done' | 'error' | 'skipped'; trigger: string
@@ -406,6 +407,7 @@ export interface TraderDecision {
   context: Record<string, unknown>
   news: { market?: TraderNewsItem[]; stocks?: TraderStockNews[] }
   plan: TraderOrder[]; executions: TraderExecution[]
+  trace: TraderTrace[]
   nav_before?: number; nav_after?: number
   total_assets_before?: number; total_assets_after?: number
   error?: string; created_at: string; finished_at?: string

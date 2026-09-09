@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
-"""操盘手工具集 —— 只读查询 + 下单预览 + 决策提交。
+"""操盘手工具集 —— 只读查询 + 直接下单/撤单 + 记录决策。
+
+模拟券商软件：大模型像普通股民一样通过工具操作账户，所有规则（资金、T+1、
+100 股、费用）由交易引擎强制执行，违规直接返回错误，模型根据返回调整。
 
 与聊天工具 backend/agent/toolkit.py 的区别：
-- 所有交易相关操作绑定「AI操盘手」专属账户（不是聊天用的「AI账户」）。
+- 所有交易操作绑定「AI操盘手」专属账户（不是聊天用的「AI账户」）。
 - 不提供写策略/回测类工具（那是策略进化闭环的事）。
-- 决策通过 submit_decision 一次性提交，由 daily.py 统一校验执行，便于审计与记忆。
+- 下单即成交/挂单，submit_decision 只用于结束今日决策并记录思考与复盘。
 """
 from __future__ import annotations
 
@@ -12,6 +15,7 @@ from typing import Any, Optional
 
 from ..trade_engine.engine import TradeEngine
 from . import news as news_mod
+from . import store
 
 MAX_ROUNDS_HINT = 8
 
@@ -20,13 +24,18 @@ class TraderTools:
     """一次决策会话内的工具执行器。"""
 
     def __init__(self, account_id: int, profile_id: int,
-                 risk_rules: Optional[dict] = None):
+                 risk_rules: Optional[dict] = None,
+                 decision_id: Optional[int] = None, dry_run: bool = False):
         self.account_id = int(account_id)
         self.profile_id = int(profile_id)
         self.risk_rules = risk_rules or {}
+        self.decision_id = decision_id
+        self.dry_run = bool(dry_run)
         self.decision: Optional[dict] = None   # submit_decision 捕获
         self.notes: list = []                  # remember 捕获
         self.log: list = []                    # 工具调用轨迹(供页面展示)
+        self.plan: list = []                   # 已尝试的委托（含成交/拒绝）
+        self.executions: list = []             # 与 plan 同结构的执行结果
 
     # ── 内部 ──
     def _engine(self) -> TradeEngine:
@@ -150,6 +159,81 @@ class TraderTools:
         return {"可执行": False, "原因": "方向必须是 buy 或 sell"}
 
     # ── 写入 ──
+    def place_order(self, code: str, side: str, qty: int, order_type: str = "market",
+                    price: float = 0, name: str = "", reason: str = "") -> dict:
+        """直接下单（市价立即成交 / 限价挂单），返回交易系统的真实结果。"""
+        code = str(code or "").strip()
+        side = str(side or "").lower()
+        order_type = str(order_type or "market").lower()
+        name = str(name or "").strip()
+        reason = str(reason or "").strip()
+        try:
+            qty = int(qty)
+        except Exception:
+            return {"error": "数量非法"}
+        if self.dry_run:
+            return {"error": "演练模式：未实际下单"}
+
+        engine = self._engine()
+        ref = (float(price) if order_type == "limit" and price else self._price(code))
+        if not ref or ref <= 0:
+            return {"error": f"无法获取 {code} 的当前价格"}
+
+        order, trade = engine.place_order(
+            self.account_id, code, name or code, side, order_type,
+            ref if order_type == "limit" else 0, qty, current_price=ref)
+        rec = {"code": code, "name": name, "side": side, "order_type": order_type,
+               "qty": qty, "reason": reason, "ok": False, "detail": ""}
+
+        if order is None:
+            rec["detail"] = str(trade)
+            self.plan.append(rec)
+            self.executions.append(dict(rec))
+            return {"error": str(trade)}
+
+        # 限价单挂单后立即以当前价尝试撮合（否则可能长期冻结资金）
+        if trade is None:
+            try:
+                filled = engine.check_orders(self.account_id, code, ref)
+            except Exception:
+                filled = []
+            if filled:
+                trade = filled[0]
+                order = None
+
+        if trade:
+            rec.update({"ok": True, "price": round(float(trade["price"]), 3),
+                        "qty": int(trade["qty"]),
+                        "commission": round(float(trade.get("commission") or 0), 2),
+                        "stamp_tax": round(float(trade.get("stamp_tax") or 0), 2),
+                        "detail": "已成交" if order_type == "market" else "已成交(限价撮合)"})
+            self.plan.append(rec)
+            self.executions.append(dict(rec))
+            self._after_fill(engine, side, code, reason)
+            return {"状态": "已成交", "代码": code, "方向": side,
+                    "成交价": rec["price"], "数量": rec["qty"],
+                    "手续费": rec["commission"], "印花税": rec["stamp_tax"]}
+
+        rec.update({"ok": True, "price": round(float(order["price"]), 3),
+                    "qty": int(order["qty"]), "order_id": order["id"],
+                    "detail": "已挂限价单，未成交"})
+        self.plan.append(rec)
+        self.executions.append(dict(rec))
+        return {"状态": "已挂单未成交", "代码": code, "委托价": rec["price"],
+                "数量": rec["qty"], "委托单ID": order["id"],
+                "提示": "未成交的委托会冻结资金，可调用 cancel_order 撤销"}
+
+    def _after_fill(self, engine: TradeEngine, side: str, code: str, reason: str) -> None:
+        """成交后的长期记忆维护。"""
+        if side == "buy":
+            if reason:
+                store.add_memory(self.profile_id, reason, kind="thesis",
+                                 code=code, decision_id=self.decision_id)
+        else:
+            still = [p for p in engine.get_positions(self.account_id) if p["code"] == code]
+            if not still:
+                store.resolve_memory_by_code(self.profile_id, code, kind="thesis")
+
     def cancel_order(self, order_id: int) -> dict:
         ok, msg = self._engine().cancel_order(int(order_id))
         return {"状态": "已撤单"} if ok else {"error": str(msg)}
@@ -162,21 +246,20 @@ class TraderTools:
                            "code": str(code or ""), "content": content[:1000]})
         return {"状态": "已记入长期记忆"}
 
-    def submit_decision(self, thinking: str, orders: Optional[list] = None,
-                        reflection: str = "") -> dict:
+    def submit_decision(self, thinking: str, reflection: str = "") -> dict:
         self.decision = {
             "thinking": str(thinking or "").strip(),
-            "orders": orders or [],
             "reflection": str(reflection or "").strip(),
         }
-        n = len(self.decision["orders"])
-        return {"状态": "决策已提交", "委托数": n,
-                "说明": "保持现状" if n == 0 else "将按计划执行并记录"}
+        return {"状态": "今日决策已记录", "委托数": len(self.plan)}
 
     # ── 调度 ──
+    _RESERVED = ("execute", "decision", "notes", "log", "plan", "executions",
+                 "account_id", "profile_id", "risk_rules", "decision_id", "dry_run")
+
     def execute(self, name: str, args: dict) -> dict:
         fn = getattr(self, name, None)
-        if fn is None or name.startswith("_") or name in ("execute", "decision", "notes", "log"):
+        if fn is None or name.startswith("_") or name in self._RESERVED:
             return {"error": f"未知工具: {name}"}
         try:
             result = fn(**(args or {}))
@@ -226,13 +309,26 @@ TOOL_SPECS = [
             "top": {"type": "integer", "description": "条数，默认10"}}}}},
     {"type": "function", "function": {
         "name": "preview_order",
-        "description": ("校验一笔计划委托能否执行（只读，不成交）：资金是否够、单票占比是否超限、"
-                        "T+1/可卖数量是否满足。下单前建议先预览。"),
+        "description": ("下单前让交易系统预检一笔委托能否被接受（只读，不成交），返回结果与原因。"),
         "parameters": {"type": "object", "properties": {
             "code": {"type": "string"}, "side": {"type": "string", "enum": ["buy", "sell"]},
             "order_type": {"type": "string", "enum": ["market", "limit"]},
             "price": {"type": "number", "description": "限价单价格；市价单填0"},
             "qty": {"type": "integer", "description": "数量，100 的整数倍"}},
+            "required": ["code", "side", "qty"]}}},
+    {"type": "function", "function": {
+        "name": "place_order",
+        "description": ("直接下单（真实操作，不是模拟）。市价单立即成交；限价单若价格可立即成交则立即成交，"
+                        "否则进入待成交并冻结资金。交易系统会校验资金与规则，不符合则拒绝并返回原因。"
+                        "买入的 reason 会记为该持仓的长期逻辑。"),
+        "parameters": {"type": "object", "properties": {
+            "code": {"type": "string", "description": "股票代码"},
+            "name": {"type": "string", "description": "股票名称"},
+            "side": {"type": "string", "enum": ["buy", "sell"]},
+            "qty": {"type": "integer", "description": "数量"},
+            "order_type": {"type": "string", "enum": ["market", "limit"], "description": "默认 market"},
+            "price": {"type": "number", "description": "限价单价格；市价单填0"},
+            "reason": {"type": "string", "description": "这笔操作的理由"}},
             "required": ["code", "side", "qty"]}}},
     {"type": "function", "function": {
         "name": "cancel_order",
@@ -243,30 +339,21 @@ TOOL_SPECS = [
             "required": ["order_id"]}}},
     {"type": "function", "function": {
         "name": "remember",
-        "description": ("写入长期记忆。kind=thesis 记录某持仓的买入逻辑（买入时必须写）；"
-                        "kind=style 记录你对自己的风格/方法论的认识（会作为下次决策的自我认知回给你）；"
-                        "kind=lesson 记录经验教训；kind=note 一般观察；kind=market 市场判断。"),
+        "description": ("写入长期记忆。kind=style 记录你对自己的风格/方法论的认识（会作为下次决策的自我认知回给你）；"
+                        "kind=thesis 记录某持仓的买入逻辑；kind=lesson 经验教训；kind=note 一般观察；kind=market 市场判断。"),
         "parameters": {"type": "object", "properties": {
             "content": {"type": "string", "description": "记忆内容，简洁具体"},
             "kind": {"type": "string", "enum": ["thesis", "style", "lesson", "note", "market"]},
-            "code": {"type": "string", "description": "相关股票代码（thesis 必填）"}},
+            "code": {"type": "string", "description": "相关股票代码（thesis 填）"}},
             "required": ["content"]}}},
     {"type": "function", "function": {
         "name": "submit_decision",
-        "description": ("提交今日最终决策并结束。orders 为空表示保持现状(不操作)。"
-                        "买入请在对应 order 的 reason 里写清逻辑，系统会自动记为该持仓的长期逻辑。"),
+        "description": ("结束今日决策并记录你的思考与复盘。交易已通过 place_order 完成，"
+                        "这里只写文字总结；不操作时也要调用以结束。"),
         "parameters": {"type": "object", "properties": {
             "thinking": {"type": "string", "description": "今日完整分析（市场/持仓/候选/新闻如何影响你的判断）"},
-            "orders": {"type": "array", "description": "计划委托，可为多笔", "items": {
-                "type": "object", "properties": {
-                    "code": {"type": "string"}, "name": {"type": "string"},
-                    "side": {"type": "string", "enum": ["buy", "sell"]},
-                    "order_type": {"type": "string", "enum": ["market", "limit"]},
-                    "price": {"type": "number"}, "qty": {"type": "integer"},
-                    "reason": {"type": "string", "description": "这笔操作的理由"}},
-                "required": ["code", "side", "qty"]}},
             "reflection": {"type": "string", "description": "对上一交易日的复盘与经验（首次可为空）"}},
             "required": ["thinking"]}}},
 ]
 
-WRITE_TOOLS = {"submit_decision", "remember", "preview_order", "cancel_order"}
+WRITE_TOOLS = {"place_order", "cancel_order", "remember", "submit_decision"}

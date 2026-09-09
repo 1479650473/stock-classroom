@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS trader_decision(
     news TEXT DEFAULT '[]',
     plan TEXT DEFAULT '[]',
     executions TEXT DEFAULT '[]',
+    trace TEXT DEFAULT '[]',
     nav_before REAL,
     nav_after REAL,
     total_assets_before REAL,
@@ -84,6 +85,10 @@ def ensure_schema() -> None:
     con = get_conn()
     try:
         con.executescript(SCHEMA)
+        # 轻量迁移：旧库补 trace 列
+        cols = {r[1] for r in con.execute("PRAGMA table_info(trader_decision)")}
+        if "trace" not in cols:
+            con.execute("ALTER TABLE trader_decision ADD COLUMN trace TEXT DEFAULT '[]'")
         con.commit()
     finally:
         con.close()
@@ -102,7 +107,8 @@ def _loads(v: Any, default):
 
 def _decision_to_dict(row: sqlite3.Row) -> dict:
     d = dict(row)
-    for k, default in (("context", {}), ("news", []), ("plan", []), ("executions", [])):
+    for k, default in (("context", {}), ("news", []), ("plan", []),
+                       ("executions", []), ("trace", [])):
         d[k] = _loads(d.get(k), default)
     return d
 
