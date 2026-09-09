@@ -83,6 +83,49 @@ class LLMClient:
             return {"tool_calls": tcs}
         return {"content": choice.message.content or ""}
 
+    def chat_with_tools_stream(self, messages: list, tools: list, max_tokens: int = 2200,
+                               temperature: float = 0.6, tool_choice="auto"):
+        """流式 tool-calling 单轮。依次 yield:
+          {"type":"text","delta":str}      文本增量
+          {"type":"tool_calls","tool_calls":[...]}  工具调用(累完)
+          {"type":"content","content":str}  无工具调用时的完整文本
+          {"type":"done"}
+        """
+        stream = self._client.chat.completions.create(
+            model=self.model, messages=messages, tools=tools,
+            tool_choice=tool_choice, max_tokens=max_tokens, temperature=temperature,
+            stream=True,
+        )
+        tool_calls: dict = {}
+        text_parts: list = []
+        for chunk in stream:
+            if not getattr(chunk, "choices", None):
+                continue
+            delta = chunk.choices[0].delta
+            if delta is None:
+                continue
+            if getattr(delta, "content", None):
+                text_parts.append(delta.content)
+                yield {"type": "text", "delta": delta.content}
+            for tc in (getattr(delta, "tool_calls", None) or []):
+                slot = tool_calls.setdefault(
+                    tc.index, {"id": "", "type": "function",
+                               "function": {"name": "", "arguments": ""}})
+                if getattr(tc, "id", None):
+                    slot["id"] = tc.id
+                fn = getattr(tc, "function", None)
+                if fn is not None:
+                    if getattr(fn, "name", None):
+                        slot["function"]["name"] = fn.name
+                    if getattr(fn, "arguments", None):
+                        slot["function"]["arguments"] += fn.arguments
+        if tool_calls:
+            yield {"type": "tool_calls",
+                   "tool_calls": [tool_calls[k] for k in sorted(tool_calls)]}
+        else:
+            yield {"type": "content", "content": "".join(text_parts)}
+        yield {"type": "done"}
+
 
 def extract_json(text: str) -> dict:
     """健壮地从 LLM 输出中抽取 JSON(剥 ```json 围栏，取第一个 {...})。失败抛 LLMError。"""

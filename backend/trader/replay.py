@@ -44,6 +44,16 @@ def _emit(progress, msg, pct=None):
         pass
 
 
+def _event(progress, payload: dict):
+    """直接推一个结构化事件给 SSE（jobman 会包成 {type:'progress', ts, **payload}）。"""
+    if not progress:
+        return
+    try:
+        progress(payload)
+    except Exception:
+        pass
+
+
 # ───────────────────────── 交易日 / 历史数据 ─────────────────────────
 
 def _calendar() -> list:
@@ -337,12 +347,14 @@ def run_replay_batch(run_id: int, days: int = MAX_BATCH,
                                   finished_at=datetime.now().isoformat(timespec="seconds"))
             continue
         _emit(progress, f"[{i}/{len(dates)}] {d} 决策中… 持仓{len(ctx.get('positions') or [])}只", 5 + int(90 * i / len(dates)))
-        # 4) 模型决策（date-aware 工具）
+        _event(progress, {"event": "day_start", "date": d, "index": i, "total": len(dates),
+                          "account": ctx.get("account"), "positions": ctx.get("positions")})
+        # 4) 模型决策（date-aware 工具，流式输出）
         agent = TraderAgent(
             account_id, pid, risk_rules=profile.get("risk_rules"),
             decision_id=decision_id, model=profile.get("model") or None,
             trade_date=d, price_fn=lambda c, _d=d: _close_asof(c, _d), llm=llm)
-        result = agent.decide(ctx)
+        result = agent.decide(ctx, on_event=lambda e: _event(progress, e))
         # 5) 落库 + 净值结算
         try:
             snap = engine.snapshot_nav(account_id, d)
@@ -362,6 +374,16 @@ def run_replay_batch(run_id: int, days: int = MAX_BATCH,
                 store.add_memory(pid, n["content"], kind=n.get("kind", "note"),
                                  code=n.get("code") or "", decision_id=decision_id)
         done += 1
+        # 5b) 当日结算事件（前端据此刷新净值/持仓/曲线）
+        _event(progress, {
+            "event": "settled", "date": d, "nav": nav_after,
+            "total_assets": float(s2.get("total_assets", 0) or 0),
+            "balance": float(s2.get("balance", 0) or 0),
+            "positions": len(engine.get_positions(account_id)),
+            "plan": agent.tools.plan, "executions": agent.tools.executions,
+            "thinking": result.get("thinking") or "", "reflection": result.get("reflection") or "",
+            "error": result.get("error") or "",
+        })
         # 6) 每 N 日压缩一次阶段总结
         if done % SUMMARY_EVERY == 0 and llm is not None:
             recent = store.list_decisions(pid, limit=SUMMARY_EVERY)
@@ -375,9 +397,13 @@ def run_replay_batch(run_id: int, days: int = MAX_BATCH,
         meta["done_days"] = int(meta.get("done_days") or 0) + 1
         meta["status"] = "running"
         store.update_profile(pid, meta=meta)
+        _event(progress, {"event": "day_end", "date": d,
+                          "cursor": meta.get("cursor"), "done_days": meta.get("done_days")})
 
     meta["status"] = "ready"
     store.update_profile(pid, meta=meta)
+    _event(progress, {"event": "run_state", "cursor": meta.get("cursor"),
+                      "done_days": meta.get("done_days"), "status": "ready"})
     _emit(progress, f"✓ 回放批次完成，本批 {done} 天", 100)
     return {"status": "ok", "done": done, "from": dates[0], "to": dates[-1],
             "cursor": meta.get("cursor")}

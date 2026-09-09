@@ -81,12 +81,22 @@ class TraderAgent:
             self._llm = LLMClient(model=self._model)
         return self._llm
 
-    def decide(self, ctx: dict, progress: Optional[Callable] = None) -> dict:
-        """跑一轮决策，返回 {thinking, orders, reflection, notes, trace, error?}。"""
+    def decide(self, ctx: dict, progress: Optional[Callable] = None,
+               on_event: Optional[Callable] = None) -> dict:
+        """跑一轮决策。on_event 非空时用流式，实时回调：
+        {event:'agent_text',delta} / {event:'tool_call',name,args} /
+        {event:'tool_result',name,ok,summary}。"""
         def emit(m):
             if progress:
                 try:
                     progress(m)
+                except Exception:
+                    pass
+
+        def event(payload: dict):
+            if on_event:
+                try:
+                    on_event(payload)
                 except Exception:
                     pass
 
@@ -103,11 +113,27 @@ class TraderAgent:
         emit("操盘手开始分析今日数据…")
 
         for rnd in range(1, MAX_ROUNDS + 1):
-            try:
-                result = llm.chat_with_tools(messages, TOOL_SPECS, max_tokens=2600)
-            except Exception as e:
-                return {"thinking": "", "reflection": "", "notes": [],
-                        "trace": self.tools.log, "error": f"LLM 调用失败: {str(e)[:200]}"}
+            if on_event is not None:
+                text, tcs = "", None
+                try:
+                    for ev in llm.chat_with_tools_stream(messages, TOOL_SPECS, max_tokens=2600):
+                        t = ev.get("type")
+                        if t == "text":
+                            event({"event": "agent_text", "delta": ev.get("delta") or ""})
+                        elif t == "tool_calls":
+                            tcs = ev.get("tool_calls")
+                        elif t == "content":
+                            text = ev.get("content") or ""
+                except Exception as e:
+                    return {"thinking": "", "reflection": "", "notes": [],
+                            "trace": self.tools.log, "error": f"LLM 调用失败: {str(e)[:200]}"}
+                result = {"tool_calls": tcs} if tcs else {"content": text}
+            else:
+                try:
+                    result = llm.chat_with_tools(messages, TOOL_SPECS, max_tokens=2600)
+                except Exception as e:
+                    return {"thinking": "", "reflection": "", "notes": [],
+                            "trace": self.tools.log, "error": f"LLM 调用失败: {str(e)[:200]}"}
 
             tcs = result.get("tool_calls")
             if tcs:
@@ -120,7 +146,10 @@ class TraderAgent:
                     except Exception:
                         args = {}
                     emit(_tool_msg(name, args))
+                    event({"event": "tool_call", "name": name, "args": args})
                     res = self.tools.execute(name, args)
+                    event({"event": "tool_result", "name": name,
+                           "ok": "error" not in res, "summary": _summarize_result(name, res)})
                     messages.append({"role": "tool", "tool_call_id": tc["id"],
                                      "content": json.dumps(res, ensure_ascii=False, default=str)})
                 if self.tools.decision is not None:
@@ -129,7 +158,7 @@ class TraderAgent:
                 text = (result.get("content") or "").strip()
                 messages.append({"role": "assistant", "content": text})
                 messages.append({"role": "user", "content":
-                                 "请现在调用 submit_decision 提交今日最终决策（含 thinking 与 orders）。"})
+                                 "请现在调用 submit_decision 提交今日最终决策（含 thinking）。"})
                 emit("提示操盘手提交决策…")
 
         if self.tools.decision is None:
@@ -158,12 +187,45 @@ class TraderAgent:
                     "trace": self.tools.log, "error": "操盘手未能给出决策"}
 
         d = self.tools.decision
+        event({"event": "decision", "thinking": d.get("thinking") or "",
+               "reflection": d.get("reflection") or ""})
         return {
             "thinking": d.get("thinking") or "",
             "reflection": d.get("reflection") or "",
             "notes": self.tools.notes,
             "trace": self.tools.log,
         }
+
+
+def _summarize_result(name: str, res) -> str:
+    """把工具结果压成一行，用于 SSE 流展示。"""
+    if not isinstance(res, dict):
+        return str(res)[:120]
+    if "error" in res:
+        return str(res["error"])[:120]
+    if name == "get_account_summary":
+        return f"总资产 {res.get('总资产')} · 可用 {res.get('可用资金')} · 持仓 {res.get('持仓数')}"
+    if name == "get_positions":
+        return f"{len(res)} 只持仓" if isinstance(res, list) else str(res)[:80]
+    if name == "get_stock_price":
+        return f"{res.get('代码')} {res.get('现价')}"
+    if name == "get_candidates":
+        return f"候选 {len(res.get('picks') or [])} 只"
+    if name in ("get_market_news", "get_stock_news"):
+        if isinstance(res, list):
+            return f"{len(res)} 条"
+        return str(res.get("note") or res.get("message") or "无")[:80]
+    if name == "preview_order":
+        return str(res.get("原因") or res.get("可执行"))
+    if name == "place_order":
+        return str(res.get("状态") or res.get("error"))[:80]
+    if name == "cancel_order":
+        return str(res.get("状态") or res.get("error"))[:80]
+    if name == "remember":
+        return "已记录"
+    if name == "submit_decision":
+        return "已提交"
+    return str(res)[:100]
 
 
 _LABELS = {

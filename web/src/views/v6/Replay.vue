@@ -14,6 +14,7 @@ import Icon from '@/components/Icon.vue'
 import KlineChart from '@/components/charts/KlineChart.vue'
 import type { LwcBar, LwcMarker } from '@/components/charts/KlineChart.vue'
 import { useEChart, cssVar } from '@/composables/useEChart'
+import { streamJob } from '@/api/client'
 import { useToastStore } from '@/stores/toast'
 import { useJobsStore } from '@/stores/jobs'
 import {
@@ -37,7 +38,110 @@ const drawerOpen = ref(false)
 const creating = ref(false)
 const expanded = ref<Record<string, boolean>>({})
 
+// ── 实时流 ──
+interface StreamTool { name: string; args: Record<string, unknown>; result?: string; ok?: boolean }
+interface StreamDay {
+  date: string; index: number; total: number
+  account?: { total_assets?: number; balance?: number }
+  positions: number
+  text: string
+  tools: StreamTool[]
+  decision?: { thinking: string; reflection: string }
+  settled?: { nav?: number; total_assets?: number; positions?: number; plan: unknown[]; executions: unknown[] }
+  status: 'running' | 'settled'
+}
+const liveDays = ref<StreamDay[]>([])
+const liveActive = ref(false)
+const liveJobId = ref<string | null>(null)
+const liveBox = ref<HTMLElement | null>(null)
+let liveClose: (() => void) | null = null
+
+function curDay(): StreamDay | null {
+  return liveDays.value.length ? liveDays.value[liveDays.value.length - 1] : null
+}
+function refreshLiveDetail() { loadDetail(true) }
+function scrollLive() {
+  const el = liveBox.value
+  if (!el) return
+  // 仅在接近底部时自动滚动，避免打断用户上翻
+  if (el.scrollHeight - el.scrollTop - el.clientHeight < 160) {
+    requestAnimationFrame(() => { el.scrollTop = el.scrollHeight })
+  }
+}
+
+function startLive(jobId: string) {
+  liveClose?.()
+  liveActive.value = true
+  liveJobId.value = jobId
+  liveClose = streamJob(jobId, {
+    onProgress: (frame) => {
+      const ev = (frame as Record<string, unknown>).event as string | undefined
+      if (!ev) return
+      if (ev === 'day_start') {
+        liveDays.value.push({
+          date: String((frame as Record<string, unknown>).date || ''),
+          index: Number((frame as Record<string, unknown>).index || 0),
+          total: Number((frame as Record<string, unknown>).total || 0),
+          account: (frame as Record<string, unknown>).account as StreamDay['account'],
+          positions: (((frame as Record<string, unknown>).positions as unknown[]) || []).length,
+          text: '', tools: [], status: 'running',
+        })
+      } else if (ev === 'agent_text') {
+        const d = curDay(); if (d) d.text += String((frame as Record<string, unknown>).delta || '')
+      } else if (ev === 'tool_call') {
+        const d = curDay()
+        if (d) d.tools.push({ name: String((frame as Record<string, unknown>).name || ''),
+                              args: ((frame as Record<string, unknown>).args as Record<string, unknown>) || {} })
+      } else if (ev === 'tool_result') {
+        const d = curDay()
+        if (d) {
+          const last = [...d.tools].reverse().find((t) => t.name === (frame as Record<string, unknown>).name && t.result === undefined)
+          if (last) { last.ok = !!(frame as Record<string, unknown>).ok; last.result = String((frame as Record<string, unknown>).summary || '') }
+        }
+      } else if (ev === 'decision') {
+        const d = curDay()
+        if (d) d.decision = { thinking: String((frame as Record<string, unknown>).thinking || ''),
+                              reflection: String((frame as Record<string, unknown>).reflection || '') }
+      } else if (ev === 'settled') {
+        const d = curDay()
+        if (d) {
+          d.settled = {
+            nav: (frame as Record<string, unknown>).nav as number | undefined,
+            total_assets: (frame as Record<string, unknown>).total_assets as number | undefined,
+            positions: (frame as Record<string, unknown>).positions as number | undefined,
+            plan: ((frame as Record<string, unknown>).plan as unknown[]) || [],
+            executions: ((frame as Record<string, unknown>).executions as unknown[]) || [],
+          }
+          d.status = 'settled'
+        }
+        refreshLiveDetail()
+      } else if (ev === 'run_state') {
+        const m = current.value?.profile.meta
+        if (m) { m.cursor = String((frame as Record<string, unknown>).cursor || m.cursor); m.done_days = Number((frame as Record<string, unknown>).done_days || m.done_days) }
+      }
+      scrollLive()
+    },
+    onResult: () => { liveActive.value = false; liveClose = null; refreshLiveDetail(); loadRuns() },
+    onError: () => { liveActive.value = false; liveClose = null },
+  })
+}
+
 const draft = ref({ source_profile_id: 0, start_date: '2024-01-02', days: 30 })
+
+const TOOL_LABEL: Record<string, string> = {
+  get_account_summary: '查看账户', get_positions: '查看持仓', get_stock_price: '查价格',
+  search_stock: '搜索股票', get_market_news: '读市场快讯', get_stock_news: '读个股新闻',
+  get_regime: '看市场环境', get_candidates: '看候选股', preview_order: '预检委托',
+  place_order: '下单', cancel_order: '撤单', remember: '记长期记忆', submit_decision: '提交决策',
+}
+function toolLabel(n: string) { return TOOL_LABEL[n] || n }
+function toolArgs(t: { name: string; args: Record<string, unknown> }) {
+  const a = t.args || {}
+  if (t.name === 'place_order') return `${a.side === 'buy' ? '买' : '卖'} ${a.code} ${a.qty}`
+  if (['get_stock_price', 'get_stock_news', 'search_stock'].includes(t.name) && a.code) return String(a.code)
+  if (a.top || a.limit) return `top=${a.top || a.limit}`
+  return ''
+}
 
 // K 线（按展开的交易日切片）
 const klineBars = ref<Record<string, LwcBar[]>>({})
@@ -63,24 +167,29 @@ async function loadRuns() {
   }
 }
 
-async function loadDetail() {
+async function loadDetail(silent = false) {
   if (!currentId.value) { current.value = null; return }
-  detailLoading.value = true
+  if (!silent) detailLoading.value = true
   try {
     current.value = await getTraderReplay(currentId.value, 120)
-    klineBars.value = {}
+    if (!silent) klineBars.value = {}
   } catch (e) {
-    toast.error('回放详情加载失败：' + (e instanceof Error ? e.message : String(e)))
+    if (!silent) toast.error('回放详情加载失败：' + (e instanceof Error ? e.message : String(e)))
   } finally {
     detailLoading.value = false
   }
 }
 
-onMounted(async () => { await loadRuns(); await loadDetail() })
-watch(currentId, loadDetail)
+onMounted(async () => {
+  await loadRuns(); await loadDetail()
+  // 刷新页面后，若还有回放任务在跑，重连实时流
+  const running = jobs.byKind('trader_replay').find((j) => j.status === 'running' || j.status === 'queued')
+  if (running) startLive(running.id)
+})
+watch(currentId, () => loadDetail())
 watch(
   () => jobs.byKind('trader_replay').map((j) => `${j.id}:${j.doneTick || 0}:${j.status}`).join('|'),
-  (v, o) => { if (v !== o) { loadRuns().then(loadDetail) } },
+  (v, o) => { if (v !== o) { loadRuns().then(() => loadDetail(true)) } },
 )
 
 function openCreate() {
@@ -104,7 +213,9 @@ async function create() {
     drawerOpen.value = false
     await loadRuns()
     currentId.value = r.profile.id
+    liveDays.value = []
     jobs.attach(r.job.job_id)
+    startLive(r.job.job_id)
   } catch (e) {
     toast.error('创建失败：' + (e instanceof Error ? e.message : String(e)))
   } finally {
@@ -117,6 +228,8 @@ async function cont() {
   try {
     const r = await continueTraderReplay(currentId.value, 30)
     jobs.attach(r.job.job_id)
+    liveDays.value = []
+    startLive(r.job.job_id)
     toast.success('继续回放中…')
   } catch (e) {
     toast.error('续跑失败：' + (e instanceof Error ? e.message : String(e)))
@@ -275,6 +388,47 @@ watch([current, navSeries], async () => { await Promise.resolve(); chart.draw() 
         <button class="ui-btn ui-btn--ghost" @click="removeRun(current.profile)"><Icon name="trash" :size="13" /><span>删除</span></button>
       </div>
 
+      <SectionCard v-if="liveActive || liveDays.length" title="实时回放" :desc="liveActive ? '模型正在逐日决策…' : '本次回放过程'">
+        <template #actions>
+          <span class="live-dot" :class="{ 'is-on': liveActive }" />
+          <span class="live-state">{{ liveActive ? '进行中' : '已结束' }}</span>
+        </template>
+        <div ref="liveBox" class="live">
+          <div v-for="(day, di) in liveDays" :key="day.date" class="lday">
+            <div class="lday__head">
+              <span class="lday__date">{{ day.date }}</span>
+              <span class="lday__idx">第 {{ day.index }}/{{ day.total }} 天</span>
+              <span v-if="day.account" class="lday__acct">
+                开始前 · 总资产 {{ fmtMoney(day.account.total_assets) }} · 持仓 {{ day.positions }} 只
+              </span>
+            </div>
+            <div v-if="day.text" class="lday__text">{{ day.text }}</div>
+            <div v-for="(t, i) in day.tools" :key="i" class="ltool">
+              <Icon name="settings" :size="12" class="ltool__icon" />
+              <span class="ltool__name">{{ toolLabel(t.name) }}</span>
+              <span v-if="toolArgs(t)" class="ltool__args">{{ toolArgs(t) }}</span>
+              <span v-if="t.result !== undefined" class="ltool__res" :class="t.ok ? 'ok' : 'bad'">{{ t.result }}</span>
+            </div>
+            <div v-if="day.decision" class="ldecision">
+              <div class="ldecision__label">模型决策</div>
+              <p class="prose">{{ day.decision.thinking }}</p>
+              <p v-if="day.decision.reflection" class="prose prose--sub">复盘：{{ day.decision.reflection }}</p>
+            </div>
+            <div v-if="day.settled" class="lsettle">
+              <span class="lsettle__tag">当日结算</span>
+              <span>净值 {{ day.settled.nav != null ? Number(day.settled.nav).toFixed(4) : '—' }}</span>
+              <span>总资产 {{ fmtMoney(day.settled.total_assets) }}</span>
+              <span>持仓 {{ day.settled.positions ?? 0 }} 只</span>
+              <span>委托 {{ day.settled.plan.length }} 笔</span>
+            </div>
+            <div class="lday__sep">
+              <span>{{ liveActive && di === liveDays.length - 1 ? '下一日 …' : '下一天' }}</span>
+            </div>
+          </div>
+          <div v-if="!liveDays.length" class="muted">等待第一天开始…</div>
+        </div>
+      </SectionCard>
+
       <SectionCard title="回放净值" desc="无前视逐日模拟的账户净值（1.0 = 起始）">
         <div ref="chartEl" class="chart" />
       </SectionCard>
@@ -414,4 +568,28 @@ watch([current, navSeries], async () => { await Promise.resolve(); chart.draw() 
 .form { display: flex; flex-direction: column; gap: var(--sp-4); }
 .form__foot { display: flex; justify-content: flex-end; gap: var(--sp-2); }
 .note { font-size: var(--fs-xs); color: var(--text-faint); line-height: 1.7; padding: var(--sp-3); background: var(--panel-2); border-radius: var(--radius-sm); }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); }
+.live-dot.is-on { background: var(--ok); animation: pulse 1.2s infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.live-state { font-size: var(--fs-xs); color: var(--text-sub); }
+.live { display: flex; flex-direction: column; gap: var(--sp-3); max-height: 520px; overflow-y: auto; padding-right: 4px; }
+.lday { display: flex; flex-direction: column; gap: 8px; }
+.lday__head { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.lday__date { font-size: var(--fs-sm); font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+.lday__idx { font-size: var(--fs-xs); color: var(--text-faint); }
+.lday__acct { font-size: var(--fs-xs); color: var(--text-sub); margin-left: auto; }
+.lday__text { font-size: var(--fs-sm); line-height: 1.7; color: var(--text); white-space: pre-wrap; }
+.ltool { display: flex; align-items: center; gap: 8px; font-size: var(--fs-xs); color: var(--text-sub); }
+.ltool__icon { color: var(--text-faint); flex: none; }
+.ltool__name { font-weight: 600; color: var(--text); }
+.ltool__args { color: var(--text-faint); }
+.ltool__res { margin-left: auto; }
+.ltool__res.ok { color: var(--ok); }
+.ltool__res.bad { color: var(--up); }
+.ldecision { padding: var(--sp-3); background: var(--panel-2); border-radius: var(--radius-sm); border-left: 3px solid var(--accent); }
+.ldecision__label { font-size: var(--fs-xs); color: var(--accent); font-weight: 600; margin-bottom: 6px; }
+.lsettle { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; font-size: var(--fs-xs); color: var(--text-sub); padding: 8px 12px; background: color-mix(in srgb, var(--ok) 10%, transparent); border-radius: var(--radius-sm); }
+.lsettle__tag { font-weight: 700; color: var(--ok); }
+.lday__sep { display: flex; align-items: center; gap: var(--sp-3); color: var(--text-faint); font-size: var(--fs-xs); margin: var(--sp-2) 0; }
+.lday__sep::before, .lday__sep::after { content: ''; flex: 1; height: 1px; background: var(--border); }
 </style>

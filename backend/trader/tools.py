@@ -107,18 +107,29 @@ class TraderTools:
         return [{"代码": r[0], "名称": r[1]} for r in rows]
 
     def get_market_news(self, limit: int = 15) -> Any:
+        if self.trade_date:
+            return {"note": "回放模式：历史新闻不可回溯，本日无新闻输入（仅凭行情/候选/宏观决策）"}
         rows = news_mod.market_news(limit=int(limit or 15))
         return rows or {"message": "暂无市场快讯"}
 
     def get_stock_news(self, code: str, name: str = "") -> Any:
+        if self.trade_date:
+            return {"note": f"回放模式：{code} 的历史新闻不可回溯"}
         rows = news_mod.stock_news(str(code), name, limit=5)
         return rows or {"message": f"{code} 暂无新闻"}
 
     def get_regime(self) -> dict:
+        if self.trade_date:
+            from .replay import _regime_asof, _hs300_trend_asof
+            return {"regime": _regime_asof(self.trade_date),
+                    "hs300": _hs300_trend_asof(self.trade_date)}
         from .context import build_market_block
         return build_market_block()
 
     def get_candidates(self, top: int = 10) -> dict:
+        if self.trade_date:
+            from .replay import _candidates_block
+            return _candidates_block(self.trade_date, top_n=int(top or 10))
         from .context import build_candidates_block
         return build_candidates_block(top_n=int(top or 10))
 
