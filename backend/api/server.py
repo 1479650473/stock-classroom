@@ -70,6 +70,11 @@ def create_app():
     # AI 操盘手 (长期自主 LLM 交易员: 专属账户 + 每日决策 + 长期记忆)
     from .blueprints import trader
     app.register_blueprint(trader.bp)
+    # Agent Gateway v1 (/api/agent/v1) — 能力分级 R/W/B/T + 审计/幂等/限流，供外部 agent/MCP 调用
+    from backend.agent.routes import register as register_agent_gateway
+    register_agent_gateway(app)
+    from backend.agent import store as agent_store
+    agent_store.ensure_schema()
 
     @app.route("/")
     def root():

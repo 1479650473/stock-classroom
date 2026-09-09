@@ -33,8 +33,8 @@ C:/Python314/python.exe -m backend.agent.cli revoke <token_id>
 ## 启动
 
 ```bash
-# 1) Flask(含网关)跑在 127.0.0.1:5000
-C:/Python314/python.exe backend/app.py
+# 1) Web API(含网关)跑在 127.0.0.1:5000 — 网关已挂载进 backend/api/server.py
+C:/Python314/python.exe run_web.py
 
 # 2) MCP server(薄包 R+B，默认不暴露交易) — 给 Cursor/Claude Code/Hermes 用
 SC_AGENT_TOKEN=sc_agent_xxx C:/Python314/python.exe -m backend.agent.mcp_server

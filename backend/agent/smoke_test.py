@@ -3,7 +3,7 @@
 
 运行(项目根，项目解释器)：
   python backend/agent/smoke_test.py
-直接复用 backend.app 的 Flask test_client，不依赖启动真实服务器。
+直接复用 Web API 的 Flask test_client（create_app），不依赖启动真实服务器。
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "backend"))
 
-from backend.app import app  # noqa: E402
+from backend.api.server import create_app  # noqa: E402
 from backend.agent import gateway as gw  # noqa: E402
 
 
@@ -41,6 +41,7 @@ STRATEGY = {
 
 
 def main():
+    app = create_app()
     app.config["TESTING"] = True
     client = app.test_client()
     results = []
@@ -205,7 +206,7 @@ def main():
         print("未通过项:")
         for f in fails:
             print(f"  - {f}")
-    print("✅ Agent Gateway + MCP 骨架可用" if passed == total else "❌ 存在失败")
+    print("[OK] Agent Gateway + MCP 骨架可用" if passed == total else "[FAIL] 存在失败")
     return 0 if passed == total else 1
 
 
