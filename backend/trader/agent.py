@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Callable, Optional
 
 from ..agent.llm_client import LLMClient, LLMError
@@ -111,29 +112,72 @@ class TraderAgent:
             {"role": "user", "content": "今日决策上下文（JSON）：\n" + _fmt_context(ctx)},
         ]
         emit("操盘手开始分析今日数据…")
+        narration_parts: list = []   # 模型旁白，用于未提交正式决策时兜底展示
 
         for rnd in range(1, MAX_ROUNDS + 1):
             if on_event is not None:
                 text, tcs = "", None
-                try:
-                    for ev in llm.chat_with_tools_stream(messages, TOOL_SPECS, max_tokens=2600):
-                        t = ev.get("type")
-                        if t == "text":
-                            event({"event": "agent_text", "delta": ev.get("delta") or ""})
-                        elif t == "tool_calls":
-                            tcs = ev.get("tool_calls")
-                        elif t == "content":
-                            text = ev.get("content") or ""
-                except Exception as e:
-                    return {"thinking": "", "reflection": "", "notes": [],
-                            "trace": self.tools.log, "error": f"LLM 调用失败: {str(e)[:200]}"}
+                buf, last_flush = "", time.time()
+
+                def _flush():
+                    nonlocal buf, last_flush
+                    if buf:
+                        narration_parts.append(buf)
+                        event({"event": "agent_text", "delta": buf})
+                        buf, last_flush = "", time.time()
+
+                last_err = None
+                for _attempt in range(3):
+                    text, tcs, streamed = "", None, False
+                    try:
+                        for ev in llm.chat_with_tools_stream(messages, TOOL_SPECS, max_tokens=2600):
+                            t = ev.get("type")
+                            if t == "text":
+                                # 合并增量：逐 token 推帧会把 SSE 环缓冲冲爆，
+                                # 也会让前端一次性渲染上千个 fragment
+                                streamed = True
+                                buf += ev.get("delta") or ""
+                                if len(buf) >= 80 or time.time() - last_flush >= 0.15:
+                                    _flush()
+                            elif t == "tool_calls":
+                                _flush()
+                                tcs = ev.get("tool_calls")
+                            elif t == "content":
+                                _flush()
+                                text = ev.get("content") or ""
+                        _flush()
+                        last_err = None
+                        break
+                    except Exception as e:
+                        last_err = e
+                        _flush()
+                        # 已经开始吐字就不重试（避免重复内容）；连接在开头就断的重试值得
+                        if streamed or _attempt >= 2:
+                            break
+                        event({"event": "warning",
+                               "message": f"LLM 连接中断，重试 {_attempt + 2}/3…"})
+                        time.sleep(1.5 * (_attempt + 1))
+                if last_err is not None:
+                    return {"thinking": "".join(narration_parts).strip(), "reflection": "",
+                            "notes": [], "trace": self.tools.log,
+                            "error": f"LLM 调用失败: {str(last_err)[:200]}"}
                 result = {"tool_calls": tcs} if tcs else {"content": text}
             else:
-                try:
-                    result = llm.chat_with_tools(messages, TOOL_SPECS, max_tokens=2600)
-                except Exception as e:
+                result, last_err = None, None
+                for _attempt in range(3):
+                    try:
+                        result = llm.chat_with_tools(messages, TOOL_SPECS, max_tokens=2600)
+                        last_err = None
+                        break
+                    except Exception as e:
+                        last_err = e
+                        if _attempt >= 2:
+                            break
+                        emit(f"LLM 调用失败，重试 {_attempt + 2}/3…")
+                        time.sleep(1.5 * (_attempt + 1))
+                if last_err is not None:
                     return {"thinking": "", "reflection": "", "notes": [],
-                            "trace": self.tools.log, "error": f"LLM 调用失败: {str(e)[:200]}"}
+                            "trace": self.tools.log, "error": f"LLM 调用失败: {str(last_err)[:200]}"}
 
             tcs = result.get("tool_calls")
             if tcs:
@@ -156,6 +200,8 @@ class TraderAgent:
                     break
             else:
                 text = (result.get("content") or "").strip()
+                if text:
+                    narration_parts.append(text)
                 messages.append({"role": "assistant", "content": text})
                 messages.append({"role": "user", "content":
                                  "请现在调用 submit_decision 提交今日最终决策（含 thinking）。"})
@@ -181,13 +227,19 @@ class TraderAgent:
                         break
                 except Exception as e:
                     emit(f"最终决策失败({_try + 1}/2): {str(e)[:120]}")
+                    event({"event": "warning", "message": f"最终决策调用失败：{str(e)[:150]}"})
 
+        narration = "".join(narration_parts).strip()
         if self.tools.decision is None:
-            return {"thinking": "", "reflection": "", "notes": self.tools.notes,
-                    "trace": self.tools.log, "error": "操盘手未能给出决策"}
+            # 模型没走 submit_decision（轮到上限 / 最终调用失败）：
+            # 仍然把它的思考过程当作决策推给前端，避免当天内容一片空白
+            event({"event": "decision", "thinking": narration, "reflection": "",
+                   "error": "模型本轮未提交正式决策"})
+            return {"thinking": narration, "reflection": "", "notes": self.tools.notes,
+                    "trace": self.tools.log, "error": "操盘手未能给出正式决策"}
 
         d = self.tools.decision
-        event({"event": "decision", "thinking": d.get("thinking") or "",
+        event({"event": "decision", "thinking": d.get("thinking") or narration,
                "reflection": d.get("reflection") or ""})
         return {
             "thinking": d.get("thinking") or "",

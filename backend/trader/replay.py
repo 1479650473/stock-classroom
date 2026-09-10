@@ -374,12 +374,21 @@ def run_replay_batch(run_id: int, days: int = MAX_BATCH,
                 store.add_memory(pid, n["content"], kind=n.get("kind", "note"),
                                  code=n.get("code") or "", decision_id=decision_id)
         done += 1
-        # 5b) 当日结算事件（前端据此刷新净值/持仓/曲线）
+        # 5b) 当日结算事件（前端据此刷新净值/持仓/曲线 + 渲染结算卡片）
+        pos_rows = engine.get_positions(account_id)
         _event(progress, {
             "event": "settled", "date": d, "nav": nav_after,
+            "assets_before": float((ctx.get("account") or {}).get("total_assets", 0) or 0),
             "total_assets": float(s2.get("total_assets", 0) or 0),
             "balance": float(s2.get("balance", 0) or 0),
-            "positions": len(engine.get_positions(account_id)),
+            "positions": len(pos_rows),
+            "positions_detail": [{
+                "code": p.get("code"), "name": p.get("name") or "", "qty": p.get("qty"),
+                "cost_price": p.get("cost_price"), "price": p.get("current_price"),
+                "float_pnl": p.get("float_pnl"),
+                "pnl_pct": (round((p.get("current_price") or 0) / p.get("cost_price") - 1, 4)
+                            if p.get("cost_price") else None),
+            } for p in pos_rows],
             "plan": agent.tools.plan, "executions": agent.tools.executions,
             "thinking": result.get("thinking") or "", "reflection": result.get("reflection") or "",
             "error": result.get("error") or "",

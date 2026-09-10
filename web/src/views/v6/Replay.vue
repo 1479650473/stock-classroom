@@ -40,14 +40,23 @@ const expanded = ref<Record<string, boolean>>({})
 
 // ── 实时流 ──
 interface StreamTool { name: string; args: Record<string, unknown>; result?: string; ok?: boolean }
+interface StreamPos { code: string; name: string; qty: number; cost_price?: number; price?: number; float_pnl?: number; pnl_pct?: number | null }
+interface StreamOrder { code: string; name?: string; side: string; qty: number }
+interface StreamExec { ok?: boolean; detail?: string; price?: number }
+interface StreamSettled {
+  nav?: number; assets_before?: number; total_assets?: number; balance?: number
+  positions?: number; positions_detail?: StreamPos[]
+  plan: StreamOrder[]; executions: StreamExec[]; error?: string
+}
 interface StreamDay {
   date: string; index: number; total: number
   account?: { total_assets?: number; balance?: number }
   positions: number
   text: string
   tools: StreamTool[]
-  decision?: { thinking: string; reflection: string }
-  settled?: { nav?: number; total_assets?: number; positions?: number; plan: unknown[]; executions: unknown[] }
+  decision?: { thinking: string; reflection: string; error?: string }
+  settled?: StreamSettled
+  warning?: string
   status: 'running' | 'settled'
 }
 const liveDays = ref<StreamDay[]>([])
@@ -55,6 +64,41 @@ const liveActive = ref(false)
 const liveJobId = ref<string | null>(null)
 const liveBox = ref<HTMLElement | null>(null)
 let liveClose: (() => void) | null = null
+
+// 树状折叠：月 → 日 → 内容；工具调用再单独折叠。默认只展开最近 3 天。
+const treeOpen = ref<Record<string, boolean>>({})
+function isOpen(key: string, def: boolean) { const v = treeOpen.value[key]; return v === undefined ? def : v }
+function toggleNode(key: string, def: boolean) { treeOpen.value = { ...treeOpen.value, [key]: !isOpen(key, def) } }
+
+const liveMonths = computed(() => {
+  const map = new Map<string, StreamDay[]>()
+  for (const d of liveDays.value) {
+    const m = (d.date || '').slice(0, 7)
+    if (!map.has(m)) map.set(m, [])
+    map.get(m)!.push(d)
+  }
+  return [...map.entries()].map(([month, days]) => ({ month, days }))
+})
+const recentDates = computed(() => new Set(liveDays.value.slice(-3).map((d) => d.date)))
+function dayOpen(d: StreamDay) { return recentDates.value.has(d.date) }
+function monthOpen(m: { month: string; days: StreamDay[] }) { return m.days.some((d) => recentDates.value.has(d.date)) }
+function expandAll() {
+  const m: Record<string, boolean> = {}
+  for (const d of liveDays.value) { m['m:' + d.date.slice(0, 7)] = true; m['d:' + d.date] = true; m['t:' + d.date] = true }
+  treeOpen.value = m
+}
+function collapseAll() {
+  const m: Record<string, boolean> = {}
+  for (const d of liveDays.value) { m['m:' + d.date.slice(0, 7)] = false; m['d:' + d.date] = false; m['t:' + d.date] = false }
+  treeOpen.value = m
+}
+function dayPnl(s?: StreamSettled): number | null {
+  if (!s || s.assets_before == null || s.total_assets == null) return null
+  return s.total_assets - s.assets_before
+}
+function prettyArgs(t: StreamTool) {
+  try { return JSON.stringify(t.args ?? {}, null, 2) } catch { return String(t.args) }
+}
 
 function curDay(): StreamDay | null {
   return liveDays.value.length ? liveDays.value[liveDays.value.length - 1] : null
@@ -101,16 +145,25 @@ function startLive(jobId: string) {
       } else if (ev === 'decision') {
         const d = curDay()
         if (d) d.decision = { thinking: String((frame as Record<string, unknown>).thinking || ''),
-                              reflection: String((frame as Record<string, unknown>).reflection || '') }
+                              reflection: String((frame as Record<string, unknown>).reflection || ''),
+                              error: String((frame as Record<string, unknown>).error || '') }
+      } else if (ev === 'warning') {
+        const d = curDay()
+        if (d) d.warning = String((frame as Record<string, unknown>).message || '')
       } else if (ev === 'settled') {
         const d = curDay()
         if (d) {
+          const f = frame as Record<string, unknown>
           d.settled = {
-            nav: (frame as Record<string, unknown>).nav as number | undefined,
-            total_assets: (frame as Record<string, unknown>).total_assets as number | undefined,
-            positions: (frame as Record<string, unknown>).positions as number | undefined,
-            plan: ((frame as Record<string, unknown>).plan as unknown[]) || [],
-            executions: ((frame as Record<string, unknown>).executions as unknown[]) || [],
+            nav: f.nav as number | undefined,
+            assets_before: f.assets_before as number | undefined,
+            total_assets: f.total_assets as number | undefined,
+            balance: f.balance as number | undefined,
+            positions: f.positions as number | undefined,
+            positions_detail: (f.positions_detail as StreamPos[]) || [],
+            plan: (f.plan as StreamOrder[]) || [],
+            executions: (f.executions as StreamExec[]) || [],
+            error: String(f.error || ''),
           }
           d.status = 'settled'
         }
@@ -278,15 +331,45 @@ function actionSummary(d: TraderDecision) {
   return d.plan.map((o) => `${o.side === 'buy' ? '买' : '卖'} ${o.name || o.code} ${o.qty}`).join(' · ')
 }
 function dayNav(d: TraderDecision) { return d.nav_after }
-function toggle(key: string) { expanded.value[key] = !expanded.value[key] }
 
-watch(expanded, () => {
+// ── 逐日回放：月份 / 日期 树状折叠（默认展开最近 3 天）──
+const histMonths = computed(() => {
+  const map = new Map<string, TraderDecision[]>()
   for (const d of current.value?.decisions || []) {
-    if (expanded.value['d' + d.id]) {
+    const m = (d.trade_date || '').slice(0, 7)
+    if (!map.has(m)) map.set(m, [])
+    map.get(m)!.push(d)
+  }
+  return [...map.entries()].map(([month, items]) => ({ month, items }))
+})
+const histRecent = computed(() => new Set((current.value?.decisions || []).slice(0, 3).map((d) => d.id)))
+function histDayOpen(d: TraderDecision) {
+  const v = expanded.value['d' + d.id]
+  return v === undefined ? histRecent.value.has(d.id) : v
+}
+function toggleHistDay(d: TraderDecision) { expanded.value['d' + d.id] = !histDayOpen(d) }
+function histMonthOpen(month: string) {
+  const v = expanded.value['hm:' + month]
+  if (v !== undefined) return v
+  return (histMonths.value.find((m) => m.month === month)?.items || []).some((d) => histRecent.value.has(d.id))
+}
+function toggleHistMonth(month: string) { expanded.value['hm:' + month] = !histMonthOpen(month) }
+function expandAllHist() {
+  for (const d of current.value?.decisions || []) expanded.value['d' + d.id] = true
+  for (const m of histMonths.value) expanded.value['hm:' + m.month] = true
+}
+function collapseAllHist() {
+  for (const d of current.value?.decisions || []) expanded.value['d' + d.id] = false
+  for (const m of histMonths.value) expanded.value['hm:' + m.month] = false
+}
+
+watch([current, expanded], () => {
+  for (const d of current.value?.decisions || []) {
+    if (histDayOpen(d)) {
       for (const c of dayCodes(d)) loadKline(c, d.trade_date)
     }
   }
-}, { deep: true })
+}, { deep: true, immediate: true })
 
 function dayCodes(d: TraderDecision): string[] {
   const codes = new Set<string>()
@@ -388,41 +471,121 @@ watch([current, navSeries], async () => { await Promise.resolve(); chart.draw() 
         <button class="ui-btn ui-btn--ghost" @click="removeRun(current.profile)"><Icon name="trash" :size="13" /><span>删除</span></button>
       </div>
 
-      <SectionCard v-if="liveActive || liveDays.length" title="实时回放" :desc="liveActive ? '模型正在逐日决策…' : '本次回放过程'">
+      <SectionCard v-if="liveActive || liveDays.length" title="实时回放"
+        :desc="liveActive ? '模型正在逐日决策…' : '本次回放过程 · 按月份 / 日期折叠'">
         <template #actions>
           <span class="live-dot" :class="{ 'is-on': liveActive }" />
           <span class="live-state">{{ liveActive ? '进行中' : '已结束' }}</span>
+          <button class="mini-btn" @click="expandAll">展开全部</button>
+          <button class="mini-btn" @click="collapseAll">折叠全部</button>
         </template>
         <div ref="liveBox" class="live">
-          <div v-for="(day, di) in liveDays" :key="day.date" class="lday">
-            <div class="lday__head">
-              <span class="lday__date">{{ day.date }}</span>
-              <span class="lday__idx">第 {{ day.index }}/{{ day.total }} 天</span>
-              <span v-if="day.account" class="lday__acct">
-                开始前 · 总资产 {{ fmtMoney(day.account.total_assets) }} · 持仓 {{ day.positions }} 只
-              </span>
+          <div v-for="m in liveMonths" :key="m.month" class="tnode">
+            <div class="thead thead--m" @click="toggleNode('m:' + m.month, monthOpen(m))">
+              <Icon :name="isOpen('m:' + m.month, monthOpen(m)) ? 'chevron-down' : 'chevron-right'" :size="15" class="chev" />
+              <span class="tlabel tlabel--m">{{ m.month }}</span>
+              <span class="tmeta">{{ m.days.length }} 个交易日</span>
             </div>
-            <div v-if="day.text" class="lday__text">{{ day.text }}</div>
-            <div v-for="(t, i) in day.tools" :key="i" class="ltool">
-              <Icon name="settings" :size="12" class="ltool__icon" />
-              <span class="ltool__name">{{ toolLabel(t.name) }}</span>
-              <span v-if="toolArgs(t)" class="ltool__args">{{ toolArgs(t) }}</span>
-              <span v-if="t.result !== undefined" class="ltool__res" :class="t.ok ? 'ok' : 'bad'">{{ t.result }}</span>
-            </div>
-            <div v-if="day.decision" class="ldecision">
-              <div class="ldecision__label">模型决策</div>
-              <p class="prose">{{ day.decision.thinking }}</p>
-              <p v-if="day.decision.reflection" class="prose prose--sub">复盘：{{ day.decision.reflection }}</p>
-            </div>
-            <div v-if="day.settled" class="lsettle">
-              <span class="lsettle__tag">当日结算</span>
-              <span>净值 {{ day.settled.nav != null ? Number(day.settled.nav).toFixed(4) : '—' }}</span>
-              <span>总资产 {{ fmtMoney(day.settled.total_assets) }}</span>
-              <span>持仓 {{ day.settled.positions ?? 0 }} 只</span>
-              <span>委托 {{ day.settled.plan.length }} 笔</span>
-            </div>
-            <div class="lday__sep">
-              <span>{{ liveActive && di === liveDays.length - 1 ? '下一日 …' : '下一天' }}</span>
+            <div v-show="isOpen('m:' + m.month, monthOpen(m))" class="tbody">
+              <div v-for="day in m.days" :key="day.date" class="tnode">
+                <div class="thead thead--d" @click="toggleNode('d:' + day.date, dayOpen(day))">
+                  <Icon :name="isOpen('d:' + day.date, dayOpen(day)) ? 'chevron-down' : 'chevron-right'" :size="14" class="chev" />
+                  <span class="tlabel">{{ day.date }}</span>
+                  <span class="tmeta">第 {{ day.index }}/{{ day.total }} 天</span>
+                  <span v-if="day.settled" class="tchip" :class="(day.settled.nav ?? 1) >= 1 ? 'up' : 'down'">
+                    净值 {{ Number(day.settled.nav ?? 1).toFixed(4) }}
+                  </span>
+                  <span v-if="day.account" class="tmeta tmeta--r">
+                    开始前 {{ fmtMoney(day.account.total_assets) }} · 持仓 {{ day.positions }} 只
+                  </span>
+                  <span class="tstate" :class="day.status">{{ day.status === 'running' ? '进行中' : '已结算' }}</span>
+                </div>
+
+                <div v-show="isOpen('d:' + day.date, dayOpen(day))" class="tbody tbody--d">
+                  <!-- 思考过程 -->
+                  <div class="sec">
+                    <div class="sec__label">思考过程</div>
+                    <p class="sec__text">{{ day.text || (day.status === 'running' ? '正在思考…' : '（本次无旁白）') }}</p>
+                  </div>
+
+                  <!-- 最终决策 -->
+                  <div v-if="day.decision" class="dec">
+                    <div class="dec__head"><Icon name="sparkles" :size="13" /><span>最终决策</span></div>
+                    <p class="dec__text">{{ day.decision.thinking || '（本轮未给出决策文本）' }}</p>
+                    <p v-if="day.decision.reflection" class="dec__sub">复盘：{{ day.decision.reflection }}</p>
+                  </div>
+
+                  <div v-if="day.warning || day.decision?.error || day.settled?.error" class="warn">
+                    <Icon name="alert" :size="12" />
+                    <span>{{ day.warning || day.decision?.error || day.settled?.error }}</span>
+                  </div>
+
+                  <!-- 当日结算卡片 -->
+                  <div v-if="day.settled" class="settle">
+                    <div class="settle__top">
+                      <span class="settle__tag"><Icon name="check" :size="12" />当日结算</span>
+                      <span v-if="dayPnl(day.settled) != null" class="settle__pnl"
+                        :class="dayPnl(day.settled)! >= 0 ? 'up' : 'down'">
+                        {{ dayPnl(day.settled)! >= 0 ? '+' : '' }}{{ fmtMoney(dayPnl(day.settled)) }}
+                      </span>
+                    </div>
+                    <div class="settle__grid">
+                      <div class="cell"><span class="cell__k">净值</span>
+                        <span class="cell__v">{{ day.settled.nav != null ? Number(day.settled.nav).toFixed(4) : '—' }}</span></div>
+                      <div class="cell"><span class="cell__k">总资产</span>
+                        <span class="cell__v">{{ fmtMoney(day.settled.total_assets) }}</span></div>
+                      <div class="cell"><span class="cell__k">可用资金</span>
+                        <span class="cell__v">{{ fmtMoney(day.settled.balance) }}</span></div>
+                      <div class="cell"><span class="cell__k">持仓</span>
+                        <span class="cell__v">{{ day.settled.positions ?? 0 }} 只</span></div>
+                    </div>
+                    <div v-if="day.settled.plan.length" class="orders">
+                      <div v-for="(o, i) in day.settled.plan" :key="i" class="order">
+                        <span class="order__side" :class="o.side === 'buy' ? 'up' : 'down'">{{ o.side === 'buy' ? '买入' : '卖出' }}</span>
+                        <span class="order__name">{{ o.name || o.code }}</span>
+                        <span class="order__qty">{{ o.qty }} 股</span>
+                        <span class="order__res" :class="(day.settled.executions || [])[i]?.ok ? 'ok' : 'bad'">
+                          {{ (day.settled.executions || [])[i]?.detail || '未成交' }}
+                        </span>
+                      </div>
+                    </div>
+                    <div v-else class="orders orders--none">当日无委托 · 保持现状</div>
+                    <div v-if="(day.settled.positions_detail || []).length" class="pos">
+                      <span class="cell__k">持仓明细</span>
+                      <div class="pos__list">
+                        <span v-for="p in day.settled.positions_detail" :key="p.code" class="pos__item">
+                          {{ p.name || p.code }} {{ p.qty }}股
+                          <b v-if="p.pnl_pct != null" :class="p.pnl_pct >= 0 ? 'up' : 'down'">{{ fmtPct(p.pnl_pct * 100) }}</b>
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 工具调用（默认折叠） -->
+                  <div v-if="day.tools.length" class="tools">
+                    <div class="tools__head" @click="toggleNode('t:' + day.date, false)">
+                      <Icon :name="isOpen('t:' + day.date, false) ? 'chevron-down' : 'chevron-right'" :size="13" class="chev" />
+                      <span>工具调用 {{ day.tools.length }} 次</span>
+                      <span class="tmeta tmeta--r">展开可查看入参</span>
+                    </div>
+                    <div v-show="isOpen('t:' + day.date, false)" class="tools__list">
+                      <div v-for="(t, i) in day.tools" :key="i" class="tool">
+                        <div class="tool__head" @click="toggleNode('tc:' + day.date + ':' + i, false)">
+                          <Icon :name="isOpen('tc:' + day.date + ':' + i, false) ? 'chevron-down' : 'chevron-right'" :size="12" class="chev" />
+                          <span class="tool__name">{{ toolLabel(t.name) }}</span>
+                          <span class="tool__args">{{ toolArgs(t) }}</span>
+                          <span v-if="t.result !== undefined" class="tool__res" :class="t.ok ? 'ok' : 'bad'">{{ t.result }}</span>
+                        </div>
+                        <pre v-show="isOpen('tc:' + day.date + ':' + i, false)" class="tool__json">{{ prettyArgs(t) }}</pre>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="day-sep">
+                    <span>{{ liveActive && day.date === liveDays[liveDays.length - 1]?.date ? '下一日 …' : '下一天' }}</span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
           <div v-if="!liveDays.length" class="muted">等待第一天开始…</div>
@@ -433,20 +596,31 @@ watch([current, navSeries], async () => { await Promise.resolve(); chart.draw() 
         <div ref="chartEl" class="chart" />
       </SectionCard>
 
-      <SectionCard title="逐日回放" :desc="`共 ${current.decisions.length} 个交易日 · 点击展开当日过程`" :padded="false">
+      <SectionCard title="逐日回放" :desc="`共 ${current.decisions.length} 个交易日 · 按月份 / 日期折叠`" :padded="false">
+        <template #actions>
+          <button class="mini-btn" @click="expandAllHist">展开全部</button>
+          <button class="mini-btn" @click="collapseAllHist">折叠全部</button>
+        </template>
         <div class="days">
-          <div v-for="d in current.decisions" :key="d.id" class="day">
-            <div class="day__head" @click="toggle('d' + d.id)">
+          <template v-for="hm in histMonths" :key="hm.month">
+            <div class="mhead" @click="toggleHistMonth(hm.month)">
+              <Icon :name="histMonthOpen(hm.month) ? 'chevron-down' : 'chevron-right'" :size="14" class="chev" />
+              <span class="mhead__label">{{ hm.month }}</span>
+              <span class="mhead__meta">{{ hm.items.length }} 个交易日</span>
+            </div>
+            <template v-if="histMonthOpen(hm.month)">
+          <div v-for="d in hm.items" :key="d.id" class="day">
+            <div class="day__head" @click="toggleHistDay(d)">
               <span class="day__date">{{ d.trade_date }}</span>
               <span class="tag" :class="d.plan?.length ? 'tag--act' : 'tag--hold'">{{ actionSummary(d) }}</span>
               <span class="day__nav" :class="(dayNav(d) ?? 1) >= 1 ? 'up' : 'down'">
                 {{ dayNav(d) != null ? fmtPct((dayNav(d)! - 1) * 100) : '—' }}
               </span>
               <span class="day__status" :class="d.status">{{ d.status === 'done' ? '已完成' : d.status === 'error' ? '失败' : d.status }}</span>
-              <Icon class="day__chev" :name="expanded['d' + d.id] ? 'chevron-down' : 'chevron-right'" :size="14" />
+              <Icon class="day__chev" :name="histDayOpen(d) ? 'chevron-down' : 'chevron-right'" :size="14" />
             </div>
 
-            <div v-if="expanded['d' + d.id]" class="day__body">
+            <div v-if="histDayOpen(d)" class="day__body">
               <div class="grid2">
                 <div class="block">
                   <div class="block__title">思考过程</div>
@@ -492,6 +666,8 @@ watch([current, navSeries], async () => { await Promise.resolve(); chart.draw() 
               </div>
             </div>
           </div>
+            </template>
+          </template>
         </div>
       </SectionCard>
     </template>
@@ -572,24 +748,83 @@ watch([current, navSeries], async () => { await Promise.resolve(); chart.draw() 
 .live-dot.is-on { background: var(--ok); animation: pulse 1.2s infinite; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 .live-state { font-size: var(--fs-xs); color: var(--text-sub); }
-.live { display: flex; flex-direction: column; gap: var(--sp-3); max-height: 520px; overflow-y: auto; padding-right: 4px; }
-.lday { display: flex; flex-direction: column; gap: 8px; }
-.lday__head { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
-.lday__date { font-size: var(--fs-sm); font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
-.lday__idx { font-size: var(--fs-xs); color: var(--text-faint); }
-.lday__acct { font-size: var(--fs-xs); color: var(--text-sub); margin-left: auto; }
-.lday__text { font-size: var(--fs-sm); line-height: 1.7; color: var(--text); white-space: pre-wrap; }
-.ltool { display: flex; align-items: center; gap: 8px; font-size: var(--fs-xs); color: var(--text-sub); }
-.ltool__icon { color: var(--text-faint); flex: none; }
-.ltool__name { font-weight: 600; color: var(--text); }
-.ltool__args { color: var(--text-faint); }
-.ltool__res { margin-left: auto; }
-.ltool__res.ok { color: var(--ok); }
-.ltool__res.bad { color: var(--up); }
-.ldecision { padding: var(--sp-3); background: var(--panel-2); border-radius: var(--radius-sm); border-left: 3px solid var(--accent); }
-.ldecision__label { font-size: var(--fs-xs); color: var(--accent); font-weight: 600; margin-bottom: 6px; }
-.lsettle { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; font-size: var(--fs-xs); color: var(--text-sub); padding: 8px 12px; background: color-mix(in srgb, var(--ok) 10%, transparent); border-radius: var(--radius-sm); }
-.lsettle__tag { font-weight: 700; color: var(--ok); }
-.lday__sep { display: flex; align-items: center; gap: var(--sp-3); color: var(--text-faint); font-size: var(--fs-xs); margin: var(--sp-2) 0; }
-.lday__sep::before, .lday__sep::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.mini-btn { font-size: var(--fs-xs); color: var(--text-sub); padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; background: transparent; cursor: pointer; }
+.mini-btn:hover { color: var(--text); border-color: var(--text-faint); }
+.live { display: flex; flex-direction: column; gap: 6px; max-height: 560px; overflow-y: auto; padding-right: 4px; }
+
+/* 树状节点 */
+.tnode { display: flex; flex-direction: column; }
+.thead { display: flex; align-items: center; gap: 8px; padding: 7px 10px; cursor: pointer; border-radius: var(--radius-sm); user-select: none; }
+.thead:hover { background: var(--panel-2); }
+.thead--m { background: var(--panel-2); font-weight: 600; }
+.thead--m .tlabel--m { font-size: var(--fs-sm); color: var(--text); }
+.thead--d { border-left: 2px solid transparent; }
+.thead--d:hover { border-left-color: var(--accent); }
+.chev { color: var(--text-faint); flex: none; }
+.tlabel { font-size: var(--fs-sm); color: var(--accent); font-variant-numeric: tabular-nums; font-weight: 700; }
+.tmeta { font-size: var(--fs-xs); color: var(--text-faint); }
+.tmeta--r { margin-left: auto; }
+.tchip { font-size: var(--fs-xs); font-weight: 600; padding: 1px 8px; border-radius: 999px; background: var(--panel-2); }
+.tchip.up { color: var(--up); }
+.tchip.down { color: var(--down); }
+.tstate { font-size: var(--fs-xs); padding: 1px 8px; border-radius: 999px; margin-left: 8px; }
+.tstate.running { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.tstate.settled { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.tbody { display: flex; flex-direction: column; gap: 4px; padding-left: 14px; border-left: 1px dashed var(--border); margin-left: 12px; }
+.tbody--d { gap: 10px; padding: 4px 0 8px 14px; }
+
+/* 思考 / 决策 */
+.sec { display: flex; flex-direction: column; gap: 4px; }
+.sec__label { font-size: var(--fs-xs); font-weight: 600; color: var(--text-faint); letter-spacing: .04em; }
+.sec__text { font-size: var(--fs-sm); line-height: 1.75; color: var(--text); white-space: pre-wrap; margin: 0; }
+.dec { padding: var(--sp-3); background: var(--panel-2); border-radius: var(--radius-sm); border-left: 3px solid var(--accent); display: flex; flex-direction: column; gap: 6px; }
+.dec__head { display: flex; align-items: center; gap: 6px; font-size: var(--fs-xs); font-weight: 700; color: var(--accent); }
+.dec__text { font-size: var(--fs-sm); line-height: 1.75; color: var(--text); white-space: pre-wrap; margin: 0; }
+.dec__sub { font-size: var(--fs-xs); line-height: 1.7; color: var(--text-sub); white-space: pre-wrap; margin: 0; }
+.warn { display: flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); padding: 6px 10px; border-radius: var(--radius-sm); }
+
+/* 当日结算卡片 */
+.settle { border: 1px solid color-mix(in srgb, var(--ok) 35%, var(--border)); border-radius: var(--radius); background: color-mix(in srgb, var(--ok) 7%, transparent); overflow: hidden; }
+.settle__top { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.settle__tag { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); font-weight: 700; color: var(--ok); }
+.settle__pnl { font-size: var(--fs-sm); font-weight: 700; font-variant-numeric: tabular-nums; }
+.settle__grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--border); }
+.settle__grid .cell { display: flex; flex-direction: column; gap: 3px; padding: 10px 14px; background: var(--panel); }
+.cell__k { font-size: var(--fs-xs); color: var(--text-faint); }
+.cell__v { font-size: var(--fs-sm); font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.orders { display: flex; flex-direction: column; gap: 1px; background: var(--border); }
+.orders--none { padding: 10px 14px; font-size: var(--fs-xs); color: var(--text-faint); background: var(--panel); }
+.order { display: flex; align-items: center; gap: 10px; padding: 9px 14px; background: var(--panel); font-size: var(--fs-xs); }
+.order__side { font-weight: 700; }
+.order__name { color: var(--text); font-weight: 600; }
+.order__qty { color: var(--text-sub); }
+.order__res { margin-left: auto; }
+.pos { display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; background: var(--panel); }
+.pos__list { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.pos__item { font-size: var(--fs-xs); color: var(--text-sub); }
+.pos__item b { font-weight: 700; margin-left: 4px; }
+
+/* 工具调用 */
+.tools { display: flex; flex-direction: column; }
+.tools__head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer; border-radius: var(--radius-sm); font-size: var(--fs-xs); color: var(--text-sub); background: var(--panel-2); }
+.tools__head:hover { color: var(--text); }
+.tools__list { display: flex; flex-direction: column; gap: 2px; padding: 6px 0 0 18px; }
+.tool { display: flex; flex-direction: column; }
+.tool__head { display: flex; align-items: center; gap: 8px; padding: 5px 8px; cursor: pointer; border-radius: var(--radius-sm); font-size: var(--fs-xs); }
+.tool__head:hover { background: var(--panel-2); }
+.tool__name { font-weight: 600; color: var(--text); }
+.tool__args { color: var(--text-faint); }
+.tool__res { margin-left: auto; }
+.tool__res.ok { color: var(--ok); }
+.tool__res.bad { color: var(--up); }
+.tool__json { margin: 2px 0 6px 26px; padding: 8px 10px; background: var(--panel-2); border-radius: var(--radius-sm); font-size: 11px; line-height: 1.5; color: var(--text-sub); overflow-x: auto; white-space: pre; }
+
+.day-sep { display: flex; align-items: center; gap: var(--sp-3); color: var(--text-faint); font-size: var(--fs-xs); margin: 6px 0; }
+.day-sep::before, .day-sep::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+/* 逐日回放月份头 */
+.mhead { display: flex; align-items: center; gap: 8px; padding: 9px var(--sp-4); cursor: pointer; background: var(--panel-2); user-select: none; }
+.mhead:hover { background: color-mix(in srgb, var(--accent) 8%, var(--panel-2)); }
+.mhead__label { font-size: var(--fs-sm); font-weight: 700; color: var(--text); }
+.mhead__meta { font-size: var(--fs-xs); color: var(--text-faint); margin-left: auto; }
 </style>

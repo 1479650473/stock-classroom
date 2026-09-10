@@ -27,8 +27,9 @@ _POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="web-job")
 _LOCK = threading.Lock()
 _JOBS: dict = {}          # job_id -> record dict
 _QUEUES: dict = {}        # job_id -> buffered SSE lines (ring)
+_BASE: dict = {}          # job_id -> 已被环缓冲丢弃的行数（绝对下标基准）
 _SIGS: dict = {}          # job_id -> threading.Event
-_KEEP = 400
+_KEEP = 20000             # 每个 job 保留的 SSE 帧上限（LLM 逐日回放会推很多增量帧）
 _JOB_TTL = 6 * 3600      # 完成后的 job 记录保留 6 小时
 _last_prune = 0.0
 
@@ -47,6 +48,7 @@ def _prune():
             _JOBS.pop(jid, None)
             _QUEUES.pop(jid, None)
             _SIGS.pop(jid, None)
+            _BASE.pop(jid, None)
 
 
 def _new_id() -> str:
@@ -63,7 +65,9 @@ def _push(job_id: str, frame: dict, terminal: bool = False):
         q = _QUEUES.setdefault(job_id, [])
         q.append(line)
         if len(q) > _KEEP:
-            del q[: len(q) - _KEEP]
+            drop = len(q) - _KEEP
+            del q[:drop]
+            _BASE[job_id] = _BASE.get(job_id, 0) + drop
         sig = _SIGS.setdefault(job_id, threading.Event())
     sig.set()
     if terminal:
@@ -80,6 +84,7 @@ def submit(kind: str, runner: Callable, payload: Any = None) -> dict:
         "result": None, "error": None,
     }
     _QUEUES[job_id] = []
+    _BASE[job_id] = 0
     _SIGS[job_id] = threading.Event()
 
     try:
@@ -148,14 +153,24 @@ def stream(job_id: str, since: int = 0):
         return
     sig = _SIGS[job_id]
     with _LOCK:
-        replay = list(_QUEUES.get(job_id, []))[since:]
+        # 环缓冲会丢弃最旧的帧：用 base 把绝对下标对齐到当前窗口，
+        # 否则 idx 会永远落在窗口之外、再也读不到新帧（长任务会「卡在第一天」）。
+        base = _BASE.get(job_id, 0)
+        if since < base:
+            since = base
+        replay = list(_QUEUES.get(job_id, []))[since - base:]
         idx = since + len(replay)
     for line in replay:
         yield "data: %s\n\n" % line
     while True:
-        sig.wait(timeout=15.0)
+        # 先清信号再取快照：期间新推的帧要么被本次读取到，要么让 wait 立即返回，
+        # 不会丢帧也不会自旋（Event 不清会永远处于 set 状态，导致空转狂发 ping）。
+        sig.clear()
         with _LOCK:
-            pending = list(_QUEUES.get(job_id, [])[idx:])
+            base = _BASE.get(job_id, 0)
+            if idx < base:
+                idx = base
+            pending = list(_QUEUES.get(job_id, []))[idx - base:]
             idx += len(pending)
         for line in pending:
             yield "data: %s\n\n" % line
@@ -166,7 +181,9 @@ def stream(job_id: str, since: int = 0):
                 "result": cur.get("result"), "error": cur.get("error"),
             })
             break
-        if not pending:
+        if pending:
+            continue
+        if not sig.wait(timeout=15.0):
             yield _sse({"type": "ping", "ts": time.time()})
 
 
