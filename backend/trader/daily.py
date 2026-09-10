@@ -120,13 +120,50 @@ def run_daily_decision(profile_id: Optional[int] = None, trigger: str = "manual"
     store.upsert_decision(
         pid, trade_date, status="done",
         thinking=result.get("thinking") or "", reflection=result.get("reflection") or "",
-        context=ctx, news=(ctx.get("news") or {}), plan=plan, executions=executions,
+        context=ctx, candidates=(ctx.get("candidates") or {}),
+        news=(ctx.get("news") or {}), plan=plan, executions=executions,
         trace=result.get("trace") or [],
         nav_before=nav_before, nav_after=nav_after,
         total_assets_before=ta_before, total_assets_after=ta_after,
         error="", finished_at=datetime.now().isoformat(timespec="seconds"))
     _emit(progress, f"✓ 决策完成，净值 {nav_before} → {nav_after}", 100)
+
+    # 绩效自省（每周五或回撤超阈值）：把真实战绩交给模型，写成 lesson/style
+    try:
+        _maybe_review(pid, trade_date, profile, progress)
+    except Exception as e:
+        _emit(progress, f"绩效自省跳过：{e}")
     return store.get_decision(pid, trade_date) or {}
+
+
+def _maybe_review(pid: int, trade_date: str, profile: dict,
+                  progress: Optional[Callable] = None,
+                  dd_threshold: float = 8.0, every_days: int = 5) -> dict:
+    """自我提升闭环：定期（或回撤超阈值）把真实战绩交给 LLM 自省，写入 lesson/style。"""
+    from ..agent.llm_client import LLMClient
+    from .performance import performance_block, review_trader
+
+    perf = performance_block(pid, int(profile["account_id"]))
+    dd = abs(float(((perf.get("nav") or {}).get("max_drawdown_pct")) or 0))
+    days = int(perf.get("decision_days") or 0)
+    weekly = datetime.strptime(trade_date, "%Y-%m-%d").isoweekday() == 5
+    if not (weekly or dd >= dd_threshold or (every_days and days % every_days == 0)):
+        return {}
+    if not (perf.get("trading") or perf.get("nav")):
+        return {}
+    _emit(progress, "绩效自省中（战绩 → 教训/风格）…", 90)
+    llm = LLMClient(model=profile.get("model") or None)
+    rev = review_trader(llm, perf, list(reversed(store.list_decisions(pid, limit=every_days))))
+    if rev.get("error"):
+        _emit(progress, rev["error"])
+        return rev
+    for lesson in rev.get("lessons") or []:
+        store.add_memory(pid, lesson, kind="lesson")
+    if rev.get("style"):
+        store.add_memory(pid, rev["style"], kind="style")
+    store.upsert_decision(pid, trade_date, review=rev)
+    _emit(progress, f"已写入自省：{len(rev.get('lessons') or [])} 条教训")
+    return rev
 
 
 def run_all_daily_decisions(trigger: str = "manual", force: bool = False,

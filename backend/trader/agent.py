@@ -35,10 +35,14 @@ SYSTEM = (
     "2. 需要更多信息就主动调用工具：查个股新闻、查价格、看候选、看大盘，不要凭空臆测。\n"
     "3. 要买卖就直接调用 place_order（可多次，支持多笔委托）；下单前可用 preview_order 预检。\n"
     "4. 未成交的限价单会冻结资金，可用 cancel_order 撤销。\n"
-    "5. 买入的 reason 会被系统记为该持仓的长期逻辑，请写清理由。\n"
+    "5. 买入的 reason 会被系统记为该持仓的长期逻辑，请写清理由：**如果买的是候选池里的股票，要写出它的排名与得分；"
+    "如果买池外的股票，要说明你为什么不用系统候选**。\n"
     "6. 当你对自己的风格、偏好或方法论有新认识时，调用 remember(kind='style', content=...)，"
     "它会在后续决策中作为「你的自我认知」回给你；可以随时修正。\n"
-    "7. 最后调用 submit_decision 提交 thinking 与 reflection，结束今日决策（不操作时也要调用）。\n"
+    "7. 上下文里的「你的战绩」是你真实的胜率/回撤/盈亏比/连亏记录，「候选池说明」写明了候选股是怎么筛出来的"
+    "（股票池、过滤规则、参与评分数、各组权重）。请先看自己的战绩再决定今天是否要改变打法，"
+    "并在 reflection 里对之前被盈亏证伪的判断做出回应；连续亏损或回撤扩大时必须写下 lesson。\n"
+    "8. 最后调用 submit_decision 提交 thinking 与 reflection，结束今日决策（不操作时也要调用）。\n"
     "\n"
     "全部用中文，数字用工具/上下文里的真实值。"
 )
@@ -54,11 +58,13 @@ def _fmt_context(ctx: dict) -> str:
         "最近净值": ctx.get("nav_history"),
         "市场": ctx.get("market"),
         "候选_多因子": (ctx.get("candidates") or {}).get("picks"),
+        "候选池说明": (ctx.get("candidates") or {}).get("scope_note"),
         "候选_事件": (ctx.get("candidates") or {}).get("events"),
         "热点板块": (ctx.get("candidates") or {}).get("hot_sectors"),
         "市场快讯": (ctx.get("news") or {}).get("market"),
         "个股新闻": (ctx.get("news") or {}).get("stocks"),
         "你的自我风格": (ctx.get("memory") or {}).get("self_style"),
+        "你的战绩": (ctx.get("memory") or {}).get("your_performance"),
         "历史决策": (ctx.get("memory") or {}).get("recent_decisions"),
         "持仓逻辑": (ctx.get("memory") or {}).get("holding_theses"),
         "长期记忆": (ctx.get("memory") or {}).get("notes"),

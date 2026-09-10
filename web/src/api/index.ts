@@ -400,11 +400,28 @@ export interface TraderExecution extends TraderOrder {
 export interface TraderNewsItem { title: string; summary?: string; time?: string; url?: string }
 export interface TraderStockNews { code: string; name: string; news: TraderNewsItem[] }
 export interface TraderTrace { tool: string; args?: Record<string, unknown>; error?: string }
+export interface TraderCandPick { rank: number; code: string; name: string; score: number; groups?: { name: string; weight?: number; score: number }[] }
+export interface TraderCandidates {
+  as_of?: string; chain?: string; universe?: string
+  scorecard?: { name?: string; version?: string; data_window?: number; groups?: { id: string; name: string; weight: number }[] }
+  filters?: { rule: string; on: boolean }[]
+  stats?: Record<string, number>
+  picks?: TraderCandPick[]
+  events?: { code?: string; name?: string; reason?: string }[]
+  hot_sectors?: string[]
+  error?: string
+}
+export interface TraderReview {
+  self_critique?: string; lessons?: string[]; style?: string
+  performance?: Record<string, unknown>
+}
 export interface TraderDecision {
   id: number; profile_id: number; trade_date: string; as_of?: string
   status: 'running' | 'done' | 'error' | 'skipped'; trigger: string
   thinking: string; reflection: string
   context: Record<string, unknown>
+  candidates?: TraderCandidates
+  review?: TraderReview
   news: { market?: TraderNewsItem[]; stocks?: TraderStockNews[] }
   plan: TraderOrder[]; executions: TraderExecution[]
   trace: TraderTrace[]
@@ -481,11 +498,36 @@ export const runTraderAll = (opts: { force?: boolean; dry_run?: boolean } = {}) 
   api.post<JobHandle>('/api/trader/run-all', opts)
 
 // ---- 纵向回放 ----
+export interface TraderPerfClosed {
+  code: string; name: string; buy_date: string; sell_date: string; hold_days: number
+  qty: number; buy_price: number; sell_price: number; pnl: number; pnl_pct: number
+}
+export interface TraderPerformance {
+  as_of?: string
+  decision_days?: number
+  trading?: {
+    closed_count: number; win_count: number; lose_count: number; win_rate_pct: number
+    total_realized_pnl: number; avg_win: number; avg_lose: number
+    profit_loss_ratio: number | null; avg_hold_days: number
+    worst_trade?: TraderPerfClosed; best_trade?: TraderPerfClosed
+    current_streak?: { type: string; count: number }
+  }
+  nav?: {
+    start: number; last: number; cum_return_pct: number; max_drawdown_pct: number
+    best_day_pct: number; worst_day_pct: number; up_days: number; down_days: number
+    day_win_rate_pct: number
+  }
+  open_positions?: { code: string; name: string; qty: number; cost_price: number; price: number; float_pnl: number; float_pnl_pct: number }[]
+  recent_closed?: TraderPerfClosed[]
+  review_prompt?: string
+}
 export interface TraderReplayDetail {
   profile: TraderProfile
   summary: TraderSummary
   nav: TraderNavPoint[]
   decisions: TraderDecision[]
+  performance?: TraderPerformance
+  memory?: TraderMemory[]
 }
 export const getTraderReplays = () => api.get<{ items: TraderProfile[] }>('/api/trader/replays')
 export const createTraderReplay = (fields: {

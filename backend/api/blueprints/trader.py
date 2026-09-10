@@ -299,6 +299,29 @@ def news_preview():
     return ok({"items": news_mod.market_news(limit=limit)})
 
 
+@bp.route("/selection", methods=["GET"])
+def selection_preview():
+    """选股链路审计：候选股从哪来、被什么规则过滤、按什么口径打分。
+
+    参数: date=YYYY-MM-DD 时按该日 as-of 截断（回放/回测），不传则用最新数据。
+    """
+    from backend.trader.selection import build_snapshot
+    ref = request.args.get("date") or None
+    top_n = int_arg(request.args.get("top"), 12, 1, 50)
+    return ok(build_snapshot(ref, top_n=top_n, with_events=not ref))
+
+
+@bp.route("/performance", methods=["GET"])
+def performance():
+    """交易员战绩：胜率/盈亏比/回撤/最近已平仓交易（自我提升的依据）。"""
+    from backend.trader.performance import performance_block
+    p = _require_profile(_pid_arg())
+    if p is None:
+        return err(404, "not_found", "交易员不存在", retriable=False)
+    ref = request.args.get("date") or None
+    return ok(performance_block(int(p["id"]), int(p["account_id"]), as_of=ref))
+
+
 # ───────────────────────── 纵向回放 ─────────────────────────
 
 def _run_replay(payload, on_progress):
@@ -346,8 +369,19 @@ def replay_detail(rid: int):
     nav_rows = [{"date": d, "nav": n, "total_assets": ta}
                 for d, n, ta in zip(nav.get("dates", []), nav.get("nav", []), nav.get("total_assets", []))]
     decisions = store.list_decisions(rid, limit=int_arg(request.args.get("limit"), 60, 1, 400))
+    perf, mem = {}, []
+    try:
+        from backend.trader.performance import performance_block
+        perf = performance_block(rid, int(p["account_id"]))
+    except Exception:
+        perf = {}
+    try:
+        mem = store.list_memory(rid, active_only=True, limit=60)
+    except Exception:
+        mem = []
     return ok({"profile": p, "summary": _summary(p["account_id"]),
-               "nav": nav_rows, "decisions": decisions})
+               "nav": nav_rows, "decisions": decisions,
+               "performance": perf, "memory": mem})
 
 
 @bp.route("/replay/<int:rid>/continue", methods=["POST"])

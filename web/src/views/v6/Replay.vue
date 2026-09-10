@@ -22,6 +22,9 @@ import {
   continueTraderReplay, distillTraderReplay, deleteTraderProfile, getKline,
 } from '@/api'
 import type { TraderProfile, TraderReplayDetail, TraderDecision } from '@/api'
+import type { CandSnapshot } from '@/lib/cands'
+import { candCount } from '@/lib/cands'
+import CandDetail from '@/components/CandDetail.vue'
 
 echarts.use([LineChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer])
 
@@ -57,6 +60,8 @@ interface StreamDay {
   decision?: { thinking: string; reflection: string; error?: string }
   settled?: StreamSettled
   warning?: string
+  candidates?: CandSnapshot
+  review?: { self_critique: string; lessons: string[]; style: string }
   status: 'running' | 'settled'
 }
 const liveDays = ref<StreamDay[]>([])
@@ -96,6 +101,45 @@ function dayPnl(s?: StreamSettled): number | null {
   if (!s || s.assets_before == null || s.total_assets == null) return null
   return s.total_assets - s.assets_before
 }
+// 当日实际操作的股票集合（用于在候选池里标出模型选了哪些）
+function pickedSet(orders?: { code?: string }[]): Set<string> {
+  return new Set((orders || []).map((o) => String(o.code || '')).filter(Boolean))
+}
+function toggleCand(d: TraderDecision) { expanded.value['cd' + d.id] = !expanded.value['cd' + d.id] }
+// 旧决策未记录候选池时返回空数组，不渲染空块
+function candsOf(c?: unknown): CandSnapshot[] {
+  const v = c as CandSnapshot | undefined
+  return v && (v.picks || []).length ? [v] : []
+}
+function reviewFilled(r?: { self_critique?: string; lessons?: string[]; style?: string }) {
+  return !!(r && (r.self_critique || (r.lessons || []).length || r.style))
+}
+// 自我提升记录：优先展示教训/风格/市场观察，最新的在前
+const ownMemories = computed(() => {
+  const order: Record<string, number> = { lesson: 0, style: 1, market: 2, note: 3, thesis: 4, stage: 5 }
+  return [...(current.value?.memory || [])]
+    .sort((a, b) => (order[a.kind] ?? 9) - (order[b.kind] ?? 9) || b.id - a.id)
+    .slice(0, 8)
+})
+function kindLabel(k: string) {
+  return ({ lesson: '教训', style: '风格', market: '市场', note: '笔记', thesis: '持仓逻辑', stage: '阶段总结' } as Record<string, string>)[k] || k
+}
+const perfView = computed(() => {
+  const t = current.value?.performance?.trading
+  const n = current.value?.performance?.nav
+  return {
+    hasNav: !!n,
+    cum: n?.cum_return_pct ?? null,
+    dd: n?.max_drawdown_pct ?? null,
+    dayWin: n?.day_win_rate_pct != null ? `${n.day_win_rate_pct}%` : '—',
+    closed: t?.closed_count ?? 0,
+    winRate: t?.closed_count ? `${t.win_rate_pct}%` : '—',
+    pl: t?.profit_loss_ratio ?? '—',
+    hold: t?.avg_hold_days != null ? `${t.avg_hold_days} 天` : '—',
+    streak: t?.current_streak ? `${t.current_streak.type}${t.current_streak.count} 笔` : '—',
+    streakUp: t?.current_streak?.type === '盈',
+  }
+})
 function prettyArgs(t: StreamTool) {
   try { return JSON.stringify(t.args ?? {}, null, 2) } catch { return String(t.args) }
 }
@@ -129,7 +173,17 @@ function startLive(jobId: string) {
           account: (frame as Record<string, unknown>).account as StreamDay['account'],
           positions: (((frame as Record<string, unknown>).positions as unknown[]) || []).length,
           text: '', tools: [], status: 'running',
+          candidates: (frame as Record<string, unknown>).candidates as CandSnapshot | undefined,
         })
+      } else if (ev === 'review') {
+        const d = curDay()
+        if (d) {
+          d.review = {
+            self_critique: String((frame as Record<string, unknown>).self_critique || ''),
+            lessons: ((frame as Record<string, unknown>).lessons as string[]) || [],
+            style: String((frame as Record<string, unknown>).style || ''),
+          }
+        }
       } else if (ev === 'agent_text') {
         const d = curDay(); if (d) d.text += String((frame as Record<string, unknown>).delta || '')
       } else if (ev === 'tool_call') {
@@ -485,6 +539,37 @@ watch([current, navSeries], async () => { await Promise.resolve(); chart.draw() 
         <button class="ui-btn ui-btn--ghost" @click="removeRun(current.profile)"><Icon name="trash" :size="13" /><span>删除</span></button>
       </div>
 
+      <SectionCard title="战绩与自我提升" desc="模型看到的真实成绩，以及它据此写下的教训">
+        <div v-if="perfView.hasNav" class="perf">
+          <div class="cell"><span class="cell__k">累计收益</span>
+            <span class="cell__v" :class="(perfView.cum ?? 0) >= 0 ? 'up' : 'down'">
+              {{ perfView.cum != null ? perfView.cum + '%' : '—' }}</span></div>
+          <div class="cell"><span class="cell__k">最大回撤</span>
+            <span class="cell__v down">{{ perfView.dd != null ? perfView.dd + '%' : '—' }}</span></div>
+          <div class="cell"><span class="cell__k">已平仓</span>
+            <span class="cell__v">{{ perfView.closed }} 笔</span></div>
+          <div class="cell"><span class="cell__k">胜率</span>
+            <span class="cell__v">{{ perfView.winRate }}</span></div>
+          <div class="cell"><span class="cell__k">盈亏比</span>
+            <span class="cell__v">{{ perfView.pl }}</span></div>
+          <div class="cell"><span class="cell__k">平均持有</span>
+            <span class="cell__v">{{ perfView.hold }}</span></div>
+          <div class="cell"><span class="cell__k">当前连势</span>
+            <span class="cell__v" :class="perfView.streakUp ? 'up' : 'down'">{{ perfView.streak }}</span></div>
+          <div class="cell"><span class="cell__k">日胜率</span>
+            <span class="cell__v">{{ perfView.dayWin }}</span></div>
+        </div>
+        <p v-else class="muted">暂无已平仓交易，积累几笔后这里会给出胜率与盈亏比。</p>
+
+        <div class="memlist" style="margin-top:12px">
+          <div class="block__title">自我提升记录（写入的长期记忆）</div>
+          <div v-for="m in ownMemories" :key="m.id" class="memitem">
+            <span class="mk">{{ kindLabel(m.kind) }}</span><span>{{ m.content }}</span>
+          </div>
+          <div v-if="!ownMemories.length" class="muted">还没有写入任何教训或风格，它在每次决策与每 5 日自省中会持续补充。</div>
+        </div>
+      </SectionCard>
+
       <SectionCard v-if="liveActive || liveDays.length" title="实时回放"
         :desc="liveActive ? '模型正在逐日决策…' : '本次回放过程 · 按月份 / 日期折叠'">
         <template #actions>
@@ -578,6 +663,32 @@ watch([current, navSeries], async () => { await Promise.resolve(); chart.draw() 
                     </div>
                   </div>
 
+                  <!-- 自我复盘（按真实战绩自省，写入长期记忆） -->
+                  <div v-if="day.review" class="review">
+                    <div class="review__head">
+                      <Icon name="sparkles" :size="13" />
+                      <span>自我复盘</span>
+                      <span class="tmeta tmeta--r">按真实战绩自省 · 已写入长期记忆</span>
+                    </div>
+                    <p v-if="day.review.self_critique" class="review__text">{{ day.review.self_critique }}</p>
+                    <ul v-if="day.review.lessons?.length" class="review__lessons">
+                      <li v-for="(l, i) in day.review.lessons" :key="i">{{ l }}</li>
+                    </ul>
+                    <p v-if="day.review.style" class="review__style">风格更新：{{ day.review.style }}</p>
+                  </div>
+
+                  <!-- 选股依据 · 候选池（可审计，默认折叠） -->
+                  <div v-for="c in candsOf(day.candidates)" :key="c.as_of || 'cand'" class="cands">
+                    <div class="tools__head" @click="toggleNode('c:' + day.date, false)">
+                      <Icon :name="isOpen('c:' + day.date, false) ? 'chevron-down' : 'chevron-right'" :size="13" class="chev" />
+                      <span>选股依据 · 候选池 {{ candCount(c) }} 只</span>
+                      <span class="tmeta tmeta--r">基准日 {{ c.as_of || '—' }} · 展开看来源与打分</span>
+                    </div>
+                    <div v-show="isOpen('c:' + day.date, false)" class="cands__body">
+                      <CandDetail :cands="c" :picked="pickedSet(day.settled?.plan)" />
+                    </div>
+                  </div>
+
                   <!-- 工具调用（默认折叠） -->
                   <div v-if="day.tools.length" class="tools">
                     <div class="tools__head" @click="toggleNode('t:' + day.date, false)">
@@ -600,8 +711,7 @@ watch([current, navSeries], async () => { await Promise.resolve(); chart.draw() 
 
                   <div class="day-sep">
                     <span>{{ liveActive && day.date === liveDays[liveDays.length - 1]?.date ? '下一日 …' : '下一天' }}</span>
-                  </div>
-                </div>
+                  </div>                </div>
               </div>
             </div>
           </div>
@@ -665,6 +775,30 @@ watch([current, navSeries], async () => { await Promise.resolve(); chart.draw() 
                     <span>总资产 {{ fmtMoney(d.total_assets_after) }}</span>
                     <span>持仓 {{ (((d.context as Record<string, unknown>)?.positions as unknown[]) || []).length }} 只</span>
                   </div>
+                </div>
+              </div>
+
+              <div v-if="reviewFilled(d.review)" class="review">
+                <div class="review__head">
+                  <Icon name="sparkles" :size="13" />
+                  <span>自我复盘</span>
+                  <span class="tmeta tmeta--r">按真实战绩自省 · 已写入长期记忆</span>
+                </div>
+                <p v-if="d.review?.self_critique" class="review__text">{{ d.review.self_critique }}</p>
+                <ul v-if="d.review?.lessons?.length" class="review__lessons">
+                  <li v-for="(l, i) in d.review.lessons" :key="i">{{ l }}</li>
+                </ul>
+                <p v-if="d.review?.style" class="review__style">风格更新：{{ d.review.style }}</p>
+              </div>
+
+              <div v-for="c in candsOf(d.candidates)" :key="'hc' + d.id" class="cands">
+                <div class="block__title" @click="toggleCand(d)">
+                  <Icon :name="expanded['cd' + d.id] ? 'chevron-down' : 'chevron-right'" :size="13" class="chev" />
+                  <span>选股依据 · 候选池 {{ candCount(c) }} 只</span>
+                  <span class="cmeta">基准日 {{ c.as_of || '—' }}（当时的候选池与打分原文）</span>
+                </div>
+                <div v-if="expanded['cd' + d.id]" class="cands__body">
+                  <CandDetail :cands="c" :picked="pickedSet(d.plan)" compact />
                 </div>
               </div>
 
@@ -826,6 +960,20 @@ watch([current, navSeries], async () => { await Promise.resolve(); chart.draw() 
 
 /* 工具调用 */
 .tools { display: flex; flex-direction: column; }
+.cands { display: flex; flex-direction: column; gap: 6px; }
+.cands__body { padding: 8px 10px 10px 18px; background: var(--panel-2); border-radius: var(--radius-sm); }
+.cmeta { font-size: var(--fs-xs); color: var(--text-faint); margin-left: 8px; }
+.review { padding: var(--sp-3); background: var(--panel-2); border-radius: var(--radius-sm); border-left: 3px solid color-mix(in srgb, var(--accent) 60%, var(--border)); display: flex; flex-direction: column; gap: 6px; }
+.review__head { display: flex; align-items: center; gap: 6px; font-size: var(--fs-xs); font-weight: 700; color: var(--accent); }
+.review__text { font-size: var(--fs-sm); line-height: 1.75; color: var(--text); margin: 0; white-space: pre-wrap; }
+.review__lessons { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
+.review__lessons li { font-size: var(--fs-xs); line-height: 1.7; color: var(--text-sub); }
+.review__style { font-size: var(--fs-xs); line-height: 1.7; color: var(--text-sub); margin: 0; }
+.perf { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 1px; background: var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.perf .cell { display: flex; flex-direction: column; gap: 4px; padding: 10px 14px; background: var(--panel); }
+.memlist { display: flex; flex-direction: column; gap: 4px; }
+.memitem { display: flex; gap: 8px; font-size: var(--fs-xs); line-height: 1.7; color: var(--text-sub); }
+.memitem .mk { flex: 0 0 52px; color: var(--accent); }
 .tools__head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer; border-radius: var(--radius-sm); font-size: var(--fs-xs); color: var(--text-sub); background: var(--panel-2); }
 .tools__head:hover { color: var(--text); }
 .tools__list { display: flex; flex-direction: column; gap: 2px; padding: 6px 0 0 18px; }

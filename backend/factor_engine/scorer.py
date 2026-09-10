@@ -165,7 +165,7 @@ class FactorScorer:
 
     def score_batch(self, db_path, top_n=20, min_klines=10,
                     progress_cb=None, timeout_seconds=0, ref_date=None,
-                    filters=None):
+                    filters=None, stats=None):
         """批量评分所有候选股票
 
         Args:
@@ -176,7 +176,8 @@ class FactorScorer:
             timeout_seconds: 超时秒数（0=不限时）
             ref_date: 参考日期 YYYYMMDD 格式，None=使用最新数据
             filters: 过滤配置 dict，None=使用默认过滤
-            filters: 过滤配置 dict，None=使用默认过滤
+            stats: 传入 dict 时回填候选池统计（universe/scored/skipped_short/failed/truncated），
+                   供选股审计使用
         """
         t0 = time.time()
         candidates = self._get_candidates(db_path)
@@ -188,6 +189,8 @@ class FactorScorer:
         name_map = dict(candidates)
         results = []
         total = len(codes)
+        scored = skipped_short = failed = 0
+        truncated = False
         if not codes:
             return results
 
@@ -197,20 +200,33 @@ class FactorScorer:
 
         for i, code in enumerate(codes):
             if timeout_seconds > 0 and (time.time() - t0) > timeout_seconds:
+                truncated = True
                 break
             klines = all_klines.get(code, [])
             if len(klines) < min_klines:
+                skipped_short += 1
                 continue
             name = name_map.get(code, "?")
             try:
                 score = self.score_stock(code, name, klines)
                 results.append(score)
             except Exception:
+                failed += 1
                 continue
+            scored += 1
             if progress_cb and (i % 100 == 0 or i == total - 1):
                 progress_cb(i, total)
 
         results.sort(key=lambda x: x.total_score, reverse=True)
+        if stats is not None:
+            stats.update({
+                "universe": total,
+                "scored": scored,
+                "skipped_short": skipped_short,
+                "failed": failed,
+                "truncated": truncated,
+                "returned": min(len(results), top_n),
+            })
         return results[:top_n]
 
     def score_custom_list(self, db_path, codes, min_klines=10, ref_date=None, filters=None):

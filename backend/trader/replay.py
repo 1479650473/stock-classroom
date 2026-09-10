@@ -32,6 +32,8 @@ from .agent import TraderAgent
 CAL_FILE = os.path.join(DATA_DIR, "trade_calendar.json")
 HS300_PATH = os.path.join(DATA_DIR, "hs300.json")
 SUMMARY_EVERY = 20      # 每 N 个交易日生成一次阶段总结
+REVIEW_EVERY = 5        # 每 N 个交易日强制做一次绩效自省（写入 lesson/style）
+REVIEW_DD_PCT = 8.0     # 累计回撤超过该值也强制自省
 MAX_BATCH = 30          # 单次回放最多天数
 
 
@@ -182,24 +184,16 @@ def _account_block(account_id: int, as_of: str) -> dict:
 
 
 def _candidates_block(as_of: str, top_n: int = 12) -> dict:
-    try:
-        from ..factor_engine import FactorScorer, DEFAULT_FILTERS
-        scorer = FactorScorer()
-        picks = scorer.score_batch(KLINE_DB, top_n=top_n, min_klines=10,
-                                   timeout_seconds=90, filters=DEFAULT_FILTERS,
-                                   ref_date=as_of.replace("-", ""))
-        return {"picks": [{
-            "code": s.code, "name": s.name,
-            "score": round(float(getattr(s, "total_score", 0)), 2),
-            "groups": [{"name": g.name, "score": round(float(g.weighted_score), 2)}
-                       for g in getattr(s, "groups", [])],
-        } for s in picks], "events": [], "hot_sectors": []}
-    except Exception:
-        return {"picks": [], "events": [], "hot_sectors": []}
+    """回放候选池：按当日 as-of 截断，不附事件池（历史新闻不可回溯）。"""
+    from .selection import build_snapshot
+    return build_snapshot(as_of, top_n=top_n, with_events=False)
 
 
-def _memory_block(profile_id: int, positions: list) -> dict:
+def _memory_block(profile_id: int, positions: list, account_id: int = 0,
+                  as_of: Optional[str] = None) -> dict:
     decisions = store.list_decisions(profile_id, limit=6)
+    if as_of:
+        decisions = [d for d in decisions if (d.get("trade_date") or "") <= as_of]
     history = [{"date": d["trade_date"], "thinking": (d.get("thinking") or "")[:500],
                 "reflection": (d.get("reflection") or "")[:200],
                 "orders": d.get("plan") or [], "executions": d.get("executions") or [],
@@ -219,7 +213,15 @@ def _memory_block(profile_id: int, positions: list) -> dict:
                           "content": m["content"], "at": m["created_at"]})
     held = [{"code": p["code"], "name": p["name"], "thesis": theses.get(p["code"], "")}
             for p in positions]
+    perf = {}
+    if account_id:
+        try:
+            from .performance import performance_block
+            perf = performance_block(int(profile_id), int(account_id), as_of=as_of)
+        except Exception:
+            perf = {}
     return {"self_style": style, "recent_decisions": history, "holding_theses": held,
+            "your_performance": perf,
             "stage_summaries": stages[:3], "notes": notes[:20]}
 
 
@@ -237,7 +239,8 @@ def build_replay_context(profile: dict, as_of: str) -> dict:
         "candidates": _candidates_block(as_of),
         "news": {"market": [], "stocks": [],
                  "note": "回放模式：历史新闻不可回溯，本日无新闻输入，仅凭行情/候选/宏观决策。"},
-        "memory": _memory_block(int(profile["id"]), acct["positions"]),
+        "memory": _memory_block(int(profile["id"]), acct["positions"],
+                                 account_id=account_id, as_of=as_of),
     }
 
 
@@ -304,6 +307,12 @@ def _summarize(llm, decisions: list) -> str:
         return ""
 
 
+def _review_trader(llm, pid: int, perf: dict, decisions: list, as_of: str) -> dict:
+    """强制自省：把战绩 + 最近决策原文交给模型，产出教训与风格并写入长期记忆。"""
+    from .performance import review_trader
+    return review_trader(llm, perf, decisions)
+
+
 def run_replay_batch(run_id: int, days: int = MAX_BATCH,
                      progress: Optional[Callable] = None) -> dict:
     """执行一个回放批次（默认 30 个交易日），可反复调用来续跑。"""
@@ -348,7 +357,9 @@ def run_replay_batch(run_id: int, days: int = MAX_BATCH,
             continue
         _emit(progress, f"[{i}/{len(dates)}] {d} 决策中… 持仓{len(ctx.get('positions') or [])}只", 5 + int(90 * i / len(dates)))
         _event(progress, {"event": "day_start", "date": d, "index": i, "total": len(dates),
-                          "account": ctx.get("account"), "positions": ctx.get("positions")})
+                          "account": ctx.get("account"), "positions": ctx.get("positions"),
+                          "candidates": ctx.get("candidates"),
+                          "performance": (ctx.get("memory") or {}).get("your_performance")})
         # 4) 模型决策（date-aware 工具，流式输出）
         agent = TraderAgent(
             account_id, pid, risk_rules=profile.get("risk_rules"),
@@ -365,7 +376,8 @@ def run_replay_batch(run_id: int, days: int = MAX_BATCH,
         store.upsert_decision(
             pid, d, status=("error" if (result.get("error") and not (result.get("thinking") or agent.tools.plan)) else "done"),
             thinking=result.get("thinking") or "", reflection=result.get("reflection") or "",
-            context=ctx, news=ctx.get("news") or {}, plan=agent.tools.plan,
+            context=ctx, candidates=ctx.get("candidates") or {}, news=ctx.get("news") or {},
+            plan=agent.tools.plan,
             executions=agent.tools.executions, trace=result.get("trace") or [],
             nav_after=nav_after, total_assets_after=float(s2.get("total_assets", 0) or 0),
             error=result.get("error") or "", finished_at=datetime.now().isoformat(timespec="seconds"))
@@ -393,13 +405,35 @@ def run_replay_batch(run_id: int, days: int = MAX_BATCH,
             "thinking": result.get("thinking") or "", "reflection": result.get("reflection") or "",
             "error": result.get("error") or "",
         })
-        # 6) 每 N 日压缩一次阶段总结
-        if done % SUMMARY_EVERY == 0 and llm is not None:
-            recent = store.list_decisions(pid, limit=SUMMARY_EVERY)
-            summary = _summarize(llm, list(reversed(recent)))
-            if summary:
-                store.add_memory(pid, summary, kind="stage")
-                _emit(progress, f"已生成阶段总结（{d}）", 97)
+        # 6) 每 N 日压缩一次阶段总结 + 强制绩效自省（自我提升闭环）
+        if llm is not None:
+            perf = (ctx.get("memory") or {}).get("your_performance") or {}
+            dd = abs(float(((perf.get("nav") or {}).get("max_drawdown_pct")) or 0))
+            need_review = (done % REVIEW_EVERY == 0) or (dd >= REVIEW_DD_PCT)
+            if need_review:
+                _emit(progress, f"{d} 绩效自省中（战绩 → 教训/风格）…", 96)
+                rev = _review_trader(llm, pid, perf,
+                                     list(reversed(store.list_decisions(pid, limit=REVIEW_EVERY))),
+                                     d)
+                if rev.get("error"):
+                    _event(progress, {"event": "warning", "date": d, "message": rev["error"]})
+                else:
+                    for lesson in rev.get("lessons") or []:
+                        store.add_memory(pid, lesson, kind="lesson", decision_id=decision_id)
+                    if rev.get("style"):
+                        store.add_memory(pid, rev["style"], kind="style", decision_id=decision_id)
+                    store.upsert_decision(pid, d, review=rev)
+                    _event(progress, {"event": "review", "date": d,
+                                      "self_critique": rev.get("self_critique") or "",
+                                      "lessons": rev.get("lessons") or [],
+                                      "style": rev.get("style") or "",
+                                      "performance": perf})
+            if done % SUMMARY_EVERY == 0:
+                recent = store.list_decisions(pid, limit=SUMMARY_EVERY)
+                summary = _summarize(llm, list(reversed(recent)))
+                if summary:
+                    store.add_memory(pid, summary, kind="stage")
+                    _emit(progress, f"已生成阶段总结（{d}）", 97)
         # 7) 推进游标
         nxt = trading_days(d, limit=2)
         meta["cursor"] = nxt[1] if len(nxt) > 1 else d

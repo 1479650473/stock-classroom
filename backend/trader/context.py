@@ -175,32 +175,9 @@ def build_market_block() -> dict:
 
 
 def build_candidates_block(top_n: int = 12) -> dict:
-    """候选池：多因子评分 Top N + 事件驱动池（都失败则空）。"""
-    out = {"picks": [], "events": []}
-    try:
-        from ..factor_engine import FactorScorer, DEFAULT_FILTERS
-        scorer = FactorScorer()
-        picks = scorer.score_batch(KLINE_DB, top_n=top_n, min_klines=10,
-                                   timeout_seconds=90, filters=DEFAULT_FILTERS)
-        out["picks"] = [{
-            "code": s.code, "name": s.name,
-            "score": round(float(getattr(s, "total_score", 0)), 2),
-            "groups": [{"name": g.name, "score": round(float(g.weighted_score), 2)}
-                       for g in getattr(s, "groups", [])],
-        } for s in picks]
-    except Exception:
-        pass
-    try:
-        with open(NEWS_DRIVEN_PATH, encoding="utf-8") as f:
-            nd = json.load(f)
-        out["events"] = [{
-            "code": e.get("code"), "name": e.get("name"),
-            "reason": e.get("reason") or e.get("tag") or "",
-        } for e in (nd.get("entries") or [])[:top_n]]
-        out["hot_sectors"] = nd.get("hot_sectors") or []
-    except Exception:
-        pass
-    return out
+    """候选池（实时）：多因子评分 Top N + 事件驱动池 + 完整选股链路口径。"""
+    from .selection import build_snapshot
+    return build_snapshot(None, top_n=top_n, with_events=True)
 
 
 # ───────────────────────── 新闻 ─────────────────────────
@@ -228,7 +205,9 @@ def build_news_block(positions: List[dict], picks: List[dict],
 
 # ───────────────────────── 历史记忆 ─────────────────────────
 
-def build_memory_block(profile_id: int, positions: List[dict], limit: int = 8) -> dict:
+def build_memory_block(profile_id: int, positions: List[dict], limit: int = 8,
+                       account_id: Optional[int] = None,
+                       as_of: Optional[str] = None) -> dict:
     decisions = store.list_decisions(profile_id, limit=limit)
     history = []
     for d in decisions:
@@ -252,10 +231,18 @@ def build_memory_block(profile_id: int, positions: List[dict], limit: int = 8) -
             style = m["content"]
     held = [{"code": p["code"], "name": p["name"], "thesis": theses.get(p["code"], "")}
             for p in positions]
+    perf = {}
+    if account_id:
+        try:
+            from .performance import performance_block
+            perf = performance_block(int(profile_id), int(account_id), as_of=as_of)
+        except Exception:
+            perf = {}
     return {
         "self_style": style,
         "recent_decisions": history,
         "holding_theses": held,
+        "your_performance": perf,
         "notes": [{"kind": m["kind"], "code": m.get("code") or "",
                    "content": m["content"], "at": m["created_at"]}
                   for m in mem if m["kind"] not in ("thesis", "style")][:20],
@@ -273,7 +260,8 @@ def build_daily_context(profile: dict, with_candidates: bool = True,
     cands = build_candidates_block() if with_candidates else {"picks": [], "events": []}
     news_block = (build_news_block(acct["positions"], cands.get("picks", []))
                   if with_news else {"market": [], "stocks": []})
-    memory = build_memory_block(int(profile["id"]), acct["positions"])
+    memory = build_memory_block(int(profile["id"]), acct["positions"],
+                                account_id=int(profile["account_id"]))
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "profile": {

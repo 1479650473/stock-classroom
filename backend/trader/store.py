@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS trader_decision(
     thinking TEXT DEFAULT '',
     reflection TEXT DEFAULT '',
     context TEXT DEFAULT '{}',
+    candidates TEXT DEFAULT '{}',
+    review TEXT DEFAULT '{}',
     news TEXT DEFAULT '[]',
     plan TEXT DEFAULT '[]',
     executions TEXT DEFAULT '[]',
@@ -92,6 +94,10 @@ def ensure_schema() -> None:
         cols = {r[1] for r in con.execute("PRAGMA table_info(trader_decision)")}
         if "trace" not in cols:
             con.execute("ALTER TABLE trader_decision ADD COLUMN trace TEXT DEFAULT '[]'")
+        if "candidates" not in cols:
+            con.execute("ALTER TABLE trader_decision ADD COLUMN candidates TEXT DEFAULT '{}'")
+        if "review" not in cols:
+            con.execute("ALTER TABLE trader_decision ADD COLUMN review TEXT DEFAULT '{}'")
         pcols = {r[1] for r in con.execute("PRAGMA table_info(trader_profile)")}
         if "model" not in pcols:
             con.execute("ALTER TABLE trader_profile ADD COLUMN model TEXT DEFAULT ''")
@@ -117,8 +123,8 @@ def _loads(v: Any, default):
 
 def _decision_to_dict(row: sqlite3.Row) -> dict:
     d = dict(row)
-    for k, default in (("context", {}), ("news", []), ("plan", []),
-                       ("executions", []), ("trace", [])):
+    for k, default in (("context", {}), ("candidates", {}), ("review", {}), ("news", []),
+                       ("plan", []), ("executions", []), ("trace", [])):
         d[k] = _loads(d.get(k), default)
     return d
 
