@@ -46,17 +46,20 @@ Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
 | 文件 | 作用 |
 |------|------|
 | `account.py` | 交易员档案/账户生命周期：`ensure_profile`(兼容单例) / `create_trader` / `delete_trader` / `list_traders`；`trader_engine()` 解除项目级单票 30% 限制 |
-| `store.py` | `data/ai_trader.db`: `trader_profile`(含 model) / `trader_decision`(含 trace) / `trader_memory` (轻量迁移) |
+| `store.py` | `data/ai_trader.db`: `trader_profile`(含 model/kind/meta) / `trader_decision`(含 trace/candidates/review) / `trader_memory` (轻量迁移) |
 | `news.py` | 东财全球财经 + 个股新闻 (豆包可选)，按日缓存、失败降级 |
-| `context.py` | 每日上下文: 账户/持仓(持有天数)/待成交委托/净值/regime/沪深300/候选/事件池/新闻/历史决策/自我风格 |
+| `context.py` | 每日上下文: 账户/持仓(持有天数)/待成交委托/净值/regime/沪深300/候选/事件池/新闻/历史决策/自我风格/你的战绩 |
 | `tools.py` | 13 工具: 查询 + `preview_order` + **`place_order`(直接下单)** + `cancel_order` + `remember` + `submit_decision` |
 | `agent.py` | TraderAgent: LLM tool-calling 循环，产出思考/复盘 + 工具轨迹；支持 profile 级 model |
-| `daily.py` | `run_daily_decision(profile_id)` 单交易员；`run_all_daily_decisions()` 遍历所有 enabled；同日幂等 |
+| `daily.py` | `run_daily_decision(profile_id)` 单交易员；`run_all_daily_decisions()` 遍历所有 enabled；同日幂等；`_maybe_review()` 周五/回撤≥8% 触发绩效自省 |
+| `selection.py` | 选股链路审计: `build_snapshot(ref_date, top_n, with_events)` 输出股票池来源/生效与未生效过滤/评分卡窗口与五组权重/筛选漏斗/候选及分项得分；`compact_note()` 给模型看的候选池说明。候选池随决策落库，事后可核对 |
+| `performance.py` | 战绩与自我提升: `performance_block()` 按 FIFO 配对成交算胜率/盈亏比/平均持有/连势/累计收益/最大回撤/日胜率；`performance_summary_text()` 注入上下文；`review_trader()` 强制自省产出 self_critique/lessons/style |
 
 - **规则归系统**: 本金固定与 A 股规则**不写进提示词**，由 TradeEngine 强制执行，违规返回错误让模型自行调整（像用券商软件）。
 - **风格自定**: 无预设人设；AI 把自我认知写入 `kind='style'` 长期记忆（同类只保留最新 active），持仓逻辑 `kind='thesis'`，另有 `lesson`/`note`/`market`。
 - **触发**: `update_daily.py` 第⑨步（对每个 enabled 档案逐个跑）+ `/api/trader/run`（单交易员）/ `/api/trader/run-all`（全部启用）。
-- **API**: `/api/trader/{profiles,overview,state,profile,decisions,memory,run,run-all,news}`（state/decisions/memory/run 按 `profile_id`）。
+- **API**: `/api/trader/{profiles,overview,state,profile,decisions,memory,run,run-all,news,selection,performance}`（state/decisions/memory/run 按 `profile_id`；`selection` 支持 `date=` 按历史日 as-of 审计选股口径；`performance` 返回战绩明细）。
+- **自我提升闭环**: 模型上下文有「你的战绩」（真实胜率/回撤/盈亏比/连势），先看数据再决定是否改变打法；每 5 个交易日（回放）或周五/回撤≥8%（实盘）强制把战绩+逐日决策原文交给 LLM 自省，产出 `self_critique`/`lessons`/`style`，存 `trader_decision.review` 并写入 `kind='lesson'/'style'` 长期记忆。前端「战绩与自我提升」面板 + 每日「选股依据·候选池」「自我复盘」卡片。
 - **纵向回放** (`replay.py`): 让交易员在过去数据里逐日无前视模拟。as-of 上下文（K线/regime/候选全部 `date<=D`，历史新闻不可回溯故标注不可用）；date-aware 工具按历史日成交/结算；游标存 `profile.meta.cursor`，每次最多 30 天可续跑；每 20 日 LLM 生成一次阶段总结（`kind='stage'`）压缩上下文；`distill_to_live()` 把回放风格/教训/笔记回流到源交易员。API `/api/trader/{replays,replay,replay/<id>/continue,replay/<id>/distill}`。前端 AI 页「AI 操盘手 → 纵向回放」。
 
 ## Key Files
@@ -67,6 +70,8 @@ Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
 | Web | `web/src/views/v6/TraderHub.vue` | AI 操盘手容器：交易员切换/新建/删除 + 总览/详情 |
 | Web | `web/src/views/v6/TraderOverview.vue` | 总览对比：净值曲线 vs 沪深300 + 对比表 |
 | Web | `web/src/views/v6/Trader.vue` | 单个交易员详情页 |
+| Web | `web/src/views/v6/Replay.vue` | 纵向回放：实时逐日流 + 月/日折叠树 + 候选池/自我复盘/战绩面板 |
+| Web | `web/src/components/CandDetail.vue` | 选股依据明细（来源/过滤/评分口径/候选表/事件池） |
 | Backend | `backend/data_manager.py` | SQLite CRUD, AKShare dispatch, update_pool |
 | Backend | `backend/akshare_source.py` | ~18 API wrappers + 3源回退 + 硬超时 |
 | Backend | `backend/paper_worker.py` | 纸面盘 (原 frontend.plugins.research.worker 迁入) |
