@@ -239,7 +239,12 @@ onMounted(async () => {
   const running = jobs.byKind('trader_replay').find((j) => j.status === 'running' || j.status === 'queued')
   if (running) startLive(running.id)
 })
-watch(currentId, () => loadDetail())
+watch(currentId, () => {
+  // 切换回放时清空折叠状态：expanded 的键（hm:2024-02 / d<id>）会被不同回放共用，
+  // 不清空就会出现「月份折叠后里面的日期永远不出现」的串档问题
+  expanded.value = {}
+  loadDetail()
+})
 watch(
   () => jobs.byKind('trader_replay').map((j) => `${j.id}:${j.doneTick || 0}:${j.status}`).join('|'),
   (v, o) => { if (v !== o) { loadRuns().then(() => loadDetail(true)) } },
@@ -267,6 +272,7 @@ async function create() {
     await loadRuns()
     currentId.value = r.profile.id
     liveDays.value = []
+    treeOpen.value = {}
     jobs.attach(r.job.job_id)
     startLive(r.job.job_id)
   } catch (e) {
@@ -282,6 +288,7 @@ async function cont() {
     const r = await continueTraderReplay(currentId.value, 30)
     jobs.attach(r.job.job_id)
     liveDays.value = []
+    treeOpen.value = {}
     startLive(r.job.job_id)
     toast.success('继续回放中…')
   } catch (e) {
@@ -331,6 +338,13 @@ function actionSummary(d: TraderDecision) {
   return d.plan.map((o) => `${o.side === 'buy' ? '买' : '卖'} ${o.name || o.code} ${o.qty}`).join(' · ')
 }
 function dayNav(d: TraderDecision) { return d.nav_after }
+
+// 月份头部日期范围提示（折叠时也能看出里面有哪些交易日）
+function rangeHint(dates: string[]) {
+  const s = dates.filter(Boolean).sort()
+  if (!s.length) return ''
+  return s.length > 1 ? `${s[0].slice(5)} ~ ${s[s.length - 1].slice(5)}` : s[0].slice(5)
+}
 
 // ── 逐日回放：月份 / 日期 树状折叠（默认展开最近 3 天）──
 const histMonths = computed(() => {
@@ -485,6 +499,9 @@ watch([current, navSeries], async () => { await Promise.resolve(); chart.draw() 
               <Icon :name="isOpen('m:' + m.month, monthOpen(m)) ? 'chevron-down' : 'chevron-right'" :size="15" class="chev" />
               <span class="tlabel tlabel--m">{{ m.month }}</span>
               <span class="tmeta">{{ m.days.length }} 个交易日</span>
+              <span v-if="!isOpen('m:' + m.month, monthOpen(m))" class="tmeta tmeta--dim">
+                {{ rangeHint(m.days.map((d) => d.date)) }}
+              </span>
             </div>
             <div v-show="isOpen('m:' + m.month, monthOpen(m))" class="tbody">
               <div v-for="day in m.days" :key="day.date" class="tnode">
@@ -606,7 +623,9 @@ watch([current, navSeries], async () => { await Promise.resolve(); chart.draw() 
             <div class="mhead" @click="toggleHistMonth(hm.month)">
               <Icon :name="histMonthOpen(hm.month) ? 'chevron-down' : 'chevron-right'" :size="14" class="chev" />
               <span class="mhead__label">{{ hm.month }}</span>
-              <span class="mhead__meta">{{ hm.items.length }} 个交易日</span>
+              <span class="mhead__meta">{{ hm.items.length }} 个交易日
+                <span class="mhead__range">{{ rangeHint(hm.items.map((d) => d.trade_date)) }}</span>
+              </span>
             </div>
             <template v-if="histMonthOpen(hm.month)">
           <div v-for="d in hm.items" :key="d.id" class="day">
@@ -763,6 +782,7 @@ watch([current, navSeries], async () => { await Promise.resolve(); chart.draw() 
 .chev { color: var(--text-faint); flex: none; }
 .tlabel { font-size: var(--fs-sm); color: var(--accent); font-variant-numeric: tabular-nums; font-weight: 700; }
 .tmeta { font-size: var(--fs-xs); color: var(--text-faint); }
+.tmeta--dim { color: var(--text-faint); opacity: .75; }
 .tmeta--r { margin-left: auto; }
 .tchip { font-size: var(--fs-xs); font-weight: 600; padding: 1px 8px; border-radius: 999px; background: var(--panel-2); }
 .tchip.up { color: var(--up); }
@@ -826,5 +846,6 @@ watch([current, navSeries], async () => { await Promise.resolve(); chart.draw() 
 .mhead { display: flex; align-items: center; gap: 8px; padding: 9px var(--sp-4); cursor: pointer; background: var(--panel-2); user-select: none; }
 .mhead:hover { background: color-mix(in srgb, var(--accent) 8%, var(--panel-2)); }
 .mhead__label { font-size: var(--fs-sm); font-weight: 700; color: var(--text); }
-.mhead__meta { font-size: var(--fs-xs); color: var(--text-faint); margin-left: auto; }
+.mhead__meta { font-size: var(--fs-xs); color: var(--text-faint); margin-left: auto; display: inline-flex; gap: 8px; }
+.mhead__range { color: var(--text-faint); opacity: .75; font-variant-numeric: tabular-nums; }
 </style>
