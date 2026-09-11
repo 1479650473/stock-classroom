@@ -74,6 +74,9 @@ def create_app():
     # 因子挖掘 (公式搜索 + 回测奖励, AlphaGPT 式)
     from .blueprints import alpha
     app.register_blueprint(alpha.bp)
+    # ETF (全市场列表/单只K线/多只归一化对比)
+    from .blueprints import etf
+    app.register_blueprint(etf.bp)
     # Agent Gateway v1 (/api/agent/v1) — 能力分级 R/W/B/T + 审计/幂等/限流，供外部 agent/MCP 调用
     from backend.agent.routes import register as register_agent_gateway
     register_agent_gateway(app)

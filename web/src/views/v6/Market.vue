@@ -11,12 +11,13 @@ import EmptyGuide from '@/components/ui/EmptyGuide.vue'
 import LoadingBlock from '@/components/ui/LoadingBlock.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import KlineChart from '@/components/charts/KlineChart.vue'
+import EtfPanel from '@/components/EtfPanel.vue'
 import Icon from '@/components/Icon.vue'
-import { getIndices, getSectors, getNorthFlow, getKline } from '@/api'
+import { getIndices, getSectors, getNorthFlow, getKline, searchStock } from '@/api'
 import type { IndexQuote, KlineBar, StockRef } from '@/api'
 import { usePersistedRef } from '@/composables/usePersistedRef'
 
-type Tab = 'market' | 'stock'
+type Tab = 'market' | 'stock' | 'etf'
 
 const route = useRoute()
 const router = useRouter()
@@ -24,12 +25,13 @@ const router = useRouter()
 const TABS = [
   { value: 'market', label: '市场', icon: 'market' },
   { value: 'stock', label: '个股', icon: 'kline' },
+  { value: 'etf', label: 'ETF', icon: 'kline' },
 ]
 
-const tab = ref<Tab>(route.query.tab === 'stock' ? 'stock' : 'market')
+const tab = ref<Tab>(route.query.tab === 'stock' ? 'stock' : route.query.tab === 'etf' ? 'etf' : 'market')
 // 记住上次查看的股票与周期，下次打开自动恢复
 const code = usePersistedRef('market.code', String(route.query.code || ''))
-const stockName = ref('')
+const stockName = ref(String(route.query.name || ''))
 const days = usePersistedRef('market.days', '250')
 
 const indices = ref<IndexQuote[]>([])
@@ -43,7 +45,6 @@ const klineLoading = ref(false)
 const klineError = ref('')
 
 const lastBar = computed(() => kline.value[kline.value.length - 1] ?? null)
-const firstBar = computed(() => kline.value[0] ?? null)
 
 /** YYYYMMDD -> YYYY-MM-DD (lightweight-charts 要求) */
 function lwcTime(d: string): string {
@@ -60,8 +61,8 @@ const lwcBars = computed(() =>
   })),
 )
 const changePct = computed(() => {
-  if (!lastBar.value || !firstBar.value) return 0
-  const prev = firstBar.value.close
+  if (!lastBar.value || kline.value.length < 2) return 0
+  const prev = kline.value[kline.value.length - 2].close
   return prev ? ((lastBar.value.close - prev) / prev) * 100 : 0
 })
 
@@ -108,6 +109,17 @@ function onPick(s: StockRef) {
   loadKline()
 }
 
+async function resolveStockName() {
+  if (!code.value || stockName.value) return
+  try {
+    const rows = await searchStock(code.value)
+    const hit = rows.find((r) => r.code === code.value)
+    if (hit?.name) stockName.value = hit.name
+  } catch {
+    /* 名称解析失败不影响 K 线展示 */
+  }
+}
+
 function onSubmit(c: string) {
   if (!c) return
   code.value = c
@@ -125,13 +137,19 @@ watch(
     if (q.tab === 'stock' && tab.value !== 'stock') tab.value = 'stock'
     if (q.code && String(q.code) !== code.value) {
       code.value = String(q.code)
+      stockName.value = String(q.name || '')
       tab.value = 'stock'
       loadKline()
+      resolveStockName()
     }
   },
 )
 
 function fmtPct(v: number) { return (v >= 0 ? '+' : '') + v.toFixed(2) + '%' }
+function fmtNum(v: number) {
+  const n = Math.abs(v) < 0.005 ? 0 : v
+  return n.toFixed(2)
+}
 
 const sectorColumns: DataColumn[] = [
   { key: 'name', title: '板块' },
@@ -144,7 +162,14 @@ const northColumns: DataColumn[] = [
 ]
 
 const klineColumns: DataColumn[] = [
-  { key: 'date', title: '日期' },
+  {
+    key: 'date',
+    title: '日期',
+    format: (r) => {
+      const s = String(r.date || '')
+      return /^\d{8}$/.test(s) ? `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}` : s
+    },
+  },
   { key: 'open', title: '开盘', align: 'right', format: (r) => Number(r.open).toFixed(2) },
   { key: 'high', title: '最高', align: 'right', format: (r) => Number(r.high).toFixed(2) },
   { key: 'low', title: '最低', align: 'right', format: (r) => Number(r.low).toFixed(2) },
@@ -156,7 +181,10 @@ const klineRows = computed(() => [...kline.value].reverse() as unknown as Record
 
 onMounted(() => {
   loadMarket()
-  if (code.value) loadKline()
+  if (code.value) {
+    loadKline()
+    resolveStockName()
+  }
 })
 </script>
 
@@ -176,7 +204,12 @@ onMounted(() => {
       <div style="padding: 0 var(--sp-5)">
         <PageToolbar v-model="tab" :tabs="TABS">
           <template #extra>
-            <SegmentedControl v-if="tab === 'stock'" v-model="days" size="sm" :options="DAY_OPTIONS" />
+            <SegmentedControl
+              v-if="tab === 'stock'"
+              v-model="days"
+              size="sm"
+              :options="DAY_OPTIONS"
+            />
           </template>
         </PageToolbar>
       </div>
@@ -216,7 +249,7 @@ onMounted(() => {
               </DataTable>
             </div>
             <div>
-              <h3 class="sub-title">北向资金（近 30 日）</h3>
+              <h3 class="sub-title">北向资金（历史，2024-08 后停更）</h3>
               <DataTable
                 :columns="northColumns"
                 :rows="north.slice(0, 15)"
@@ -226,7 +259,7 @@ onMounted(() => {
               >
                 <template #cell-net_flow="{ row }">
                   <span :class="Number(row.net_flow) >= 0 ? 'up' : 'down'">
-                    {{ (Number(row.net_flow) / 1e8).toFixed(2) }}
+                    {{ fmtNum(Number(row.net_flow)) }}
                   </span>
                 </template>
               </DataTable>
@@ -236,7 +269,7 @@ onMounted(() => {
       </div>
 
       <!-- 个股 -->
-      <div v-else class="pane">
+      <div v-else-if="tab === 'stock'" class="pane">
         <EmptyGuide
           v-if="!code && !kline.length"
           icon="kline"
@@ -251,7 +284,7 @@ onMounted(() => {
           <div class="stock-head">
             <div>
               <span class="stock-head__name">{{ stockName || code }}</span>
-              <span class="stock-head__code num">{{ code }}</span>
+              <span v-if="stockName && stockName !== code" class="stock-head__code num">{{ code }}</span>
             </div>
             <div class="stock-head__quote">
               <span class="stock-head__price num">{{ lastBar?.close.toFixed(2) }}</span>
@@ -270,6 +303,11 @@ onMounted(() => {
             />
           </div>
         </template>
+      </div>
+
+      <!-- ETF -->
+      <div v-else-if="tab === 'etf'" class="pane">
+        <EtfPanel />
       </div>
     </SectionCard>
   </AppPage>

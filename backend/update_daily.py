@@ -427,6 +427,17 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
         except Exception as e:
             out['steps']['macro'] = str(e)[:100]
             lg.warning('  宏观数据失败: %s', str(e)[:80])
+        # ⑫ ETF 数据: 列表刷新 + 新 ETF 全历史首拉 + 存量增量补缺(全市场 ~1600 只)
+        try:
+            from data_manager import init_etf_tables, cache_etf_list_from_akshare, update_etf_kline
+            init_etf_tables()
+            _n_list = cache_etf_list_from_akshare()
+            _rk = update_etf_kline(workers=10, progress=lambda m, p=None: lg.info('  ETF ' + str(m)))
+            out['steps']['etf'] = {'list': _n_list, **{k: _rk.get(k) for k in ('updated', 'errors', 'rows_added', 'total', 'elapsed')}}
+            lg.info('  ETF: 列表%d 更新%s 新增%d行 失败%d', _n_list, _rk.get('updated'), _rk.get('rows_added'), _rk.get('errors'))
+        except Exception as e:
+            out['steps']['etf'] = str(e)[:120]
+            lg.warning('  ETF 数据失败: %s', str(e)[:80])
 
     out['finished'] = datetime.now().isoformat(timespec='seconds')
     out['elapsed'] = round(time.time() - t0, 1)

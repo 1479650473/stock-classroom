@@ -901,6 +901,152 @@ def cache_sectors_from_akshare():
     log.info("cached %d sector rows", total)
     return total
 
+# ════════════════════════════════════════════════════════
+#  ETF 数据 (etf_list 全市场列表 + etf_daily 全历史K线, 独立表不并入 kline_daily)
+# ════════════════════════════════════════════════════════
+def init_etf_tables():
+    conn = get_kline_db()
+    conn.execute("""CREATE TABLE IF NOT EXISTS etf_list (
+        code TEXT PRIMARY KEY, name TEXT, type TEXT, updated_at TEXT)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS etf_daily (
+        code TEXT, date TEXT, open REAL, high REAL, low REAL, close REAL,
+        volume INTEGER, amount REAL, turnover REAL DEFAULT 0,
+        PRIMARY KEY (code, date))""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_etf_daily_code ON etf_daily(code, date)")
+    conn.commit()
+    conn.close()
+
+
+def cache_etf_list_from_akshare() -> int:
+    """全市场 ETF 列表落库(东财 spot, ~1600 只)."""
+    from akshare_source import ak_get_etf_list
+    data = ak_get_etf_list() or []
+    if not data:
+        return 0
+    conn = get_kline_db()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for d in data:
+        conn.execute("INSERT OR REPLACE INTO etf_list (code, name, type, updated_at) VALUES (?,?,?,?)",
+                     (str(d.get("code", "")), str(d.get("name", "")),
+                      str(d.get("type", "") or ""), now))
+    conn.commit()
+    conn.close()
+    log.info("cached %d etf list rows", len(data))
+    return len(data)
+
+
+def get_etf_list(search: str = "", etype: str = "") -> List[Dict]:
+    conn = get_kline_db()
+    sql = "SELECT * FROM etf_list WHERE 1=1"
+    params = []
+    if search:
+        sql += " AND (code LIKE ? OR name LIKE ?)"
+        params += [f"%{search}%", f"%{search}%"]
+    if etype:
+        sql += " AND type = ?"
+        params.append(etype)
+    sql += " ORDER BY code"
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_etf_kline(code: str, days: int = 250) -> List[Dict]:
+    conn = get_kline_db()
+    rows = conn.execute(
+        "SELECT date, open, high, low, close, volume, amount, turnover FROM etf_daily "
+        "WHERE code=? ORDER BY date DESC LIMIT ?", (code, days)).fetchall()
+    conn.close()
+    out = [dict(r) for r in reversed(rows)]
+    return out
+
+
+def get_etf_compare(codes: List[str], days: int = 250) -> dict:
+    """多只 ETF 归一化对比(各自首日 close=1). 返回 {dates, series: [{code, name, values}]}."""
+    conn = get_kline_db()
+    dates = None
+    series = []
+    for code in codes:
+        rows = conn.execute(
+            "SELECT date, close FROM etf_daily WHERE code=? ORDER BY date DESC LIMIT ?",
+            (code, days)).fetchall()
+        rows = list(reversed(rows))
+        if not rows:
+            continue
+        base = rows[0][1] or 1.0
+        ds = [r[0] for r in rows]
+        if dates is None:
+            dates = ds
+        name_row = conn.execute("SELECT name FROM etf_list WHERE code=?", (code,)).fetchone()
+        series.append({"code": code, "name": (name_row[0] if name_row else code),
+                       "values": [round((r[1] or 0) / base, 4) for r in rows]})
+    conn.close()
+    return {"dates": dates or [], "series": series}
+
+
+def update_etf_kline(codes=None, workers: int = 10, progress=None) -> dict:
+    """ETF K线增量更新(多进程安全: 单进程多线程). 缺数据的全历史首拉, 存量按缺口补.
+
+    Returns: {updated, skipped, errors, rows_added, total}
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from akshare_source import ak_fetch_etf_kline
+    if codes is None:
+        conn = get_kline_db()
+        codes = [str(r[0]) for r in conn.execute("SELECT code FROM etf_list ORDER BY code").fetchall()]
+        conn.close()
+    total = len(codes)
+    updated = skipped = errors = rows_added = 0
+    batch = []
+    t0 = time.time()
+
+    def _fetch(c):
+        rows = ak_fetch_etf_kline(c)
+        return rows, c
+
+    done = 0
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futs = {pool.submit(_fetch, c): c for c in codes}
+        for f in as_completed(futs):
+            c = futs[f]
+            done += 1
+            try:
+                rows, _ = f.result(timeout=60)
+            except Exception:
+                rows = []
+            if rows:
+                updated += 1
+                batch.extend(rows)
+                rows_added += len(rows)
+            else:
+                errors += 1
+            if progress and (done % 50 == 0 or done == total):
+                progress(f"[{done}/{total}] +{rows_added} 行", None)
+    if batch:
+        conn = get_kline_db()
+        ins, _ = _bulk_insert_etf(conn, batch)
+        conn.commit()
+        conn.close()
+        rows_added = ins
+    return {"updated": updated, "skipped": skipped, "errors": errors,
+            "rows_added": rows_added, "total": total, "elapsed": round(time.time() - t0, 1)}
+
+
+def _bulk_insert_etf(conn, rows):
+    """按行写 etf_daily (INSERT OR REPLACE). 返回 (写入行数, 跳过行数)."""
+    skipped = 0
+    clean = []
+    for r in rows:
+        if len(r) >= 8:
+            clean.append(tuple(r[:8]) + (r[8] if len(r) > 8 else 0.0,))
+        else:
+            skipped += 1
+    conn.executemany(
+        "INSERT OR REPLACE INTO etf_daily (code,date,open,high,low,close,volume,amount,turnover) "
+        "VALUES (?,?,?,?,?,?,?,?,?)", clean)
+    return len(clean), skipped
+
+
 def cache_sector_board_from_akshare():
     """写入 sector_board 快照表(991行: 行业/概念板块涨跌榜, 含 leader).
 

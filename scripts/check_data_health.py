@@ -56,6 +56,21 @@ def main():
     n1 = con.execute("SELECT COUNT(*) FROM kline_2026 WHERE code IN "
                      "(SELECT DISTINCT code FROM kline_2026 WHERE date LIKE '%%-%%')").fetchone()[0]
     print(f"  (连字符已清除, 该查询应=0 或仅数字行) {n1}")
+
+    print("\n-- ETF 数据 --")
+    try:
+        n_list = con.execute("SELECT COUNT(*) FROM etf_list").fetchone()[0]
+        n_code = con.execute("SELECT COUNT(DISTINCT code) FROM etf_daily").fetchone()[0]
+        n_row = con.execute("SELECT COUNT(*) FROM etf_daily").fetchone()[0]
+        mx = con.execute("SELECT MAX(date) FROM etf_daily").fetchone()[0]
+        print(f"  etf_list: {n_list} 只 | etf_daily: {n_code} 只 / {n_row:,} 行 / 最新 {mx}")
+        for r in con.execute(
+                "SELECT d.code, l.name, COUNT(*) FROM etf_daily d LEFT JOIN etf_list l ON d.code=l.code "
+                "WHERE d.code IN ('510300','159919','518880','513100','588000') GROUP BY d.code "
+                "ORDER BY d.code"):
+            print(f"    {r[0]} {r[1]}: {r[2]} 行")
+    except Exception as e:
+        print(f"  ETF 检查失败: {e}")
     con.close()
 
     print("\n" + "=" * 60)

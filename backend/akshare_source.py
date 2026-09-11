@@ -603,21 +603,96 @@ def ak_get_etf_list() -> List[Dict]:
         df = ak.fund_etf_spot_em()
         if df is None or df.empty:
             return []
+
+        def _f(v, default=0.0):
+            try:
+                x = float(v)
+                return x if x == x else default
+            except (TypeError, ValueError):
+                return default
+
         results = []
         for _, row in df.iterrows():
             results.append({
                 "code": str(row.get("代码", "")),
                 "name": str(row.get("名称", "")),
-                "price": float(row.get("最新价", 0) or 0),
-                "change_pct": float(row.get("涨跌幅", 0) or 0),
-                "volume": int(float(row.get("成交量", 0) or 0)),
-                "amount": float(row.get("成交额", 0) or 0),
+                "price": _f(row.get("最新价")),
+                "change_pct": _f(row.get("涨跌幅")),
+                "volume": int(_f(row.get("成交量"))),
+                "amount": _f(row.get("成交额")),
+                "type": str(row.get("类型", "") or ""),
                 "source": "akshare",
             })
         return results
     except Exception as e:
         log.warning("AKShare ETF failed: %s", str(e)[:60])
         return []
+
+
+def ak_fetch_etf_kline(code: str, days: int = 4000, timeout: float = 25.0) -> List[tuple]:
+    """ETF 日K线全历史(前复权)。code 为裸 6 位 ETF 代码(5/1 开头)。
+
+    主源新浪 fund_etf_hist_sina(volume=股/amount=元, 与股票库同口径, 全历史);
+    回退东财 fund_etf_hist_em(volume=手 → ×100 转股)。复用坏源健康缓存(连续异常暂停)。
+    Returns: [(code, date_yyyymmdd, open, high, low, close, volume, amount, turnover)]
+    """
+    from codec import ak_symbol
+    # ETF 专用前缀: 沪市 ETF/LOF 以 5 开头(51/56/58/50/52/53), 深市 1 开头(15/16/18)
+    symbol = ("sh" if str(code).startswith("5") else "sz") + str(code)
+    stored = code
+
+    def _sina():
+        akshare_wait()
+        return ak.fund_etf_hist_sina(symbol=symbol)
+
+    def _em():
+        akshare_wait()
+        return ak.fund_etf_hist_em(symbol=code, period="daily",
+                                   start_date="20040101", end_date="20270101", adjust="qfq")
+
+    df = None
+    for name, fn in (("sina", _sina), ("em", _em)):
+        if _src_bad(name):
+            continue
+        try:
+            df = _run_with_timeout(fn, timeout)
+        except Exception as e:
+            log.warning("ak_fetch_etf_kline[%s] %s 异常: %s", name, symbol, str(e)[:50])
+            _src_note_fail(name)
+            df = None
+        if df is not None and not df.empty:
+            _src_note_ok(name)
+            break
+        if df is not None:
+            _src_note_ok(name)
+    if df is None or df.empty:
+        return []
+
+    d = df.copy()
+    # 列统一 → date/open/high/low/close/volume/amount/turnover
+    colmap = {"日期": "date", "date": "date", "开盘": "open", "open": "open",
+              "最高": "high", "high": "high", "最低": "low", "low": "low",
+              "收盘": "close", "close": "close", "成交量": "volume", "volume": "volume",
+              "成交额": "amount", "amount": "amount", "换手率": "turnover", "turnover": "turnover"}
+    d = d.rename(columns={k: v for k, v in colmap.items() if k in d.columns})
+    if "date" not in d.columns:
+        return []
+    d["date"] = pd.to_datetime(d["date"]).dt.strftime("%Y%m%d")
+    rows = []
+    for _, bar in d.tail(days).iterrows():
+        try:
+            vol = float(bar.get("volume", 0) or 0)
+            amt = float(bar.get("amount", 0) or 0)
+            if name == "em" and vol:
+                vol = vol * 100          # 东财成交量单位=手 → 股
+            if not amt and vol:
+                amt = float(bar["close"]) * vol
+            turn = float(bar.get("turnover", 0) or 0)
+            rows.append((stored, str(bar["date"]), float(bar["open"]), float(bar["high"]),
+                         float(bar["low"]), float(bar["close"]), int(vol), amt, turn))
+        except Exception:
+            continue
+    return rows
 
 
 # ══════════════════════════════════════════════════════════════

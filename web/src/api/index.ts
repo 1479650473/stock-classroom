@@ -152,6 +152,17 @@ export const getKline = (code: string, days = 250) => api.get<KlineBar[]>('/api/
 export const getCyq = (code: string) => api.get<Record<string, unknown>[]>('/api/kline/cyq', { code })
 export const searchStock = (q: string, signal?: AbortSignal) => api.get<StockRef[]>('/api/stock/search', { q }, { signal })
 
+// ---- etf ----
+export interface EtfRef { code: string; name: string; type: string; updated_at?: string }
+export interface EtfCompareSeries { code: string; name: string; values: number[] }
+export interface EtfCompare { dates: string[]; series: EtfCompareSeries[] }
+export const getEtfList = (search = '', type = '') =>
+  api.get<EtfRef[]>('/api/etf/list', { search, type })
+export const getEtfKline = (code: string, days = 250) =>
+  api.get<KlineBar[]>('/api/etf/kline', { code, days })
+export const getEtfCompare = (codes: string[], days = 250) =>
+  api.get<EtfCompare>('/api/etf/compare', { codes: codes.join(','), days })
+
 // ---- trade ----
 export const listAccounts = () => api.get<AccountSummary[]>('/api/trade/accounts')
 export const createAccount = (name: string, initial_capital: number) => api.post('/api/trade/accounts', { name, initial_capital })
