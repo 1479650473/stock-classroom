@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import Icon from './Icon.vue'
 import TaskCenter from './TaskCenter.vue'
+import NotifyBell from './NotifyBell.vue'
 import { isTauri, winMinimize, winToggleMaximize, winClose, winStartDrag } from '@/lib/tauri'
 import { useAppStore } from '@/stores/app'
 
@@ -43,6 +44,7 @@ const inTauri = isTauri()
 
     <div class="actions">
       <TaskCenter />
+      <NotifyBell />
       <button class="tb-btn" @click="cycleTheme" :title="'切换主题（当前：' + themes.find(t=>t.key===app.theme)?.label + '）'">
         <Icon name="layers" :size="16" />
       </button>

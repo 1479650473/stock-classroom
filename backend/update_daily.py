@@ -444,6 +444,24 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
     out['finished'] = datetime.now().isoformat(timespec='seconds')
     out['elapsed'] = round(time.time() - t0, 1)
     out['ok'] = True
+    # 通知：整轮完成 / 有步骤失败（error 或含 'error' 字段的 step）
+    try:
+        from notify import push as _push_notify
+        bad = {}
+        for k, v in (out.get('steps') or {}).items():
+            if isinstance(v, dict) and v.get('error'):
+                bad[k] = str(v.get('error'))[:160]
+            elif isinstance(v, str) and ('error' in v or '失败' in v):
+                bad[k] = v[:160]
+        if bad:
+            _push_notify('daily', f'每日自动化有 {len(bad)} 个步骤异常', level='warn',
+                         detail='；'.join(f'{k}: {msg}' for k, msg in bad.items()),
+                         key='update_daily', throttle_seconds=1800)
+        else:
+            _push_notify('daily', f'每日自动化完成（{out["elapsed"]}s）', level='info',
+                         detail='全部步骤正常', key='update_daily_ok', throttle_seconds=3600)
+    except Exception:
+        pass
     with open(MARKER, 'w', encoding='utf-8') as f:
         json.dump(out, f, ensure_ascii=False, indent=2)
     lg.info('══ update_daily 完成 %.1fs → %s ══', out['elapsed'], MARKER)

@@ -119,6 +119,13 @@ def submit(kind: str, runner: Callable, payload: Any = None) -> dict:
             rec["traceback"] = traceback.format_exc()[-2000:]
             rec["finished_at"] = time.time()
             _push(job_id, {"type": "error", "ts": time.time(), "message": str(exc)}, terminal=True)
+            try:                                  # 任务失败 → 通知（节流：同类任务 5 分钟内只发一次）
+                from backend import notify
+                notify.push("job", f"任务失败：{kind}",
+                            level="error", detail=f"{str(exc)[:300]}（job {job_id}）",
+                            key=f"{kind}", extra={"job_id": job_id, "kind": kind})
+            except Exception:
+                pass
 
     _POOL.submit(_run)
     return {"job_id": job_id, "status": "queued", "kind": kind}

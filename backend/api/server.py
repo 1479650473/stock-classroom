@@ -77,6 +77,9 @@ def create_app():
     # 回测/因子报告 (自包含 HTML)
     from .blueprints import report as report_bp
     app.register_blueprint(report_bp.bp)
+    # 通知/告警 (任务失败、每日自动化异常、webhook 可选)
+    from .blueprints import notify_bp
+    app.register_blueprint(notify_bp.bp)
     # ETF (全市场列表/单只K线/多只归一化对比)
     from .blueprints import etf
     app.register_blueprint(etf.bp)
