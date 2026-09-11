@@ -65,6 +65,49 @@ Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
 - **评分口径可覆盖**: `factor_engine/config.py` 的 `WEIGHT_PRESETS`（`default` / `steady{trend18,momentum15,volume10,price10,stability30}`）+ `resolve_weights()`（预设名 / dict / `"trend:18,momentum:15"`）+ `load_config_with_weights()`（按目标满分等比缩放组内 condition 分值）。回放创建可带 `weights`（写入 `profile.meta.weights`），用于同一参数下的口径对照实验。
 - **纵向回放** (`replay.py`): 让交易员在过去数据里逐日无前视模拟。as-of 上下文（K线/regime/候选全部 `date<=D`，历史新闻不可回溯故标注不可用）；date-aware 工具按历史日成交/结算；游标存 `profile.meta.cursor`，每次最多 30 天可续跑；每 20 日 LLM 生成一次阶段总结（`kind='stage'`）压缩上下文；`distill_to_live()` 把回放风格/教训/笔记回流到源交易员。API `/api/trader/{replays,replay,replay/<id>/continue,replay/<id>/distill}`。前端 AI 页「AI 操盘手 → 纵向回放」。
 
+## 因子挖掘与体检（backend/alpha/）— 公式搜索 + 因子动物园 + 机器学习
+
+**来源**：机制借鉴 AlphaGPT（公式 token + 栈式 VM + 回测当奖励），因子清单借鉴 Qbot（Alpha158/技指），
+工程模式借鉴 QuantDinger（MCP + 可观测性 + 通知）。结论优先于机制，见下方「已证实/已否定」段。
+
+| 文件 | 作用 |
+|------|------|
+| `dsl.py` | 公式 DSL：18 算子 + Polish 前缀记法 + 栈式求值（numpy 面板）+ decode/随机合法建树 |
+| `panel.py` | kline.db → `[股票 × 交易日]` 面板；**39 个因子**（均线族/分布形状/量价/ATR/换手统计/PSY/CCI/KDJ/OBV/VR/新高距离…）全部因果 + 截面 robust 标准化；open-to-open 目标；涨跌停/停牌掩码；**股票池按回测起点前成交额排序**（防选择偏误）+ 磁盘缓存；`build_neutralizer/neutralize_apply` 风格中性化（向量化） |
+| `reward.py` | 回测奖励：Top-K 组合（T+1 开盘、单边 5bp）、Rank IC；**hold>1 重叠建仓**（换手 0.77→0.17）；超额（相对等权池）指标 |
+| `search.py` | 遗传搜索（锦标赛/子树交叉变异/精英保留） |
+| `walk_forward.py` | 滚动验证：train 24 月 → test 6 月逐折独立搜索；**随机对照**（同预算随机公式）+ 零信号基准 |
+| `factor_zoo.py` | 批量体检 39 因子（含反向 78 个）：IC/IC20/中性化 IC/超额/Sortino/回撤/换手/半年为正 → `data/factor_zoo.json` |
+| `composite.py` | **已验证的固定权重组合**：`-RET1 / -RET5 / -HIGH60_GAP / -LOG_AMT20` 等权 rank 合成，as-of 安全，参考日取「覆盖率≥60% 的最后一个交易日」 |
+| `composite_test.py` | 固定组合的 10 折样本外验证 + 多空分位价差（市场中性口径） |
+| `ml_rank.py` | 截面机器学习选股（sklearn HGB / numpy 岭回归）+ Monte-Carlo 块自助 + 随机对照 |
+| `factor_analysis.py` | Alphalens 风格：分位组合/多空净值/单调性/IC 衰减/成本敏感性 |
+| `validate_known.py` / `diagnose_null.py` | 流程自检（已知因子方向）与零信号基准 |
+| `pipeline.py` / `store.py` / `import_reports.py` | API 与 CLI 共用的 mine/walk_forward 主流程 + `data/alpha.db`（alpha_run/alpha_formula）落库 |
+
+**API**：`/api/alpha/{meta,mine,walkforward,runs,run/<id>,composite,zoo,composite_report,factor-analysis}`、
+`/api/trader/selection?source=scorecard|composite`、`/api/report/{composite,factor-zoo,factor-analysis,backtest}`、
+`/api/notify/{list,summary,read,clear,settings,test}`、`/metrics`（Prometheus 文本）。
+
+**已证实 / 已否定**（300 只流动股 × 2016-2025，数据见 `data/factor_*.json`、`data/alpha_*.json`）：
+- **公式搜索无效**：搜出来的“最优公式”样本外不如同预算随机对照（搜索−对照 −14.3pp，仅 2/10 折更好）。
+- **固定因子组合有效**：短期反转 + 小市值 + 远离 60 日高点，10 折样本外超额为正 **8/10**，多空价差 +9.0%/年。
+- **低波动类因子在本土是反向的**（高波动占优）：-ATR14/-AMP 多空价差 -28%/-45%，“超额为正”是风格 beta。
+- **机器学习（HGB）的极端分位含真实信息**：多空价差均值 **+32.2%、9/10 折为正**（截尾 ±11% 复算仍成立），但整体 IC ≈ 0。
+- **IC 口径陷阱**：计算 IC 时**不能叠加“次日涨停不可买”过滤**（信号恰好集中在这些样本，会把 IC 抹到 0）；可买性只约束组合构建。
+
+**数据可靠性**（实测教训）：`py_mini_racer`(新浪 V8) 在 **20 并发下会崩进程**，补数据并发 ≤12-16；
+`update_daily` 的全市场增量已改为固定回看 10 个交易日（原全局缺口判断会漏“某天只有部分股票更新”）；
+`scripts/backfill_missing_day.py` 用于逐股票补齐残缺交易日（分块落库、可续跑）。
+
+## 回测报告 / 可观测性 / 通知 / MCP
+| 模块 | 说明 |
+|------|------|
+| `backend/strategy/report.py` | 自包含 HTML 报告（KPI + 净值曲线 + 月度热力表 + 分位柱状图 + 交易明细），零第三方绘图依赖 |
+| `backend/metrics.py` | `/metrics`（Prometheus 文本）+ `/api/system/metrics`：任务/数据新鲜度/覆盖/未读通知/操盘手决策时效/data 占用 |
+| `backend/notify.py` | 本地事件流（`data/notifications.json`，5 分钟节流）+ 可选 webhook；挂钩 jobman 任务失败与 update_daily 步骤异常；前端 `NotifyBell.vue` |
+| `backend/mcp_server/` | MCP Server（stdio）：把 `/api/agent/v1` 包装成 **24 个工具**（R/W/B/T 分级），配置 `SC_BASE_URL`/`SC_AGENT_TOKEN`；见该目录 README |
+
 ## Key Files
 | Layer | Files | Purpose |
 |-------|-------|---------|
