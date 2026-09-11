@@ -56,6 +56,8 @@ class GASearch:
         self.py_rng = random.Random(seed)
         self.verbose = verbose
         self.n_eval = 0
+        #: 可选回调：每代结束调用 on_generation(best_candidate)，用于 API 进度推送
+        self.on_generation: Optional[Callable[[Candidate], None]] = None
 
     # ── 遗传操作 ──
     def _rand_tree(self) -> List[str]:
@@ -112,6 +114,11 @@ class GASearch:
                       f"ann {best.metrics.get('ann', 0) * 100:+6.1f}%  "
                       f"maxdd {best.metrics.get('maxdd', 0) * 100:5.1f}%  "
                       f"| {decode(best.tokens)}", flush=True)
+            if self.on_generation is not None:
+                try:
+                    self.on_generation(pop[0])
+                except Exception:
+                    pass
             if gen == self.generations - 1:
                 break
             nxt: List[Candidate] = [Candidate(c.tokens, c.score, c.metrics) for c in pop[:self.elite]]

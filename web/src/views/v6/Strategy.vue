@@ -11,10 +11,11 @@ import Icon from '@/components/Icon.vue'
 import Research from '@/views/Research.vue'
 import Optimize from '@/views/Optimize.vue'
 import Replay from '@/views/Replay.vue'
+import AlphaMine from '@/components/AlphaMine.vue'
 import { getRegime } from '@/api'
 import type { RegimeData } from '@/api'
 
-type Tab = 'env' | 'research' | 'optimize' | 'replay'
+type Tab = 'env' | 'research' | 'optimize' | 'replay' | 'alpha'
 
 const route = useRoute()
 const router = useRouter()
@@ -24,6 +25,7 @@ const TABS = [
   { value: 'research', label: '研究 / 回测', icon: 'research' },
   { value: 'optimize', label: '策略进化', icon: 'trending' },
   { value: 'replay', label: '策略回放', icon: 'play' },
+  { value: 'alpha', label: '因子挖掘', icon: 'sparkles' },
 ]
 
 const tab = ref<Tab>(normalize(route.query.tab))
@@ -33,7 +35,7 @@ const error = ref('')
 
 function normalize(v: unknown): Tab {
   const s = String(v || '')
-  return (['env', 'research', 'optimize', 'replay'] as const).includes(s as Tab) ? (s as Tab) : 'env'
+  return (['env', 'research', 'optimize', 'replay', 'alpha'] as const).includes(s as Tab) ? (s as Tab) : 'env'
 }
 
 watch(tab, (v) => {
@@ -71,7 +73,12 @@ function scoreEntries(s: Record<string, unknown> | undefined): { k: string; v: s
   if (!s) return []
   return Object.entries(s)
     .filter(([, v]) => v != null && typeof v !== 'object')
-    .map(([k, v]) => ({ k, v: typeof v === 'number' ? (Number.isInteger(v) ? String(v) : v.toFixed(2)) : String(v) }))
+    .map(([k, v]) => ({ k, v: typeof v === 'number' ? fmtMetric(v) : String(v) }))
+}
+
+function fmtMetric(v: number): string {
+  const n = Math.abs(v) < 0.005 ? 0 : v
+  return Number.isInteger(n) ? String(n) : n.toFixed(2)
 }
 </script>
 
@@ -135,8 +142,13 @@ function scoreEntries(s: Record<string, unknown> | undefined): { k: string; v: s
       </div>
 
       <!-- 回放 -->
-      <div v-else class="pane">
+      <div v-else-if="tab === 'replay'" class="pane">
         <Replay embedded />
+      </div>
+
+      <!-- 因子挖掘 -->
+      <div v-else class="pane">
+        <AlphaMine />
       </div>
     </SectionCard>
   </AppPage>

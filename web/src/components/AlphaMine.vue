@@ -1,0 +1,300 @@
+<script setup lang="ts">
+/**
+ * 因子挖掘（AlphaGPT 式）：公式搜索 + 回测奖励
+ *  - 挖一次：遗传搜索 → 样本外检验 → 相关性去重 → 多因子合成
+ *  - 滚动验证：多折「训练独立搜索 → 紧接测试段评估」，判断是否跨期稳定
+ * 进度复用全局任务中心（jobs store），完成后自动刷新结果。
+ */
+import { computed, onMounted, ref, watch } from 'vue'
+import SectionCard from '@/components/ui/SectionCard.vue'
+import FormField from '@/components/ui/FormField.vue'
+import DataTable from '@/components/ui/DataTable.vue'
+import LoadingBlock from '@/components/ui/LoadingBlock.vue'
+import EmptyGuide from '@/components/ui/EmptyGuide.vue'
+import Icon from '@/components/Icon.vue'
+import { useJobsStore } from '@/stores/jobs'
+import { useToastStore } from '@/stores/toast'
+import {
+  getAlphaMeta, getAlphaRun, getAlphaRuns, startAlphaMine, startAlphaWalkforward,
+} from '@/api'
+import type { AlphaFormula, AlphaRun } from '@/api'
+
+const jobs = useJobsStore()
+const toast = useToastStore()
+
+const loading = ref(true)
+const starting = ref(false)
+const runs = ref<AlphaRun[]>([])
+const current = ref<AlphaRun | null>(null)
+const openForm = ref(false)
+const meta = ref<{ defaults: Record<string, number | string>; features: string[]; operators: string[] } | null>(null)
+
+const form = ref({
+  codes: 300, start: '2021-07-01', end: '2025-12-31',
+  pop: 120, gens: 18, hold: 5, topk: 20, top: 8,
+  folds: 5, train_months: 24, test_months: 6,
+})
+
+const activeJob = computed(() => jobs.activeByKind('alpha'))
+const running = computed(() => !!activeJob.value)
+const progress = computed(() => activeJob.value?.pct ?? 0)
+const progressMsg = computed(() => activeJob.value?.msg || '准备中…')
+
+const metaOf = (r: AlphaRun) => (r.meta || {}) as Record<string, number | string>
+const fmt = (v: unknown, digits = 2) => {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return '—'
+  return (n >= 0 ? '+' : '') + (n * 100).toFixed(digits) + '%'
+}
+const num = (v: unknown, digits = 2) => {
+  const n = Number(v)
+  return Number.isFinite(n) ? n.toFixed(digits) : '—'
+}
+
+async function load(limit = 20) {
+  loading.value = true
+  try {
+    const r = await getAlphaRuns(limit)
+    runs.value = r.items || []
+    const first = runs.value.find((x) => x.kind === 'mine') || runs.value[0]
+    if (first && (!current.value || current.value.id !== first.id)) await select(first.id)
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : String(e))
+  } finally {
+    loading.value = false
+  }
+}
+
+async function select(id: number) {
+  try {
+    current.value = await getAlphaRun(id)
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : String(e))
+  }
+}
+
+async function loadMeta() {
+  try {
+    meta.value = await getAlphaMeta()
+  } catch { /* 忽略：元信息只用于展示特征/算子数量 */ }
+}
+
+async function start(kind: 'mine' | 'walkforward') {
+  starting.value = true
+  try {
+    const params = kind === 'mine'
+      ? { codes: form.value.codes, start: form.value.start, end: form.value.end, pop: form.value.pop, gens: form.value.gens, hold: form.value.hold, topk: form.value.topk, top: form.value.top }
+      : { codes: form.value.codes, start: form.value.start, end: form.value.end, pop: form.value.pop, gens: form.value.gens, hold: form.value.hold, topk: form.value.topk, folds: form.value.folds, train_months: form.value.train_months, test_months: form.value.test_months, combo: 5 }
+    const id = await jobs.run({
+      kind: 'alpha',
+      title: kind === 'mine' ? '因子挖掘' : '滚动窗口验证',
+      route: 'strategy',
+      submit: async () => {
+        const r = kind === 'mine' ? await startAlphaMine(params) : await startAlphaWalkforward(params)
+        return { job_id: r.job.job_id }
+      },
+    })
+    if (id) openForm.value = false
+  } finally {
+    starting.value = false
+  }
+}
+
+// 任务从"运行中"变为"结束"时刷新结果
+let wasRunning = false
+watch(activeJob, (v) => {
+  if (v) wasRunning = true
+  else if (wasRunning) { wasRunning = false; load() }
+})
+
+// DataTable 的 row 是 Record<string, unknown>，模板里用这两个取值器收窄类型
+const tr = (row: unknown) => (((row as AlphaFormula).train_metrics || {}) as Record<string, number>)
+const oo = (row: unknown) => (((row as AlphaFormula).oos_metrics || {}) as Record<string, number>)
+
+const keptFormulas = computed<Record<string, unknown>[]>(() =>
+  (current.value?.formulas || [])
+    .filter((f) => f.kept && f.rank > 0)
+    .sort((a, b) => a.rank - b.rank)
+    .map((f) => ({ ...f }) as unknown as Record<string, unknown>))
+
+const combos = computed(() => {
+  const s = (current.value?.summary || {}) as { combos?: { k: number; train: Record<string, number>; oos: Record<string, number> }[] }
+  return s.combos || []
+})
+const wfSummary = computed(() => {
+  const s = (current.value?.summary || {}) as Record<string, number | null>
+  return current.value?.kind === 'walkforward' ? s : null
+})
+const wfFolds = computed(() => {
+  const s = (current.value?.summary || {}) as { folds?: { fold: number; train: string; test: string; kept: string[] }[] }
+  return s.folds || []
+})
+
+onMounted(async () => { await Promise.all([load(), loadMeta()]) })
+</script>
+
+<template>
+  <div class="alpha">
+    <SectionCard title="因子挖掘" desc="让程序自己写因子公式：公式 = 特征 + 算子，用回测当奖励搜索；样本外不合格的不采纳">
+      <template #actions>
+        <button class="ui-btn ui-btn--ghost" @click="openForm = !openForm">
+          <Icon name="settings" :size="13" /><span>{{ openForm ? '收起参数' : '参数' }}</span>
+        </button>
+        <button class="ui-btn" :disabled="running || starting" @click="start('mine')">
+          <Icon name="play" :size="13" /><span>开始挖掘</span>
+        </button>
+        <button class="ui-btn ui-btn--ghost" :disabled="running || starting" @click="start('walkforward')">
+          <Icon name="refresh" :size="13" /><span>滚动窗口验证</span>
+        </button>
+      </template>
+
+      <div v-if="running" class="prog">
+        <div class="prog__bar"><i :style="{ width: progress + '%' }" /></div>
+        <div class="prog__meta">
+          <span>{{ progress }}%</span>
+          <span class="prog__msg">{{ progressMsg }}</span>
+        </div>
+      </div>
+
+      <div v-if="openForm" class="form">
+        <div class="form__grid">
+          <FormField label="股票池（按起点前成交额取 Top）">
+            <input v-model.number="form.codes" class="ui-input" type="number" min="50" step="50" />
+          </FormField>
+          <FormField label="起点"><input v-model="form.start" class="ui-input" /></FormField>
+          <FormField label="终点"><input v-model="form.end" class="ui-input" /></FormField>
+          <FormField label="种群大小"><input v-model.number="form.pop" class="ui-input" type="number" min="30" step="10" /></FormField>
+          <FormField label="迭代代数"><input v-model.number="form.gens" class="ui-input" type="number" min="5" step="5" /></FormField>
+          <FormField label="持有天数" hint=">1 用重叠建仓，显著降低换手与成本">
+            <input v-model.number="form.hold" class="ui-input" type="number" min="1" max="20" />
+          </FormField>
+          <FormField label="每日持仓只数"><input v-model.number="form.topk" class="ui-input" type="number" min="5" step="5" /></FormField>
+          <FormField label="挖掘 / 验证折数">
+            <input v-model.number="form.folds" class="ui-input" type="number" min="2" max="10" />
+          </FormField>
+        </div>
+        <p class="hint">
+          特征 {{ meta?.features?.length ?? '—' }} 个 · 算子 {{ meta?.operators?.length ?? '—' }} 个 ·
+          公式长度上限 12 · 成本按单边 5bp（佣金+印花税+滑点）
+        </p>
+      </div>
+
+      <LoadingBlock v-if="loading && !runs.length" />
+      <EmptyGuide v-else-if="!runs.length" title="还没有挖掘记录"
+        desc="点「开始挖掘」跑第一次（默认 300 只 × 4 年，约 3~5 分钟，纯本地计算不调用大模型）" />
+
+      <template v-else>
+        <div class="runs">
+          <span class="runs__label">历史运行</span>
+          <button v-for="r in runs" :key="r.id" class="chip"
+            :class="{ 'chip--on': current?.id === r.id }" @click="select(r.id)">
+            #{{ r.id }} {{ r.kind === 'mine' ? '挖掘' : '滚动验证' }}
+            <span class="chip__st" :class="r.status">{{ r.status === 'done' ? '完成' : r.status === 'error' ? '失败' : '进行中' }}</span>
+          </button>
+        </div>
+
+        <div v-if="current" class="detail">
+          <div class="kv">
+            <span>股票池 {{ metaOf(current).codes ?? '—' }} 只</span>
+            <span>{{ metaOf(current).start }} ~ {{ metaOf(current).end }}</span>
+            <span>持有 {{ metaOf(current).hold ?? 1 }} 天</span>
+            <span>求值 {{ metaOf(current).evaluations ?? '—' }} 次</span>
+            <span>用时 {{ metaOf(current).elapsed_sec ?? '—' }}s</span>
+            <span v-if="current.kind === 'mine'">基准年化 训练 {{ fmt(metaOf(current).bench_ann_train) }} / 样本外 {{ fmt(metaOf(current).bench_ann_oos) }}</span>
+          </div>
+          <p v-if="current.error" class="err">失败原因：{{ current.error }}</p>
+
+          <!-- 滚动验证汇总 -->
+          <template v-if="wfSummary">
+            <div class="sum">
+              <div class="sum__cell"><span class="k">折数</span><span class="v">{{ wfSummary.n_folds }}</span></div>
+              <div class="sum__cell"><span class="k">单公式 样本外超额（均值）</span>
+                <span class="v" :class="(wfSummary.best_mean_ex_ann ?? 0) >= 0 ? 'up' : 'down'">{{ fmt(wfSummary.best_mean_ex_ann) }}</span></div>
+              <div class="sum__cell"><span class="k">Top5 合成 样本外超额（均值）</span>
+                <span class="v" :class="(wfSummary.combo_mean_ex_ann ?? 0) >= 0 ? 'up' : 'down'">{{ fmt(wfSummary.combo_mean_ex_ann) }}</span></div>
+              <div class="sum__cell"><span class="k">为正折数</span>
+                <span class="v">{{ wfSummary.combo_positive_folds }}/{{ wfSummary.n_folds }}</span></div>
+              <div class="sum__cell"><span class="k">超额 Sortino（均值）</span>
+                <span class="v">{{ num(wfSummary.combo_mean_ex_sortino) }}</span></div>
+              <div class="sum__cell"><span class="k">IC（均值）</span>
+                <span class="v">{{ Number(wfSummary.combo_mean_ic ?? 0).toFixed(4) }}</span></div>
+            </div>
+          </template>
+
+          <!-- 挖掘结果：保留的公式 -->
+          <DataTable v-if="keptFormulas.length" :rows="keptFormulas" :columns="[
+            { key: 'rank', title: '#', width: '44px' },
+            { key: 'formula', title: '公式' },
+            { key: 'train', title: '训练 超额年化', align: 'right' },
+            { key: 'oos', title: '样本外 超额年化', align: 'right' },
+            { key: 'ic', title: 'IC / IC_IR', align: 'right' },
+            { key: 'dd', title: '回撤', align: 'right' },
+            { key: 'turnover', title: '换手', align: 'right' },
+          ]">
+            <template #cell-formula="{ row }"><code class="fx">{{ row.formula }}</code></template>
+            <template #cell-train="{ row }">
+              <span :class="(tr(row).ex_ann ?? 0) >= 0 ? 'up' : 'down'">{{ fmt(tr(row).ex_ann) }}</span>
+            </template>
+            <template #cell-oos="{ row }">
+              <span :class="(oo(row).ex_ann ?? 0) >= 0 ? 'up' : 'down'">{{ fmt(oo(row).ex_ann) }}</span>
+            </template>
+            <template #cell-ic="{ row }">
+              {{ Number(oo(row).ic ?? 0).toFixed(4) }} / {{ num(oo(row).ic_ir) }}
+            </template>
+            <template #cell-dd="{ row }">{{ fmt(-Math.abs(Number(oo(row).maxdd ?? 0))) }}</template>
+            <template #cell-turnover="{ row }">{{ num(oo(row).turnover) }}</template>
+          </DataTable>
+
+          <!-- 多因子合成对照 -->
+          <div v-if="combos.length" class="combo">
+            <div class="combo__title">多因子合成（等权 rank 合成，最接近实际用法）</div>
+            <div v-for="c in combos" :key="c.k" class="combo__row">
+              <span class="combo__k">Top{{ c.k }}</span>
+              <span>训练 超额 {{ fmt(c.train?.ex_ann) }}（Sortino {{ num(c.train?.ex_sortino) }}）</span>
+              <span>样本外 超额 <b :class="(c.oos?.ex_ann ?? 0) >= 0 ? 'up' : 'down'">{{ fmt(c.oos?.ex_ann) }}</b>
+                （Sortino {{ num(c.oos?.ex_sortino) }} · IC {{ Number(c.oos?.ic ?? 0).toFixed(4) }} · 回撤 {{ fmt(-Math.abs(Number(c.oos?.maxdd ?? 0))) }}）</span>
+            </div>
+          </div>
+
+          <p class="hint">
+            口径说明：目标是 open-to-open（t 日信号 → t+1 开盘买 → t+1+持有天数 开盘卖），
+            组合为每日按因子值取 Top-K 等权；「超额」= 相对等权股票池。
+            IC ≈ 0.00x 时说明排序预测力弱、收益集中在头部几只，实盘前请再做滚动验证。
+          </p>
+        </div>
+      </template>
+    </SectionCard>
+  </div>
+</template>
+
+<style scoped>
+.alpha { display: flex; flex-direction: column; gap: 12px; }
+.prog { display: flex; flex-direction: column; gap: 6px; margin: 10px 0 2px; }
+.prog__bar { height: 6px; border-radius: 999px; background: var(--panel-2); overflow: hidden; }
+.prog__bar i { display: block; height: 100%; background: var(--accent); transition: width .3s; }
+.prog__meta { display: flex; gap: 10px; font-size: var(--fs-xs); color: var(--text-sub); }
+.prog__msg { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.form { margin-top: 10px; padding: 12px; border-radius: var(--radius-sm); background: var(--panel-2); }
+.form__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+.runs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
+.runs__label { font-size: var(--fs-xs); color: var(--text-faint); margin-right: 4px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--panel); color: var(--text-sub); font-size: var(--fs-xs); cursor: pointer; }
+.chip--on { border-color: var(--accent); color: var(--accent); }
+.chip__st.done { color: var(--ok, var(--accent)); }
+.chip__st.error { color: var(--down, var(--accent)); }
+.detail { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
+.kv { display: flex; flex-wrap: wrap; gap: 14px; font-size: var(--fs-xs); color: var(--text-faint); }
+.sum { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 1px;
+  background: var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.sum__cell { display: flex; flex-direction: column; gap: 4px; padding: 10px 14px; background: var(--panel); }
+.sum__cell .k { font-size: var(--fs-xs); color: var(--text-faint); }
+.sum__cell .v { font-size: var(--fs-sm); font-weight: 700; }
+.combo { display: flex; flex-direction: column; gap: 6px; padding: 12px; border-radius: var(--radius-sm); background: var(--panel-2); }
+.combo__title { font-size: var(--fs-xs); font-weight: 700; color: var(--text-sub); }
+.combo__row { display: flex; flex-wrap: wrap; gap: 14px; font-size: var(--fs-xs); color: var(--text-sub); }
+.combo__k { font-weight: 700; color: var(--accent); }
+.fx { font-family: var(--font-mono, monospace); font-size: var(--fs-xs); color: var(--accent); word-break: break-all; }
+.err { font-size: var(--fs-xs); color: var(--down, var(--accent)); }
+.hint { font-size: var(--fs-xs); color: var(--text-faint); line-height: 1.7; margin: 0; }
+</style>

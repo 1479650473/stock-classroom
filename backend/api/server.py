@@ -64,12 +64,16 @@ def create_app():
     # AI 定时自主交易 (后台线程)
     from .blueprints import scheduler_bp
     app.register_blueprint(scheduler_bp.bp)
+    scheduler_bp.ensure_started()
     # 策略回放器 (K线逐日回放: 买卖点/持仓高亮)
     from .blueprints import replay
     app.register_blueprint(replay.bp)
     # AI 操盘手 (长期自主 LLM 交易员: 专属账户 + 每日决策 + 长期记忆)
     from .blueprints import trader
     app.register_blueprint(trader.bp)
+    # 因子挖掘 (公式搜索 + 回测奖励, AlphaGPT 式)
+    from .blueprints import alpha
+    app.register_blueprint(alpha.bp)
     # Agent Gateway v1 (/api/agent/v1) — 能力分级 R/W/B/T + 审计/幂等/限流，供外部 agent/MCP 调用
     from backend.agent.routes import register as register_agent_gateway
     register_agent_gateway(app)
@@ -78,7 +82,7 @@ def create_app():
 
     @app.route("/")
     def root():
-        return {"service": "stock-classroom-web", "version": "5.0",
+        return {"service": "stock-classroom-web", "version": "5.1",
                 "hint": "前端由 Tauri/Vue 提供; 这里是 API 服务"}
 
     return app

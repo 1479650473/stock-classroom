@@ -546,3 +546,28 @@ export const distillTraderReplay = (id: number, target_profile_id: number) =>
     `/api/trader/replay/${id}/distill`, { target_profile_id })
 export const getTraderNews = (limit = 15) =>
   api.get<{ items: TraderNewsItem[] }>('/api/trader/news', { limit })
+
+// ---- alpha（因子挖掘：公式搜索 + 回测奖励） ----
+export interface AlphaFormula {
+  id: number; run_id: number; fold?: number; rank: number
+  tokens: string[]; formula: string
+  train_metrics: Record<string, number>
+  oos_metrics: Record<string, number>
+  kept: number; created_at?: string
+}
+export interface AlphaRun {
+  id: number; kind: 'mine' | 'walkforward'; status: 'running' | 'done' | 'error'
+  params: Record<string, unknown>; meta: Record<string, number | string>
+  summary: Record<string, unknown>; history?: number[]
+  error?: string | null; created_at?: string; finished_at?: string
+  formulas?: AlphaFormula[]
+}
+export const getAlphaMeta = () =>
+  api.get<{ defaults: Record<string, number | string>; features: string[]; operators: string[] }>('/api/alpha/meta')
+export const startAlphaMine = (params: Record<string, unknown>) =>
+  api.post<{ job: JobHandle }>('/api/alpha/mine', params)
+export const startAlphaWalkforward = (params: Record<string, unknown>) =>
+  api.post<{ job: JobHandle }>('/api/alpha/walkforward', params)
+export const getAlphaRuns = (limit = 20, kind?: string) =>
+  api.get<{ items: AlphaRun[] }>('/api/alpha/runs', kind ? { limit, kind } : { limit })
+export const getAlphaRun = (id: number) => api.get<AlphaRun>(`/api/alpha/run/${id}`)
