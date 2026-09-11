@@ -73,6 +73,10 @@ def import_walkforward(path: str) -> int:
     cic = [_num_map(f.get("combo_oos")).get("ic") for f in folds if f.get("combo_oos")]
     bs = [x for x in bs if x is not None]
     cs = [x for x in cs if x is not None]
+    ctl = [_num_map(f.get("control")).get("top5_combo_oos") for f in folds if f.get("control")]
+    ctl = [x for x in ctl if x is not None]
+    nul = [_num_map(f.get("control")).get("null_mean") for f in folds if f.get("control")]
+    nul = [x for x in nul if x is not None]
     summary = {
         "n_folds": len(folds),
         "best_mean_ex_ann": _mean(bs), "best_median_ex_ann": _median(bs),
@@ -84,6 +88,17 @@ def import_walkforward(path: str) -> int:
         "folds": [{"fold": f.get("fold"), "train": f.get("train"), "test": f.get("test"),
                    "kept": f.get("kept")} for f in folds],
     }
+    if ctl:
+        summary["control_mean_ex_ann"] = _mean(ctl)
+        summary["control_median_ex_ann"] = _median(ctl)
+        summary["control_positive_folds"] = sum(1 for x in ctl if x > 0)
+        n = min(len(cs), len(ctl))
+        if n:
+            diffs = [c - k for c, k in zip(cs[-n:], ctl[-n:])]
+            summary["searched_minus_control"] = _mean(diffs)
+            summary["searched_better_folds"] = sum(1 for x in diffs if x > 0)
+    if nul:
+        summary["null_random_mean_ex_ann"] = _mean(nul)
     S.finish_run(run_id, "done", meta=meta, summary=summary, history=[])
     return run_id
 

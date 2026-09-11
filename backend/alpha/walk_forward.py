@@ -72,6 +72,8 @@ def main() -> None:
     ap.add_argument("--topk", type=int, default=20)
     ap.add_argument("--hold", type=int, default=5)
     ap.add_argument("--combo", type=int, default=5, help="合成用 Top-N 公式")
+    ap.add_argument("--controls", type=int, default=120,
+                    help="随机对照公式数量（同预算下随机搜索能拿到什么，用于多重检验校正）")
     ap.add_argument("--out", default=os.path.join(str(DATA_DIR), "alpha_walkforward.json"))
     args = ap.parse_args()
 
@@ -159,12 +161,51 @@ def main() -> None:
                               bench_daily=bench_oos, hold=args.hold)
             row["combo_train"] = {k: round(float(v), 4) for k, v in tr_c.items() if isinstance(v, (int, float))}
             row["combo_oos"] = {k: round(float(v), 4) for k, v in oo_c.items() if isinstance(v, (int, float))}
+
+        # 随机对照（多重检验）：同一套回测与搜索预算下，随机公式能拿到什么
+        if args.controls > 0:
+            from .dsl import random_tree
+            rng = np.random.default_rng(20260912 + fi)
+            seen_t: set = set()
+            rand_tokens: List[List[str]] = []
+            while len(rand_tokens) < args.controls:
+                tk = random_tree(rng, tuple(P.FEATURE_NAMES), args.max_nodes)
+                key = tuple(tk)
+                if key in seen_t:
+                    continue
+                seen_t.add(key)
+                rand_tokens.append(tk)
+            rand_tr = [(train_fn(tk)[0], tk) for tk in rand_tokens]
+            rand_oos: List[float] = []
+            rand_tr_ok: List[Tuple[float, List[str]]] = []
+            for sc, tk in rand_tr:
+                if sc <= -9:
+                    continue
+                rand_tr_ok.append((sc, tk))
+                rand_oos.append(oos_fn(tk)[1].get("ex_ann", 0.0))
+            rand_tr_ok.sort(key=lambda x: -x[0])
+            ctrl: Dict[str, float] = {"n": float(len(rand_oos))}
+            if rand_oos:
+                arr = np.array(rand_oos, dtype=float)
+                ctrl.update({"null_mean": float(arr.mean()), "null_p50": float(np.median(arr)),
+                             "null_p90": float(np.percentile(arr, 90)), "null_max": float(arr.max())})
+            if rand_tr_ok:
+                ctrl["top1_oos"] = float(oos_fn(rand_tr_ok[0][1])[1].get("ex_ann", 0.0))
+                pick = [tk for _, tk in rand_tr_ok[: args.combo]]
+                if pick:
+                    rsig = R.combine_signals([sig_of(tk) for tk in pick])
+                    ctrl["top5_combo_oos"] = float(R.evaluate(
+                        rsig, target, masks, slice(tr_hi, te_hi), top_k=args.topk,
+                        bench_daily=bench_oos, hold=args.hold).get("ex_ann", 0.0))
+            row["control"] = {k: round(float(v), 4) for k, v in ctrl.items()}
         rows.append(row)
         b_oos = row.get("best_oos", {}).get("ex_ann", 0) * 100
         c_oos = row.get("combo_oos", {}).get("ex_ann", 0) * 100
+        ctl = row.get("control", {}).get("top5_combo_oos")
         print(f"  折{fi} {d_tr} → {d_te} | 单公式样本外超额 {b_oos:+6.1f}% | "
               f"Top{args.combo}合成 {c_oos:+6.1f}%（Sortino {row.get('combo_oos', {}).get('ex_sortino', 0):+.2f}，"
               f"IC {row.get('combo_oos', {}).get('ic', 0):+.4f}，换手 {row.get('combo_oos', {}).get('turnover', 0):.2f}）"
+              f" | 随机对照 {ctl * 100 if ctl is not None else float('nan'):+6.1f}%"
               f" {time.time() - t0:.0f}s", flush=True)
 
     bs = [r["best_oos"]["ex_ann"] for r in rows if "best_oos" in r]
@@ -181,6 +222,19 @@ def main() -> None:
         "combo_mean_ex_sortino": float(np.mean(cso)) if cso else None,
         "combo_mean_ic": float(np.mean(cic)) if cic else None,
     }
+    ctl = [r["control"]["top5_combo_oos"] for r in rows if r.get("control", {}).get("top5_combo_oos") is not None]
+    nul = [r["control"]["null_mean"] for r in rows if r.get("control", {}).get("null_mean") is not None]
+    if ctl:
+        summary["control_mean_ex_ann"] = float(np.mean(ctl))
+        summary["control_median_ex_ann"] = float(np.median(ctl))
+        summary["control_positive_folds"] = int(sum(1 for x in ctl if x > 0))
+        n_pair = min(len(cs), len(ctl))
+        if n_pair:
+            diffs = [c - k for c, k in zip(cs[-n_pair:], ctl[-n_pair:])]
+            summary["searched_minus_control"] = float(np.mean(diffs))
+            summary["searched_better_folds"] = int(sum(1 for x in diffs if x > 0))
+    if nul:
+        summary["null_random_mean_ex_ann"] = float(np.mean(nul))
     out = {"meta": {"codes": len(codes), "days": len(dates), "start": dates[0], "end": dates[-1],
                     "train_months": args.train_months, "test_months": args.test_months,
                     "folds": len(rows), "hold": args.hold, "top_k": args.topk,
@@ -200,6 +254,13 @@ def main() -> None:
         print(f"Top{args.combo}合成样本外超额：均值 {summary['combo_mean_ex_ann'] * 100:+.1f}% / 中位 "
               f"{summary['combo_median_ex_ann'] * 100:+.1f}%，为正 {summary['combo_positive_folds']}/{summary['n_folds']} 折"
               f" · 平均超额 Sortino {summary['combo_mean_ex_sortino']:+.2f} · 平均 IC {summary['combo_mean_ic']:+.4f}")
+    if summary.get("control_mean_ex_ann") is not None:
+        print(f"随机对照（同预算下随机公式取训练段 Top{args.combo} 合成）：均值 "
+              f"{summary['control_mean_ex_ann'] * 100:+.1f}% / 中位 {summary['control_median_ex_ann'] * 100:+.1f}%，"
+              f"为正 {summary.get('control_positive_folds')}/{summary['n_folds']} 折")
+        print(f"搜索 - 随机对照：均值 {summary.get('searched_minus_control', 0) * 100:+.1f}pp，"
+              f"搜索胜出 {summary.get('searched_better_folds')}/{summary['n_folds']} 折"
+              f"（随机公式样本外超额均值 {summary.get('null_random_mean_ex_ann', 0) * 100:+.1f}%）")
     print(f"报告：{args.out}（用时 {time.time() - t0:.0f}s）")
 
 
