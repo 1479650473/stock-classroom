@@ -53,13 +53,16 @@ Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
 | `agent.py` | TraderAgent: LLM tool-calling 循环，产出思考/复盘 + 工具轨迹；支持 profile 级 model |
 | `daily.py` | `run_daily_decision(profile_id)` 单交易员；`run_all_daily_decisions()` 遍历所有 enabled；同日幂等；`_maybe_review()` 周五/回撤≥8% 触发绩效自省 |
 | `selection.py` | 选股链路审计: `build_snapshot(ref_date, top_n, with_events)` 输出股票池来源/生效与未生效过滤/评分卡窗口与五组权重/筛选漏斗/候选及分项得分；`compact_note()` 给模型看的候选池说明。候选池随决策落库，事后可核对 |
-| `performance.py` | 战绩与自我提升: `performance_block()` 按 FIFO 配对成交算胜率/盈亏比/平均持有/连势/累计收益/最大回撤/日胜率；`performance_summary_text()` 注入上下文；`review_trader()` 强制自省产出 self_critique/lessons/style |
+| `performance.py` | 战绩与自我提升: `performance_block()` 按 FIFO 配对成交算胜率/盈亏比/平均持有/连势/累计收益/最大回撤/日胜率；`performance_summary_text()` 注入上下文；`review_trader()` 强制自省产出 self_critique/lessons/style/**rules(纪律规则)** |
+| `discipline.py` | **自省结论 → 硬约束**: 规则白名单 `block_new_buy/position_cap_pct/stop_loss_pct/max_new_positions_day/require_momentum_up`；`normalize_rules()` 只能收紧不可放宽、去重、上限6条；`save_rules()` 落 `kind='rule'` 记忆（同类只留最新）；`active_rules()/protection_rules()` 按 as_of 判生效与过期；`check_buy()` 在下单路径执行；`enforce_protection()` 收盘后强制止损/移动止损（含 T+1 处理）。系统兜底 `DEFAULT_PROTECTION`(止损8%/移动止损10%@15%) |
 
 - **规则归系统**: 本金固定与 A 股规则**不写进提示词**，由 TradeEngine 强制执行，违规返回错误让模型自行调整（像用券商软件）。
 - **风格自定**: 无预设人设；AI 把自我认知写入 `kind='style'` 长期记忆（同类只保留最新 active），持仓逻辑 `kind='thesis'`，另有 `lesson`/`note`/`market`。
 - **触发**: `update_daily.py` 第⑨步（对每个 enabled 档案逐个跑）+ `/api/trader/run`（单交易员）/ `/api/trader/run-all`（全部启用）。
-- **API**: `/api/trader/{profiles,overview,state,profile,decisions,memory,run,run-all,news,selection,performance}`（state/decisions/memory/run 按 `profile_id`；`selection` 支持 `date=` 按历史日 as-of 审计选股口径；`performance` 返回战绩明细）。
-- **自我提升闭环**: 模型上下文有「你的战绩」（真实胜率/回撤/盈亏比/连势），先看数据再决定是否改变打法；每 5 个交易日（回放）或周五/回撤≥8%（实盘）强制把战绩+逐日决策原文交给 LLM 自省，产出 `self_critique`/`lessons`/`style`，存 `trader_decision.review` 并写入 `kind='lesson'/'style'` 长期记忆。前端「战绩与自我提升」面板 + 每日「选股依据·候选池」「自我复盘」卡片。
+- **API**: `/api/trader/{profiles,overview,state,profile,decisions,memory,run,run-all,news,selection,performance,rules}`（state/decisions/memory/run 按 `profile_id`；`selection` 支持 `date=` 按历史日 as-of 审计选股口径、`weights=` 覆盖评分口径；`performance` 返回战绩明细；`rules` 返回生效纪律规则与兜底保护参数）。
+- **自我提升闭环**: 模型上下文有「你的战绩」（真实胜率/回撤/盈亏比/连势），先看数据再决定是否改变打法；每 3 个交易日 / 回撤≥8% / **单笔平仓亏损≥5%** 触发强制自省，把战绩+逐日决策原文交给 LLM，产出 `self_critique`/`lessons`/`style`/**`rules`**，存 `trader_decision.review` 并写入 `kind='lesson'/'style'/'rule'` 长期记忆。前端「战绩与自我提升」面板 + 每日「选股依据·候选池」「自我复盘」卡片。
+- **自省变硬约束（两层）**: ①下单路径 —— 生效规则由 `discipline.check_buy()` 在 `place_order/preview_order` 前检查，违规直接拒绝并返回券商式原因（模型只能调整）；②持仓保护 —— 每日决策后 `enforce_protection()` 对未平仓持仓做兜底止损/移动止损，模型不卖的由系统卖（回放与实盘 `run_daily_decision` 同一套）。规则可带有效期（默认 5 交易日）自动过期，且只能比系统兜底更严。
+- **评分口径可覆盖**: `factor_engine/config.py` 的 `WEIGHT_PRESETS`（`default` / `steady{trend18,momentum15,volume10,price10,stability30}`）+ `resolve_weights()`（预设名 / dict / `"trend:18,momentum:15"`）+ `load_config_with_weights()`（按目标满分等比缩放组内 condition 分值）。回放创建可带 `weights`（写入 `profile.meta.weights`），用于同一参数下的口径对照实验。
 - **纵向回放** (`replay.py`): 让交易员在过去数据里逐日无前视模拟。as-of 上下文（K线/regime/候选全部 `date<=D`，历史新闻不可回溯故标注不可用）；date-aware 工具按历史日成交/结算；游标存 `profile.meta.cursor`，每次最多 30 天可续跑；每 20 日 LLM 生成一次阶段总结（`kind='stage'`）压缩上下文；`distill_to_live()` 把回放风格/教训/笔记回流到源交易员。API `/api/trader/{replays,replay,replay/<id>/continue,replay/<id>/distill}`。前端 AI 页「AI 操盘手 → 纵向回放」。
 
 ## Key Files

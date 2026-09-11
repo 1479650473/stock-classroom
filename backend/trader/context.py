@@ -174,10 +174,10 @@ def build_market_block() -> dict:
     return out
 
 
-def build_candidates_block(top_n: int = 12) -> dict:
+def build_candidates_block(top_n: int = 12, weights=None) -> dict:
     """候选池（实时）：多因子评分 Top N + 事件驱动池 + 完整选股链路口径。"""
     from .selection import build_snapshot
-    return build_snapshot(None, top_n=top_n, with_events=True)
+    return build_snapshot(None, top_n=top_n, with_events=True, weights=weights)
 
 
 # ───────────────────────── 新闻 ─────────────────────────
@@ -243,10 +243,20 @@ def build_memory_block(profile_id: int, positions: List[dict], limit: int = 8,
         "recent_decisions": history,
         "holding_theses": held,
         "your_performance": perf,
+        "discipline_rules": _rules_block(int(profile_id), as_of),
         "notes": [{"kind": m["kind"], "code": m.get("code") or "",
                    "content": m["content"], "at": m["created_at"]}
-                  for m in mem if m["kind"] not in ("thesis", "style")][:20],
+                  for m in mem if m["kind"] not in ("thesis", "style", "rule")][:20],
     }
+
+
+def _rules_block(profile_id: int, as_of: Optional[str] = None) -> list:
+    """当前生效的纪律规则（自省结论 → 系统强制执行，模型必须知道）。"""
+    try:
+        from .discipline import active_rules, describe_rules
+        return [x["text"] for x in describe_rules(active_rules(int(profile_id), as_of))]
+    except Exception:
+        return []
 
 
 # ───────────────────────── 汇总 ─────────────────────────
@@ -255,9 +265,10 @@ def build_daily_context(profile: dict, with_candidates: bool = True,
                         with_news: bool = True) -> dict:
     """构建一次决策的完整上下文。"""
     account_id = int(profile["account_id"])
+    weights = (profile.get("meta") or {}).get("weights")
     acct = build_account_block(account_id)
     market = build_market_block()
-    cands = build_candidates_block() if with_candidates else {"picks": [], "events": []}
+    cands = build_candidates_block(weights=weights) if with_candidates else {"picks": [], "events": []}
     news_block = (build_news_block(acct["positions"], cands.get("picks", []))
                   if with_news else {"market": [], "stocks": []})
     memory = build_memory_block(int(profile["id"]), acct["positions"],

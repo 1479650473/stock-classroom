@@ -413,6 +413,8 @@ export interface TraderCandidates {
 }
 export interface TraderReview {
   self_critique?: string; lessons?: string[]; style?: string
+  rules?: { kind?: string; value?: number; regimes?: string[]; until?: string; reason?: string; text?: string }[]
+  trigger?: string
   performance?: Record<string, unknown>
 }
 export interface TraderDecision {
@@ -424,6 +426,7 @@ export interface TraderDecision {
   review?: TraderReview
   news: { market?: TraderNewsItem[]; stocks?: TraderStockNews[] }
   plan: TraderOrder[]; executions: TraderExecution[]
+  rejections?: { code?: string; side?: string; qty?: number; message?: string }[]
   trace: TraderTrace[]
   nav_before?: number; nav_after?: number
   total_assets_before?: number; total_assets_after?: number

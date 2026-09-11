@@ -44,8 +44,8 @@ const expanded = ref<Record<string, boolean>>({})
 // ── 实时流 ──
 interface StreamTool { name: string; args: Record<string, unknown>; result?: string; ok?: boolean }
 interface StreamPos { code: string; name: string; qty: number; cost_price?: number; price?: number; float_pnl?: number; pnl_pct?: number | null }
-interface StreamOrder { code: string; name?: string; side: string; qty: number }
-interface StreamExec { ok?: boolean; detail?: string; price?: number }
+interface StreamOrder { code: string; name?: string; side: string; qty: number; forced?: boolean; detail?: string; reason?: string; ok?: boolean; pnl_pct?: number }
+interface StreamExec { ok?: boolean; detail?: string; price?: number; forced?: boolean }
 interface StreamSettled {
   nav?: number; assets_before?: number; total_assets?: number; balance?: number
   positions?: number; positions_detail?: StreamPos[]
@@ -61,7 +61,9 @@ interface StreamDay {
   settled?: StreamSettled
   warning?: string
   candidates?: CandSnapshot
-  review?: { self_critique: string; lessons: string[]; style: string }
+  review?: { self_critique: string; lessons: string[]; style: string; rules?: string[]; trigger?: string }
+  protection?: StreamOrder[]
+  rejections?: { code?: string; side?: string; qty?: number; message?: string }[]
   status: 'running' | 'settled'
 }
 const liveDays = ref<StreamDay[]>([])
@@ -114,15 +116,45 @@ function candsOf(c?: unknown): CandSnapshot[] {
 function reviewFilled(r?: { self_critique?: string; lessons?: string[]; style?: string }) {
   return !!(r && (r.self_critique || (r.lessons || []).length || r.style))
 }
+const RULE_CN: Record<string, string> = {
+  block_new_buy: '禁止开新仓', position_cap_pct: '单票仓位上限', stop_loss_pct: '止损线',
+  max_new_positions_day: '单日新仓数上限', require_momentum_up: '买入需 20 日动量为正',
+}
+// 规则既可能是自省原文（对象），也可能是已经格式化过的短句（字符串）
+function fmtRule(r: unknown): string {
+  if (typeof r === 'string') return r
+  const o = (r || {}) as { kind?: string; value?: number; regimes?: string[]; until?: string; reason?: string; text?: string }
+  if (o.text) return o.text
+  let txt = RULE_CN[o.kind || ''] || o.kind || ''
+  if (o.value && o.kind !== 'require_momentum_up') txt += o.kind === 'max_new_positions_day' ? ` ${o.value} 个` : ` ${o.value}%`
+  if (o.regimes?.length) txt += `（${o.regimes.join('/')}）`
+  if (o.until) txt += ` · 至 ${o.until}`
+  if (o.reason) txt += ` —— ${o.reason}`
+  return txt
+}
+// 当前生效的纪律规则（自省结论 → 交易系统强制执行）
+const ruleMemories = computed(() => {
+  const out: { id: number; content: string }[] = []
+  const seen = new Set<string>()
+  for (const m of [...(current.value?.memory || [])].sort((a, b) => b.id - a.id)) {
+    if (m.kind !== 'rule' || seen.has(m.code || '')) continue
+    seen.add(m.code || '')
+    try {
+      out.push({ id: m.id, content: fmtRule(JSON.parse(m.content)) })
+    } catch { out.push({ id: m.id, content: m.content }) }
+  }
+  return out
+})
 // 自我提升记录：优先展示教训/风格/市场观察，最新的在前
 const ownMemories = computed(() => {
   const order: Record<string, number> = { lesson: 0, style: 1, market: 2, note: 3, thesis: 4, stage: 5 }
   return [...(current.value?.memory || [])]
+    .filter((m) => m.kind !== 'rule')
     .sort((a, b) => (order[a.kind] ?? 9) - (order[b.kind] ?? 9) || b.id - a.id)
     .slice(0, 8)
 })
 function kindLabel(k: string) {
-  return ({ lesson: '教训', style: '风格', market: '市场', note: '笔记', thesis: '持仓逻辑', stage: '阶段总结' } as Record<string, string>)[k] || k
+  return ({ lesson: '教训', style: '风格', market: '市场', note: '笔记', thesis: '持仓逻辑', stage: '阶段总结', rule: '纪律' } as Record<string, string>)[k] || k
 }
 const perfView = computed(() => {
   const t = current.value?.performance?.trading
@@ -178,12 +210,18 @@ function startLive(jobId: string) {
       } else if (ev === 'review') {
         const d = curDay()
         if (d) {
+          const f = frame as Record<string, unknown>
           d.review = {
-            self_critique: String((frame as Record<string, unknown>).self_critique || ''),
-            lessons: ((frame as Record<string, unknown>).lessons as string[]) || [],
-            style: String((frame as Record<string, unknown>).style || ''),
+            self_critique: String(f.self_critique || ''),
+            lessons: (f.lessons as string[]) || [],
+            style: String(f.style || ''),
+            rules: (f.rules as string[]) || [],
+            trigger: String(f.trigger || ''),
           }
         }
+      } else if (ev === 'protection') {
+        const d = curDay()
+        if (d) d.protection = (frame as Record<string, unknown>).orders as StreamOrder[]
       } else if (ev === 'agent_text') {
         const d = curDay(); if (d) d.text += String((frame as Record<string, unknown>).delta || '')
       } else if (ev === 'tool_call') {
@@ -219,6 +257,7 @@ function startLive(jobId: string) {
             executions: (f.executions as StreamExec[]) || [],
             error: String(f.error || ''),
           }
+          d.rejections = (f.rejections as StreamDay['rejections']) || []
           d.status = 'settled'
         }
         refreshLiveDetail()
@@ -566,7 +605,18 @@ watch([current, navSeries], async () => { await Promise.resolve(); chart.draw() 
           <div v-for="m in ownMemories" :key="m.id" class="memitem">
             <span class="mk">{{ kindLabel(m.kind) }}</span><span>{{ m.content }}</span>
           </div>
-          <div v-if="!ownMemories.length" class="muted">还没有写入任何教训或风格，它在每次决策与每 5 日自省中会持续补充。</div>
+          <div v-if="!ownMemories.length" class="muted">还没有写入任何教训或风格，它在每次决策与每 3 日自省中会持续补充。</div>
+        </div>
+
+        <div class="memlist" style="margin-top:12px">
+          <div class="block__title">生效中的纪律规则（自省结论 → 交易系统强制执行）</div>
+          <div v-for="r in ruleMemories" :key="r.id" class="memitem memitem--rule">
+            <span class="mk mk--rule">纪律</span><span>{{ r.content }}</span>
+          </div>
+          <div v-if="!ruleMemories.length" class="muted">
+            暂无。模型在自省时会按战绩定下可执行的约束（如「减速期禁新仓」「止损收缩到 6%」），
+            到期自动失效；系统每天收盘还会做兜底止损（默认 8%）。
+          </div>
         </div>
       </SectionCard>
 
@@ -652,6 +702,18 @@ watch([current, navSeries], async () => { await Promise.resolve(); chart.draw() 
                       </div>
                     </div>
                     <div v-else class="orders orders--none">当日无委托 · 保持现状</div>
+                    <div v-if="day.protection?.length" class="orders orders--forced">
+                      <span class="order__side down">系统保护</span>
+                      <span v-for="(o, i) in day.protection" :key="'pr' + i" class="order__name">
+                        {{ o.name || o.code }} · {{ o.detail || o.reason || '兜底止损' }}</span>
+                    </div>
+                    <div v-if="day.rejections?.length" class="rejects">
+                      <div class="block__title">被纪律规则拦截的委托（系统强制拒绝）</div>
+                      <div v-for="(r, i) in day.rejections" :key="'rj' + i" class="rejrow">
+                        <span class="rejrow__code">{{ r.side === 'buy' ? '买入' : '卖出' }} {{ r.code }} {{ r.qty }}股</span>
+                        <span class="rejrow__msg">{{ r.message }}</span>
+                      </div>
+                    </div>
                     <div v-if="(day.settled.positions_detail || []).length" class="pos">
                       <span class="cell__k">持仓明细</span>
                       <div class="pos__list">
@@ -663,18 +725,22 @@ watch([current, navSeries], async () => { await Promise.resolve(); chart.draw() 
                     </div>
                   </div>
 
-                  <!-- 自我复盘（按真实战绩自省，写入长期记忆） -->
+                  <!-- 自我复盘（按真实战绩自省，写入长期记忆 + 纪律规则） -->
                   <div v-if="day.review" class="review">
                     <div class="review__head">
                       <Icon name="sparkles" :size="13" />
                       <span>自我复盘</span>
-                      <span class="tmeta tmeta--r">按真实战绩自省 · 已写入长期记忆</span>
+                      <span class="tmeta tmeta--r">{{ day.review.trigger || '按真实战绩自省' }} · 已写入长期记忆</span>
                     </div>
                     <p v-if="day.review.self_critique" class="review__text">{{ day.review.self_critique }}</p>
                     <ul v-if="day.review.lessons?.length" class="review__lessons">
                       <li v-for="(l, i) in day.review.lessons" :key="i">{{ l }}</li>
                     </ul>
                     <p v-if="day.review.style" class="review__style">风格更新：{{ day.review.style }}</p>
+                    <div v-if="day.review.rules?.length" class="review__rules">
+                      <span class="tmeta">已生效的纪律规则（交易系统强制）</span>
+                      <span v-for="(r, i) in day.review.rules" :key="i" class="ruletag">{{ fmtRule(r) }}</span>
+                    </div>
                   </div>
 
                   <!-- 选股依据 · 候选池（可审计，默认折叠） -->
@@ -775,6 +841,13 @@ watch([current, navSeries], async () => { await Promise.resolve(); chart.draw() 
                     <span>总资产 {{ fmtMoney(d.total_assets_after) }}</span>
                     <span>持仓 {{ (((d.context as Record<string, unknown>)?.positions as unknown[]) || []).length }} 只</span>
                   </div>
+                  <div v-if="d.rejections?.length" class="rejects">
+                    <div class="block__title">被纪律规则拦截的委托（系统强制拒绝）</div>
+                    <div v-for="(r, i) in d.rejections" :key="i" class="rejrow">
+                      <span class="rejrow__code">{{ r.side === 'buy' ? '买入' : '卖出' }} {{ r.code }} {{ r.qty }}股</span>
+                      <span class="rejrow__msg">{{ r.message || r.code }}</span>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -789,6 +862,10 @@ watch([current, navSeries], async () => { await Promise.resolve(); chart.draw() 
                   <li v-for="(l, i) in d.review.lessons" :key="i">{{ l }}</li>
                 </ul>
                 <p v-if="d.review?.style" class="review__style">风格更新：{{ d.review.style }}</p>
+                <div v-if="d.review?.rules?.length" class="review__rules">
+                  <span class="tmeta">已生效的纪律规则（交易系统强制）</span>
+                  <span v-for="(r, i) in d.review.rules" :key="i" class="ruletag">{{ fmtRule(r) }}</span>
+                </div>
               </div>
 
               <div v-for="c in candsOf(d.candidates)" :key="'hc' + d.id" class="cands">
@@ -948,6 +1025,9 @@ watch([current, navSeries], async () => { await Promise.resolve(); chart.draw() 
 .cell__v { font-size: var(--fs-sm); font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
 .orders { display: flex; flex-direction: column; gap: 1px; background: var(--border); }
 .orders--none { padding: 10px 14px; font-size: var(--fs-xs); color: var(--text-faint); background: var(--panel); }
+.orders--forced { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 14px;
+  background: var(--panel); font-size: var(--fs-xs); border-left: 3px solid color-mix(in srgb, var(--down, var(--ok)) 55%, transparent); }
+.orders--forced .order__name { color: var(--text-sub); }
 .order { display: flex; align-items: center; gap: 10px; padding: 9px 14px; background: var(--panel); font-size: var(--fs-xs); }
 .order__side { font-weight: 700; }
 .order__name { color: var(--text); font-weight: 600; }
@@ -974,6 +1054,13 @@ watch([current, navSeries], async () => { await Promise.resolve(); chart.draw() 
 .memlist { display: flex; flex-direction: column; gap: 4px; }
 .memitem { display: flex; gap: 8px; font-size: var(--fs-xs); line-height: 1.7; color: var(--text-sub); }
 .memitem .mk { flex: 0 0 52px; color: var(--accent); }
+.memitem--rule .mk--rule { color: var(--warn, var(--accent)); }
+.review__rules { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-top: 2px; }
+.ruletag { font-size: var(--fs-xs); line-height: 1.6; padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--text-sub); border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent); }
+.rejects { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
+.rejrow { display: flex; gap: 8px; font-size: var(--fs-xs); line-height: 1.7; }
+.rejrow__code { flex: 0 0 150px; color: var(--warn, var(--accent)); }
+.rejrow__msg { color: var(--text-sub); }
 .tools__head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer; border-radius: var(--radius-sm); font-size: var(--fs-xs); color: var(--text-sub); background: var(--panel-2); }
 .tools__head:hover { color: var(--text); }
 .tools__list { display: flex; flex-direction: column; gap: 2px; padding: 6px 0 0 18px; }

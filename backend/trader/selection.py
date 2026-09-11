@@ -48,11 +48,14 @@ def _filter_rows(filters: dict) -> list:
     return rows
 
 
-def _scorecard_info() -> dict:
-    """评分卡口径：数据窗口 + 各因子组权重（config.groups 是 dict 列表）。"""
+def _scorecard_info(weights=None) -> dict:
+    """评分卡口径：数据窗口 + 各因子组权重（config.groups 是 dict 列表）。
+
+    weights 非空时展示覆盖后的口径（对照实验用），并标出改了哪几组。
+    """
     try:
-        from ..factor_engine.config import load_config
-        cfg = load_config()
+        from ..factor_engine.config import load_config_with_weights, resolve_weights
+        cfg = load_config_with_weights(weights)
         groups = []
         for g in cfg.groups or []:
             groups.append({
@@ -61,8 +64,10 @@ def _scorecard_info() -> dict:
                 "weight": float(g.get("weight") or 0),
                 "max_score": float(g.get("max_score") or g.get("weight") or 0),
             })
+        w = resolve_weights(weights)
         return {"name": cfg.name or "", "version": cfg.version or "",
-                "data_window": int(cfg.data_window or 0), "groups": groups}
+                "data_window": int(cfg.data_window or 0), "groups": groups,
+                "weights_override": w}
     except Exception as e:
         return {"error": f"评分卡读取失败：{e}"}
 
@@ -85,21 +90,25 @@ def _events_block(top_n: int) -> dict:
 
 
 def build_snapshot(ref_date: str | None = None, top_n: int = 12,
-                   with_events: bool = True) -> dict:
+                   with_events: bool = True, weights=None) -> dict:
     """构建候选池快照。
 
     Args:
         ref_date: None=实时最新；'YYYY-MM-DD' 或 'YYYYMMDD'=按该日 as-of 截断（回放/回测）
         top_n: 返回候选数量
         with_events: 是否附事件驱动池（回放应为 False）
+        weights: 评分口径覆盖（预设名 'steady' / {组id:满分} / "trend:18,..."），None=默认口径
     """
     ref = (str(ref_date or "").replace("-", "") or None)
+    from ..factor_engine.config import resolve_weights
+    wover = resolve_weights(weights)
     out = {
         "as_of": ref or "实时最新",
         "mode": "as_of" if ref else "live",
         "chain": "stock_list(active) → 规则过滤 → 60日K线 → 五组加权打分 → TopN",        "universe": UNIVERSE_NOTE,
         "reference_date": ref or "",
-        "scorecard": _scorecard_info(),
+        "scorecard": _scorecard_info(weights),
+        "weights_override": wover,
         "filters": [],
         "stats": {},
         "picks": [],
@@ -109,12 +118,13 @@ def build_snapshot(ref_date: str | None = None, top_n: int = 12,
     }
     try:
         from ..factor_engine import DEFAULT_FILTERS, FactorScorer
+        from ..factor_engine.config import load_config_with_weights
         from ..factor_engine.filters import apply_filters
 
         universe = FactorScorer._get_candidates(KLINE_DB)
         kept_pairs = apply_filters(universe, DEFAULT_FILTERS, KLINE_DB)
         stats: dict = {}
-        scorer = FactorScorer()
+        scorer = FactorScorer(config=load_config_with_weights(weights))
         picks = scorer.score_batch(KLINE_DB, top_n=int(top_n or 12), min_klines=10,
                                    timeout_seconds=90, filters=DEFAULT_FILTERS,
                                    ref_date=ref, stats=stats)
@@ -162,8 +172,7 @@ def compact_note(snap: dict) -> dict:
             "名称": (snap.get("scorecard") or {}).get("name"),
             "窗口": f"{(snap.get('scorecard') or {}).get('data_window')} 个交易日",
             "权重": [f"{g.get('name')}{g.get('weight'):g}" for g in (snap.get("scorecard") or {}).get("groups") or []],
-        },
-        "统计": {
+        },        "统计": {
             "股票池": st.get("universe_total"),
             "过滤后": st.get("after_filters"),
             "实际评分": st.get("scored"),
@@ -172,3 +181,6 @@ def compact_note(snap: dict) -> dict:
         },
         "说明": "候选是系统按上述规则自动筛出的，你也可以只凭自己的判断买池外的股票，但要在 reason 里写清依据。",
     }
+    if (snap.get("weights_override") or {}):
+        note["评分卡"]["口径覆盖"] = snap["weights_override"]
+    return note

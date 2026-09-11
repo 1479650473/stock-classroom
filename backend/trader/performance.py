@@ -210,10 +210,17 @@ def performance_block(profile_id: int, account_id: int,
 REVIEW_SYS = (
     "你是这个账户交易员的复盘教练。下面是它自己的真实战绩数据和最近若干天的决策原文。"
     "请只基于数据说话，不要客套，指出哪些判断被盈亏证伪、哪些有效。"
+    "除了文字，还要把结论落成**可执行的纪律规则**（下次决策会被交易系统强制执行，违者委托被拒），"
+    "规则只能比系统兜底更保守，不能放宽。可用类型只有："
+    'block_new_buy（禁开新仓，可带 regimes:[牛市/熊市/震荡/震荡偏强/震荡偏弱]）、'
+    'position_cap_pct（单票仓位上限%）)、stop_loss_pct（止损线%，必须小于 8）、'
+    'max_new_positions_day（单日新仓数上限）、require_momentum_up（买入需 20 日动量为正）。'
+    "没有把握就不要给规则，宁可给空数组。"
     "直接输出 JSON，不要推理过程，不要 markdown 代码块，越短越好："
     '{"self_critique":"不超过150字，指出具体错误、错在哪一天、被什么数据证伪",'
     '"lessons":["最多3条，每条不超过40字，针对具体行为"],'
-    '"style":"不超过60字，更新后的自我风格认知"}'
+    '"style":"不超过60字，更新后的自我风格认知",'
+    '"rules":[{"kind":"block_new_buy","regimes":["震荡"],"days":5,"reason":"不超过30字"}]}'
 )
 
 
@@ -275,7 +282,15 @@ def review_trader(llm, perf: dict, decisions: list, max_tokens: int = 2600) -> d
         crit = (_salvage_field(raw, "self_critique") or str(raw or "").strip())[:1200]
     if not (crit or lessons or style):
         return {"error": "自省无内容（模型返回空）"}
-    return {"self_critique": crit[:1500], "lessons": lessons, "style": style[:800]}
+    # 自省结论 → 可执行纪律规则（白名单校验 + 只能收紧 + 自动过期）
+    rules = []
+    try:
+        from .discipline import normalize_rules
+        rules = normalize_rules(data.get("rules"), as_of=str(perf.get("as_of") or ""))
+    except Exception:
+        rules = []
+    return {"self_critique": crit[:1500], "lessons": lessons, "style": style[:800],
+            "rules": rules}
 
 
 def performance_summary_text(perf: dict) -> str:

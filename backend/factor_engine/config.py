@@ -31,6 +31,89 @@ def load_config_from_dict(d: dict) -> ScorecardConfig:
     return ScorecardConfig.from_dict(d)
 
 
+#: 预设评分口径。值是「因子组 id → 目标满分(权重)」，缺省不覆盖。
+WEIGHT_PRESETS: dict = {
+    "default": {},
+    # 稳健偏向：把模型的教训（"只买趋势与稳定双达标的均衡股，不追纯趋势腿"）落成评分口径。
+    # 稳定性 10 → 30 成为主导，趋势 30 → 18、动量 25 → 15 让位。
+    "steady": {"trend": 18, "momentum": 15, "volume": 10, "price": 10, "stability": 30},
+}
+
+
+def resolve_weights(spec) -> dict:
+    """把外部传入的权重描述统一成 {组id: 目标满分}。
+
+    支持：预设名（'steady'）、dict、逗号/分号分隔的 "trend:18,momentum:15" 字符串。
+    非法输入返回 {}（走默认口径），不抛异常。
+    """
+    if not spec:
+        return {}
+    if isinstance(spec, str):
+        s = spec.strip()
+        if s in WEIGHT_PRESETS:
+            return dict(WEIGHT_PRESETS[s])
+        out: dict = {}
+        for part in s.replace(";", ",").split(","):
+            if ":" not in part:
+                continue
+            k, _, v = part.partition(":")
+            try:
+                out[k.strip()] = float(v)
+            except ValueError:
+                continue
+        return out
+    if isinstance(spec, dict):
+        out = {}
+        for k, v in spec.items():
+            try:
+                out[str(k)] = float(v)
+            except (TypeError, ValueError):
+                continue
+        return out
+    return {}
+
+
+def load_config_with_weights(weights=None, path: str = None) -> ScorecardConfig:
+    """加载评分卡并按目标权重改写各因子组。
+
+    实现语义：把某组内**所有条件分值按 s = 目标满分 / 原满分 等比缩放**，同时更新
+    该组 max_score/min_score。这样组内相对关系不变，只改变组与组之间的权重占比，
+   总分量级与默认口径保持一致（可直接比较）。
+    """
+    w = resolve_weights(weights)
+    if not w:
+        return load_config(path)
+    if path is None:
+        path = _DEFAULT_CONFIG_PATH
+    with open(path, "r", encoding="utf-8") as f:
+        raw = json.load(f)
+    for g in raw.get("groups", []):
+        gid = str(g.get("id") or "")
+        if gid not in w:
+            continue
+        cur = float(g.get("max_score", g.get("weight", 0)) or 0)
+        target = float(w[gid])
+        if cur <= 0 or target <= 0:
+            continue
+        s = target / cur
+        for ind in g.get("indicators", []):
+            for cond in ind.get("conditions", []):
+                try:
+                    cond["score"] = round(float(cond.get("score", 0)) * s, 2)
+                except (TypeError, ValueError):
+                    continue
+        g["max_score"] = round(target, 2)
+        g["weight"] = round(target, 2)
+        if g.get("min_score") is not None:
+            try:
+                g["min_score"] = round(float(g["min_score"]) * s, 2)
+            except (TypeError, ValueError):
+                pass
+    raw["weights_override"] = w
+    _validate(raw)
+    return ScorecardConfig.from_dict(raw)
+
+
 def _validate(raw: dict):
     """基础结构校验"""
     if "groups" not in raw:

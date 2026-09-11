@@ -308,7 +308,23 @@ def selection_preview():
     from backend.trader.selection import build_snapshot
     ref = request.args.get("date") or None
     top_n = int_arg(request.args.get("top"), 12, 1, 50)
-    return ok(build_snapshot(ref, top_n=top_n, with_events=not ref))
+    weights = request.args.get("weights") or None
+    return ok(build_snapshot(ref, top_n=top_n, with_events=not ref, weights=weights))
+
+
+@bp.route("/rules", methods=["GET"])
+def rules():
+    """当前生效的纪律规则（自省结论 → 交易系统强制执行）。"""
+    from backend.trader import discipline
+    p = _require_profile(_pid_arg())
+    if p is None:
+        return err(404, "not_found", "交易员不存在", retriable=False)
+    ref = request.args.get("date") or None
+    rs = discipline.active_rules(int(p["id"]), ref)
+    return ok({"profile_id": int(p["id"]), "as_of": ref or "最新",
+               "protection": discipline.protection_rules(int(p["id"]), ref),
+               "presets": {k: v for k, v in discipline.DEFAULT_PROTECTION.items()},
+               "rules": discipline.describe_rules(rs)})
 
 
 @bp.route("/performance", methods=["GET"])
@@ -349,6 +365,7 @@ def create_replay_run():
             days=int(body.get("days") or 30),
             initial_capital=body.get("initial_capital"),
             model=body.get("model"),
+            weights=body.get("weights"),
         )
     except Exception as e:
         return err(400, "replay_create_failed", str(e)[:200], retriable=False)

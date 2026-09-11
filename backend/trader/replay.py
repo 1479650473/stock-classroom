@@ -32,8 +32,9 @@ from .agent import TraderAgent
 CAL_FILE = os.path.join(DATA_DIR, "trade_calendar.json")
 HS300_PATH = os.path.join(DATA_DIR, "hs300.json")
 SUMMARY_EVERY = 20      # 每 N 个交易日生成一次阶段总结
-REVIEW_EVERY = 5        # 每 N 个交易日强制做一次绩效自省（写入 lesson/style）
+REVIEW_EVERY = 3        # 每 N 个交易日强制做一次绩效自省（写入 lesson/style/rules）
 REVIEW_DD_PCT = 8.0     # 累计回撤超过该值也强制自省
+REVIEW_TRADE_LOSS_PCT = 5.0   # 单笔平仓亏损超过该比例立即自省
 MAX_BATCH = 30          # 单次回放最多天数
 
 
@@ -183,10 +184,10 @@ def _account_block(account_id: int, as_of: str) -> dict:
     }
 
 
-def _candidates_block(as_of: str, top_n: int = 12) -> dict:
+def _candidates_block(as_of: str, top_n: int = 12, weights=None) -> dict:
     """回放候选池：按当日 as-of 截断，不附事件池（历史新闻不可回溯）。"""
     from .selection import build_snapshot
-    return build_snapshot(as_of, top_n=top_n, with_events=False)
+    return build_snapshot(as_of, top_n=top_n, with_events=False, weights=weights)
 
 
 def _memory_block(profile_id: int, positions: list, account_id: int = 0,
@@ -227,6 +228,7 @@ def _memory_block(profile_id: int, positions: list, account_id: int = 0,
 
 def build_replay_context(profile: dict, as_of: str) -> dict:
     account_id = int(profile["account_id"])
+    weights = (profile.get("meta") or {}).get("weights")
     acct = _account_block(account_id, as_of)
     return {
         "generated_at": as_of,
@@ -236,7 +238,7 @@ def build_replay_context(profile: dict, as_of: str) -> dict:
         "pending_orders": acct["pending_orders"],
         "nav_history": acct["nav_history"],
         "market": {"regime": _regime_asof(as_of), "hs300": _hs300_trend_asof(as_of)},
-        "candidates": _candidates_block(as_of),
+        "candidates": _candidates_block(as_of, weights=weights),
         "news": {"market": [], "stocks": [],
                  "note": "回放模式：历史新闻不可回溯，本日无新闻输入，仅凭行情/候选/宏观决策。"},
         "memory": _memory_block(int(profile["id"]), acct["positions"],
@@ -248,8 +250,12 @@ def build_replay_context(profile: dict, as_of: str) -> dict:
 
 def create_replay(source_profile_id: int, start_date: str, days: int = MAX_BATCH,
                   initial_capital: Optional[float] = None,
-                  model: Optional[str] = None) -> dict:
-    """创建一个回放档案（独立账户 + 空记忆），并返回它。"""
+                  model: Optional[str] = None,
+                  weights=None) -> dict:
+    """创建一个回放档案（独立账户 + 空记忆），并返回它。
+
+    weights: 评分口径覆盖（预设名或 {组id:满分}），用于对照实验；None=默认口径。
+    """
     store.ensure_schema()
     src = store.get_profile(int(source_profile_id))
     if src is None or src.get("kind") == "replay":
@@ -272,12 +278,45 @@ def create_replay(source_profile_id: int, start_date: str, days: int = MAX_BATCH
         "initial_capital": cap,
         "note": "回放档案：无前视逐日模拟，新闻不可用",
     }
+    from ..factor_engine.config import resolve_weights
+    wspec = weights if isinstance(weights, str) else None
+    wover = resolve_weights(weights)
+    if wover and wspec:
+        meta["weights"] = wspec
+    elif wover:
+        meta["weights"] = wover
+    if wover:
+        name = f"回放[{wspec or '自定义权重'}]·{src['name']}·{dates[0]}"
+        try:
+            engine.rename_account(aid, name)
+        except Exception:
+            pass
     prof = store.create_profile(
         account_id=aid, name=name, initial_capital=cap, persona="",
         model=(model if model is not None else (src.get("model") or "")),
         risk_rules=src.get("risk_rules") or {}, kind="replay", meta=meta)
     store.update_profile(int(prof["id"]), enabled=0)
     return store.get_profile(int(prof["id"]))
+
+
+def _today_loss_trades(ctx: dict, execs: list) -> list:
+    """今日平仓且亏损超过阈值的交易（用于触发立即自省）。"""
+    costs = {str(p.get("code")): float(p.get("cost_price") or 0)
+             for p in (ctx.get("positions") or [])}
+    out = []
+    for e in execs or []:
+        if not isinstance(e, dict) or not e.get("ok"):
+            continue
+        if str(e.get("side")).lower() != "sell":
+            continue
+        cost = costs.get(str(e.get("code")))
+        px = float(e.get("price") or 0)
+        if not cost or not px:
+            continue
+        pct = (px / cost - 1) * 100
+        if pct <= -REVIEW_TRADE_LOSS_PCT:
+            out.append({"code": e.get("code"), "name": e.get("name"), "pnl_pct": round(pct, 2)})
+    return out
 
 
 def _settle_pending(engine: TradeEngine, account_id: int, as_of: str) -> None:
@@ -305,6 +344,15 @@ def _summarize(llm, decisions: list) -> str:
             text, max_tokens=500, temperature=0.4)
     except Exception:
         return ""
+
+
+def _active_rule_texts(pid: int, as_of: str) -> list:
+    """当前生效的纪律规则（给前端/轨迹用）。"""
+    try:
+        from .discipline import active_rules, describe_rules
+        return describe_rules(active_rules(int(pid), as_of))
+    except Exception:
+        return []
 
 
 def _review_trader(llm, pid: int, perf: dict, decisions: list, as_of: str) -> dict:
@@ -364,8 +412,24 @@ def run_replay_batch(run_id: int, days: int = MAX_BATCH,
         agent = TraderAgent(
             account_id, pid, risk_rules=profile.get("risk_rules"),
             decision_id=decision_id, model=profile.get("model") or None,
-            trade_date=d, price_fn=lambda c, _d=d: _close_asof(c, _d), llm=llm)
+            trade_date=d, price_fn=lambda c, _d=d: _close_asof(c, _d), llm=llm,
+            weights=(profile.get("meta") or {}).get("weights"))
         result = agent.decide(ctx, on_event=lambda e: _event(progress, e))
+        # 4b) 系统兜底保护：模型不卖的，系统按纪律规则强制卖（止损/移动止损）
+        forced = []
+        try:
+            from .discipline import enforce_protection
+            forced = enforce_protection(engine, pid, account_id, d,
+                                        price_fn=lambda c, _d=d: _close_asof(c, _d),
+                                        trade_date=d,
+                                        emit=lambda m: _emit(progress, m))
+        except Exception as e:
+            _emit(progress, f"持仓保护跳过：{e}")
+        decisions_today = agent.tools.executions or []
+        if forced:
+            agent.tools.plan = list(agent.tools.plan) + forced
+            agent.tools.executions = list(agent.tools.executions) + forced
+            _event(progress, {"event": "protection", "date": d, "orders": forced})
         # 5) 落库 + 净值结算
         try:
             snap = engine.snapshot_nav(account_id, d)
@@ -379,6 +443,7 @@ def run_replay_batch(run_id: int, days: int = MAX_BATCH,
             context=ctx, candidates=ctx.get("candidates") or {}, news=ctx.get("news") or {},
             plan=agent.tools.plan,
             executions=agent.tools.executions, trace=result.get("trace") or [],
+            rejections=agent.tools.rejections,
             nav_after=nav_after, total_assets_after=float(s2.get("total_assets", 0) or 0),
             error=result.get("error") or "", finished_at=datetime.now().isoformat(timespec="seconds"))
         for n in result.get("notes") or []:
@@ -404,14 +469,19 @@ def run_replay_batch(run_id: int, days: int = MAX_BATCH,
             "plan": agent.tools.plan, "executions": agent.tools.executions,
             "thinking": result.get("thinking") or "", "reflection": result.get("reflection") or "",
             "error": result.get("error") or "",
+            "rejections": agent.tools.rejections,
+            "rules": [x["text"] for x in _active_rule_texts(pid, d)],
         })
-        # 6) 每 N 日压缩一次阶段总结 + 强制绩效自省（自我提升闭环）
+        # 6) 每 N 日压缩一次阶段总结 + 强制绩效自省（自我提升闭环：战绩 → 教训/风格/纪律规则）
         if llm is not None:
             perf = (ctx.get("memory") or {}).get("your_performance") or {}
             dd = abs(float(((perf.get("nav") or {}).get("max_drawdown_pct")) or 0))
-            need_review = (done % REVIEW_EVERY == 0) or (dd >= REVIEW_DD_PCT)
+            bad_trades = _today_loss_trades(ctx, agent.tools.executions)
+            need_review = (done % REVIEW_EVERY == 0) or (dd >= REVIEW_DD_PCT) or bool(bad_trades)
             if need_review:
-                _emit(progress, f"{d} 绩效自省中（战绩 → 教训/风格）…", 96)
+                why = ("单笔亏损触发" if bad_trades else
+                       ("回撤触发" if dd >= REVIEW_DD_PCT else f"每 {REVIEW_EVERY} 日定期"))
+                _emit(progress, f"{d} 绩效自省中（{why} → 教训/风格/纪律规则）…", 96)
                 rev = _review_trader(llm, pid, perf,
                                      list(reversed(store.list_decisions(pid, limit=REVIEW_EVERY))),
                                      d)
@@ -422,11 +492,18 @@ def run_replay_batch(run_id: int, days: int = MAX_BATCH,
                         store.add_memory(pid, lesson, kind="lesson", decision_id=decision_id)
                     if rev.get("style"):
                         store.add_memory(pid, rev["style"], kind="style", decision_id=decision_id)
+                    rules = rev.get("rules") or []
+                    if rules:
+                        from .discipline import save_rules
+                        save_rules(pid, rules, decision_id=decision_id)
+                        for r in rules:
+                            _emit(progress, f"纪律规则生效：{r.get('kind')} {r.get('value') or ''} {r.get('regimes') or ''} 至 {r.get('until')}")
                     store.upsert_decision(pid, d, review=rev)
-                    _event(progress, {"event": "review", "date": d,
+                    _event(progress, {"event": "review", "date": d, "trigger": why,
                                       "self_critique": rev.get("self_critique") or "",
                                       "lessons": rev.get("lessons") or [],
                                       "style": rev.get("style") or "",
+                                      "rules": [x["text"] for x in _active_rule_texts(pid, d)],
                                       "performance": perf})
             if done % SUMMARY_EVERY == 0:
                 recent = store.list_decisions(pid, limit=SUMMARY_EVERY)

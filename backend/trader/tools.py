@@ -27,7 +27,8 @@ class TraderTools:
                  risk_rules: Optional[dict] = None,
                  decision_id: Optional[int] = None, dry_run: bool = False,
                  trade_date: Optional[str] = None,
-                 price_fn: Optional[Any] = None):
+                 price_fn: Optional[Any] = None,
+                 weights: Optional[Any] = None):
         self.account_id = int(account_id)
         self.profile_id = int(profile_id)
         self.risk_rules = risk_rules or {}
@@ -35,11 +36,43 @@ class TraderTools:
         self.dry_run = bool(dry_run)
         self.trade_date = trade_date or None   # 回放: 历史交易日 YYYY-MM-DD
         self.price_fn = price_fn               # 回放: 返回该日收盘价的函数; 为 None 时用实时
+        self.weights = weights                 # 评分口径（预设名或 {组id:满分}）
         self.decision: Optional[dict] = None   # submit_decision 捕获
         self.notes: list = []                  # remember 捕获
         self.log: list = []                    # 工具调用轨迹(供页面展示)
         self.plan: list = []                   # 已尝试的委托（含成交/拒绝）
         self.executions: list = []             # 与 plan 同结构的执行结果
+        self.rejections: list = []             # 被纪律规则拒绝的委托（可审计）
+        self.new_buys_today = 0                # 今日已成交的买入笔数（纪律规则用）
+
+    # ── 纪律规则 ──
+    def _discipline_buy(self, code: str, qty: int, price: float) -> Optional[dict]:
+        """买入前的纪律检查（自省结论 → 系统强制执行）。"""
+        try:
+            from . import discipline
+        except Exception:
+            return None
+        as_of = self.trade_date or None
+        engine = self._engine()
+        acc = engine.get_account(self.account_id) or {}
+        pos = {p["code"]: p for p in engine.get_positions(self.account_id)}
+        holdings = sum(float(p["qty"]) * float(p["cost_price"]) for p in pos.values())
+        total = float(acc.get("balance", 0)) + float(acc.get("frozen", 0)) + holdings
+        cost_now = (float(pos[code]["qty"]) * float(pos[code]["cost_price"])) if code in pos else 0.0
+        ratio_after = (price * qty + cost_now) / (total + price * qty) if total > 0 else 1.0
+        regime = ""
+        try:
+            rg = self.get_regime()
+            regime = str((rg or {}).get("regime") or (rg or {}).get("regime_cn") or "")
+        except Exception:
+            regime = ""
+        v = discipline.check_buy(self.profile_id, code, ratio_after=ratio_after,
+                                 regime=regime, new_buys_today=self.new_buys_today,
+                                 as_of=as_of)
+        if v:
+            self.rejections.append({"code": code, "side": "buy", "qty": qty,
+                                    "rule": v["rule"], "message": v["message"]})
+        return v
 
     # ── 内部 ──
     def _engine(self) -> TradeEngine:
@@ -129,9 +162,9 @@ class TraderTools:
     def get_candidates(self, top: int = 10) -> dict:
         if self.trade_date:
             from .replay import _candidates_block
-            return _candidates_block(self.trade_date, top_n=int(top or 10))
+            return _candidates_block(self.trade_date, top_n=int(top or 10), weights=self.weights)
         from .context import build_candidates_block
-        return build_candidates_block(top_n=int(top or 10))
+        return build_candidates_block(top_n=int(top or 10), weights=self.weights)
 
     # ── 下单预览（只读，不成交） ──
     def preview_order(self, code: str, side: str, order_type: str = "market",
@@ -162,6 +195,9 @@ class TraderTools:
             if ratio > engine.POSITION_LIMIT:
                 return {"可执行": False,
                         "原因": f"单票仓位将达 {ratio*100:.1f}%，超过 {engine.POSITION_LIMIT*100:.0f}% 上限"}
+            v = self._discipline_buy(code, qty, ref_price)
+            if v:
+                return {"可执行": False, "原因": v["message"], "规则": v["rule"].get("kind")}
             return {"可执行": True, "参考价": round(ref_price, 3), "预计成本": round(cost, 2),
                     "下单后单票占比": f"{ratio*100:.1f}%"}
         elif side == "sell":
@@ -193,6 +229,18 @@ class TraderTools:
             return {"error": "数量非法"}
         if self.dry_run:
             return {"error": "演练模式：未实际下单"}
+
+        if side == "buy":
+            ref_try = float(price) if order_type == "limit" and price else self._price(code)
+            if ref_try:
+                v = self._discipline_buy(code, qty, float(ref_try))
+                if v:
+                    rec = {"code": code, "name": name, "side": "buy", "qty": qty,
+                           "reason": reason, "ok": False, "detail": v["message"],
+                           "rule": v["rule"].get("kind")}
+                    self.plan.append(rec)
+                    self.executions.append(dict(rec))
+                    return {"error": v["message"], "提示": "这是交易系统的纪律规则（自省结论已生效），请按拒绝原因调整，不要重复下单。"}
 
         engine = self._engine()
         ref = (float(price) if order_type == "limit" and price else self._price(code))
@@ -229,6 +277,8 @@ class TraderTools:
                         "commission": round(float(trade.get("commission") or 0), 2),
                         "stamp_tax": round(float(trade.get("stamp_tax") or 0), 2),
                         "detail": "已成交" if order_type == "market" else "已成交(限价撮合)"})
+            if side == "buy":
+                self.new_buys_today += 1
             self.plan.append(rec)
             self.executions.append(dict(rec))
             self._after_fill(engine, side, code, reason)
@@ -277,7 +327,8 @@ class TraderTools:
 
     # ── 调度 ──
     _RESERVED = ("execute", "decision", "notes", "log", "plan", "executions",
-                 "account_id", "profile_id", "risk_rules", "decision_id", "dry_run")
+                 "account_id", "profile_id", "risk_rules", "decision_id", "dry_run",
+                 "weights", "rejections", "new_buys_today")
 
     def execute(self, name: str, args: dict) -> dict:
         fn = getattr(self, name, None)

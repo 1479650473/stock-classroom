@@ -81,7 +81,8 @@ def run_daily_decision(profile_id: Optional[int] = None, trigger: str = "manual"
     agent = TraderAgent(int(profile["account_id"]), pid,
                         risk_rules=profile.get("risk_rules"),
                         decision_id=decision_id, dry_run=dry_run,
-                        model=profile.get("model") or None)
+                        model=profile.get("model") or None,
+                        weights=(profile.get("meta") or {}).get("weights"))
     result = agent.decide(ctx, progress=lambda m: _emit(progress, m))
 
     # 委托与执行由工具直接产生（大模型操作交易系统的真实结果）
@@ -106,6 +107,23 @@ def run_daily_decision(profile_id: Optional[int] = None, trigger: str = "manual"
             store.add_memory(pid, n["content"], kind=n.get("kind", "note"),
                              code=n.get("code") or "", decision_id=decision_id)
 
+    # 收盘兜底保护：模型不卖的，系统按纪律规则强制卖（止损/移动止损）
+    if not dry_run:
+        forced: list = []
+        try:
+            from .discipline import enforce_protection
+            from .replay import _close_asof
+            forced = enforce_protection(
+                TradeEngine(), pid, int(profile["account_id"]), trade_date,
+                price_fn=lambda c: _close_asof(c, trade_date),
+                trade_date=trade_date, emit=lambda m: _emit(progress, m))
+        except Exception as e:
+            _emit(progress, f"持仓保护跳过：{e}")
+        if forced:
+            plan = list(plan) + forced
+            executions = list(executions) + forced
+            _emit(progress, f"系统保护卖出 {sum(1 for f in forced if f.get('ok'))} 笔")
+
     # 净值快照 + 变化
     nav_after = ta_after = None
     try:
@@ -122,15 +140,15 @@ def run_daily_decision(profile_id: Optional[int] = None, trigger: str = "manual"
         thinking=result.get("thinking") or "", reflection=result.get("reflection") or "",
         context=ctx, candidates=(ctx.get("candidates") or {}),
         news=(ctx.get("news") or {}), plan=plan, executions=executions,
-        trace=result.get("trace") or [],
+        rejections=agent.tools.rejections, trace=result.get("trace") or [],
         nav_before=nav_before, nav_after=nav_after,
         total_assets_before=ta_before, total_assets_after=ta_after,
         error="", finished_at=datetime.now().isoformat(timespec="seconds"))
     _emit(progress, f"✓ 决策完成，净值 {nav_before} → {nav_after}", 100)
 
-    # 绩效自省（每周五或回撤超阈值）：把真实战绩交给模型，写成 lesson/style
+    # 绩效自省（周五 / 每隔 N 日 / 回撤超阈值 / 单笔亏损超阈值）：产出 lesson/style/纪律规则
     try:
-        _maybe_review(pid, trade_date, profile, progress)
+        _maybe_review(pid, trade_date, profile, progress, ctx=ctx, execs=executions)
     except Exception as e:
         _emit(progress, f"绩效自省跳过：{e}")
     return store.get_decision(pid, trade_date) or {}
@@ -138,8 +156,12 @@ def run_daily_decision(profile_id: Optional[int] = None, trigger: str = "manual"
 
 def _maybe_review(pid: int, trade_date: str, profile: dict,
                   progress: Optional[Callable] = None,
-                  dd_threshold: float = 8.0, every_days: int = 5) -> dict:
-    """自我提升闭环：定期（或回撤超阈值）把真实战绩交给 LLM 自省，写入 lesson/style。"""
+                  dd_threshold: float = 8.0, every_days: int = 3,
+                  ctx: Optional[dict] = None, execs: Optional[list] = None) -> dict:
+    """自我提升闭环：定期（或回撤超阈值、单笔亏损超阈值）把真实战绩交给 LLM 自省。
+
+    自省产出三样东西：lesson（教训）、style（风格）、**rules（纪律规则，引擎强制执行）**。
+    """
     from ..agent.llm_client import LLMClient
     from .performance import performance_block, review_trader
 
@@ -147,11 +169,14 @@ def _maybe_review(pid: int, trade_date: str, profile: dict,
     dd = abs(float(((perf.get("nav") or {}).get("max_drawdown_pct")) or 0))
     days = int(perf.get("decision_days") or 0)
     weekly = datetime.strptime(trade_date, "%Y-%m-%d").isoweekday() == 5
-    if not (weekly or dd >= dd_threshold or (every_days and days % every_days == 0)):
+    bad = _loss_trades(ctx or {}, execs or [])
+    if not (weekly or dd >= dd_threshold or bad or (every_days and days % every_days == 0)):
         return {}
     if not (perf.get("trading") or perf.get("nav")):
         return {}
-    _emit(progress, "绩效自省中（战绩 → 教训/风格）…", 90)
+    why = ("单笔亏损触发" if bad else ("回撤触发" if dd >= dd_threshold
+           else ("周五复盘" if weekly else f"每 {every_days} 日定期")))
+    _emit(progress, f"绩效自省中（{why} → 教训/风格/纪律规则）…", 90)
     llm = LLMClient(model=profile.get("model") or None)
     rev = review_trader(llm, perf, list(reversed(store.list_decisions(pid, limit=every_days))))
     if rev.get("error"):
@@ -161,9 +186,36 @@ def _maybe_review(pid: int, trade_date: str, profile: dict,
         store.add_memory(pid, lesson, kind="lesson")
     if rev.get("style"):
         store.add_memory(pid, rev["style"], kind="style")
+    rules = rev.get("rules") or []
+    if rules:
+        try:
+            from .discipline import save_rules
+            save_rules(pid, rules)
+        except Exception as e:
+            _emit(progress, f"纪律规则写入失败：{e}")
     store.upsert_decision(pid, trade_date, review=rev)
-    _emit(progress, f"已写入自省：{len(rev.get('lessons') or [])} 条教训")
+    _emit(progress, f"已写入自省：{len(rev.get('lessons') or [])} 条教训、{len(rules)} 条纪律规则")
     return rev
+
+
+def _loss_trades(ctx: dict, execs: list) -> list:
+    """今日平仓且单笔亏损 ≥5% 的交易（触发立即自省）。"""
+    costs = {str(p.get("code")): float(p.get("cost_price") or 0)
+             for p in (ctx.get("positions") or [])}
+    out = []
+    for e in execs or []:
+        if not isinstance(e, dict) or not e.get("ok"):
+            continue
+        if str(e.get("side")).lower() != "sell":
+            continue
+        cost = costs.get(str(e.get("code")))
+        px = float(e.get("price") or 0)
+        if not cost or not px:
+            continue
+        pct = (px / cost - 1) * 100
+        if pct <= -5.0:
+            out.append({"code": e.get("code"), "name": e.get("name"), "pnl_pct": round(pct, 2)})
+    return out
 
 
 def run_all_daily_decisions(trigger: str = "manual", force: bool = False,

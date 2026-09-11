@@ -42,7 +42,9 @@ SYSTEM = (
     "7. 上下文里的「你的战绩」是你真实的胜率/回撤/盈亏比/连亏记录，「候选池说明」写明了候选股是怎么筛出来的"
     "（股票池、过滤规则、参与评分数、各组权重）。请先看自己的战绩再决定今天是否要改变打法，"
     "并在 reflection 里对之前被盈亏证伪的判断做出回应；连续亏损或回撤扩大时必须写下 lesson。\n"
-    "8. 最后调用 submit_decision 提交 thinking 与 reflection，结束今日决策（不操作时也要调用）。\n"
+    "8. 「生效纪律规则」是过去自省时你自己定下的约束，已由交易系统强制执行：违反的买入委托会被直接拒绝；"
+    "系统每天收盘还会对持仓做兑底保护（止损/移动止损），你不卖的它也会卖。规则到期自动失效，不用手动解除。\n"
+    "9. 最后调用 submit_decision 提交 thinking 与 reflection，结束今日决策（不操作时也要调用）。\n"
     "\n"
     "全部用中文，数字用工具/上下文里的真实值。"
 )
@@ -65,6 +67,7 @@ def _fmt_context(ctx: dict) -> str:
         "个股新闻": (ctx.get("news") or {}).get("stocks"),
         "你的自我风格": (ctx.get("memory") or {}).get("self_style"),
         "你的战绩": (ctx.get("memory") or {}).get("your_performance"),
+        "生效纪律规则": (ctx.get("memory") or {}).get("discipline_rules"),
         "历史决策": (ctx.get("memory") or {}).get("recent_decisions"),
         "持仓逻辑": (ctx.get("memory") or {}).get("holding_theses"),
         "长期记忆": (ctx.get("memory") or {}).get("notes"),
@@ -76,10 +79,11 @@ class TraderAgent:
     def __init__(self, account_id: int, profile_id: int, risk_rules: Optional[dict] = None,
                  llm: Optional[LLMClient] = None, decision_id: Optional[int] = None,
                  dry_run: bool = False, model: Optional[str] = None,
-                 trade_date: Optional[str] = None, price_fn=None):
+                 trade_date: Optional[str] = None, price_fn=None, weights=None):
         self.tools = TraderTools(account_id, profile_id, risk_rules,
                                  decision_id=decision_id, dry_run=dry_run,
-                                 trade_date=trade_date, price_fn=price_fn)
+                                 trade_date=trade_date, price_fn=price_fn,
+                                 weights=weights)
         self._llm = llm
         self._model = model or None
 
