@@ -91,8 +91,10 @@ def main() -> None:
     bench = R.bench_series(target, masks)
     feats = {k: v for k, v in feats_all.items()}
 
+    _nzc = P.build_neutralizer(feats, feats["_TRADABLE"] > 0.5) if args.neutralize else None
+
     def _nz(sig: np.ndarray) -> np.ndarray:
-        return P.neutralize(sig, feats, feats["_TRADABLE"] > 0.5) if args.neutralize else sig
+        return P.neutralize_apply(sig, _nzc) if _nzc is not None else sig
     print(f"[1/3] 面板 {len(codes)} 只 × {len(dates)} 日（{dates[0]}~{dates[-1]}）"
           f" {time.time() - t0:.0f}s", flush=True)
 
