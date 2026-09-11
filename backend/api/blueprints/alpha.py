@@ -116,6 +116,42 @@ def composite_report():
         return ok(_json.load(f))
 
 
+@bp.route("/factor-analysis", methods=["GET"])
+def factor_analysis():
+    """单因子分析（Alphalens 风格）：分位组合 / 多空 / IC 衰减 / 成本敏感性。
+
+    结果按 (factor, sign, codes, start, end, quantiles) 缓存到 data/，当天重复调用不重算。
+    """
+    import json as _json
+    import os as _os
+    from ..paths import DATA_DIR
+    factor = str(request.args.get("factor") or "RET20")
+    sign = float(request.args.get("sign") or 1)
+    codes = int_arg(request.args.get("codes"), 300, 50, 2000)
+    quantiles = int_arg(request.args.get("quantiles"), 10, 5, 20)
+    start = str(request.args.get("start") or "2016-01-01")
+    end = str(request.args.get("end") or "2025-12-31")
+    cache = _os.path.join(str(DATA_DIR), f"factor_analysis_{factor}_{'p' if sign > 0 else 'n'}_{codes}_{quantiles}.json")
+    if _os.path.exists(cache):
+        try:
+            with open(cache, encoding="utf-8") as f:
+                data = _json.load(f)
+            if data.get("meta", {}).get("end") == end.replace("-", ""):
+                return ok(data)
+        except Exception:
+            pass
+    from backend.alpha import factor_analysis as FA
+    res = FA.analyze(factor, sign, codes=codes, start=start, end=end, quantiles=quantiles)
+    if res.get("error"):
+        return err(400, "bad_factor", res["error"], retriable=False)
+    try:
+        with open(cache, "w", encoding="utf-8") as f:
+            _json.dump(res, f, ensure_ascii=False)
+    except Exception:
+        pass
+    return ok(res)
+
+
 @bp.route("/runs", methods=["GET"])
 def runs():
     from backend.alpha import store

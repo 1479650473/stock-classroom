@@ -95,6 +95,57 @@ def factor_zoo_report():
     return _html(body, "factor_zoo_report.html")
 
 
+@bp.route("/factor-analysis", methods=["GET"])
+def factor_analysis_report():
+    """单因子分析报告：分位组合柱状图 + 多空净值 + IC 衰减 + 成本敏感性。"""
+    import urllib.parse
+    import urllib.request as _u
+    from backend.strategy.report import build_report, bar_chart
+    factor = str(request.args.get("factor") or "RET20")
+    sign = float(request.args.get("sign") or 1)
+    q = int_arg(request.args.get("quantiles"), 10, 5, 20)
+    base = os.environ.get("SC_SELF_URL", "http://127.0.0.1:5000")
+    url = (f"{base}/api/alpha/factor-analysis?factor={urllib.parse.quote(factor)}"
+           f"&sign={sign}&quantiles={q}")
+    try:
+        with _u.urlopen(url, timeout=180) as resp:
+            payload = json.load(resp)
+        data = payload.get("data") or {}
+    except Exception as e:
+        return err(502, "analysis_failed", f"取因子分析失败：{e}", retriable=False)
+    if data.get("error"):
+        return err(400, "bad_factor", data["error"], retriable=False)
+    groups = data.get("groups") or []
+    ls = data.get("long_short") or {}
+    labels = [f"Q{g.get('group')}" for g in groups]
+    values = [float(g.get("ann") or 0) * 100 for g in groups]
+    eq = (data.get("equity") or {}).get("long_short") or []
+    trades = [{"date": f"Q{g.get('group')}", "code": f"{float(g.get('ann') or 0) * 100:+.1f}%",
+               "name": f"夏普 {float(g.get('sharpe') or 0):+.2f}",
+               "side": "", "qty": "", "price": "",
+               "pnl": f"{float(g.get('maxdd') or 0) * 100:.1f}%",
+               "pnl_pct": f"{float(g.get('win') or 0) * 100:.1f}%", "reason": ""} for g in groups]
+    ic = data.get("ic_decay") or {}
+    cost = data.get("cost_curve") or []
+    body = build_report(
+        title=f"因子分析：{'-' if sign < 0 else ''}{factor}",
+        subtitle=(f"{data.get('meta', {}).get('codes')} 只 × {data.get('meta', {}).get('days')} 日 · "
+                  f"{q} 分位 · 多空年化 {float(ls.get('ann') or 0) * 100:+.1f}%"
+                  f"（夏普 {float(ls.get('sharpe') or 0):+.2f}，回撤 {float(ls.get('maxdd') or 0) * 100:.1f}%）"
+                  f" · 单调性 {float(data.get('monotonicity') or 0):+.2f}"),
+        series=[1.0] + list(eq) if eq else [1.0, 1.0],
+        metrics={"days": float(data.get("meta", {}).get("days") or 0)},
+        trades=trades,
+        notes=("表列：分位组 / 年化 / 夏普 / 回撤% / 日胜率%。"
+               "IC 衰减：" + " ".join(f"{h}日 {float(v.get('ic') or 0):+.4f}" for h, v in ic.items()) +
+               "。成本/持有期：" + " ".join(
+                   f"hold{int(c.get('hold') or 0)} 净{float(c.get('ann') or 0) * 100:+.1f}%（换手 {float(c.get('turnover') or 0):.2f}）"
+                   for c in cost)))
+    body = body.replace('<h2>净值曲线</h2>', '<h2>分位组年化收益</h2>' + bar_chart(labels, values)
+                        + '<h2>多空净值（Q1−Q最高）</h2>')
+    return _html(body, f"factor_{factor}.html")
+
+
 @bp.route("/backtest", methods=["POST"])
 def backtest_report():
     """通用报告：前端把回测结果 POST 上来，直接返回可打开的 HTML。"""

@@ -119,6 +119,31 @@ def _sparkline(eq: Sequence[float], width: int = 900, height: int = 220) -> str:
 </svg>"""
 
 
+def bar_chart(labels, values, width: int = 900, height: int = 200,
+              pos_color: str = "#ff6b6b", neg_color: str = "#2ec27e") -> str:
+    """分组收益柱状图（内联 SVG，正值/负值双色）。"""
+    if not values:
+        return ""
+    vmax = max(abs(float(v)) for v in values) or 1e-9
+    n = len(values)
+    gap = 6
+    bw = max(6, (width - gap * (n + 1)) / max(1, n))
+    bars = []
+    zero = height / 2
+    for i, (lab, v) in enumerate(zip(labels, values)):
+        v = float(v)
+        h = abs(v) / vmax * (height / 2 - 14)
+        x = gap + i * (bw + gap)
+        y = zero - h if v >= 0 else zero
+        color = pos_color if v >= 0 else neg_color
+        bars.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{bw:.1f}" height="{h:.1f}" fill="{color}" rx="2"/>')
+        bars.append(f'<text x="{x + bw / 2:.1f}" y="{height - 4:.1f}" fill="#8b929b" '
+                    f'font-size="10" text-anchor="middle">{html.escape(str(lab))}</text>')
+    return (f'<svg viewBox="0 0 {width} {height}" class="chart" preserveAspectRatio="none">'
+            f'<line x1="0" y1="{zero}" x2="{width}" y2="{zero}" stroke="#23262c" stroke-width="1"/>'
+            + "".join(bars) + "</svg>")
+
+
 def _monthly_table(eq: Sequence[float], dates: Optional[Sequence[str]]) -> str:
     """月度收益热力图（按净值差算月收益）。"""
     if not dates or len(dates) != len(eq):
