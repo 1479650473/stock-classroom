@@ -20,7 +20,7 @@ for _k in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy",
            "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy"]:
     os.environ.pop(_k, None)
 
-from flask import Flask
+from flask import Flask, Response
 from flask_cors import CORS
 
 
@@ -88,6 +88,17 @@ def create_app():
     register_agent_gateway(app)
     from backend.agent import store as agent_store
     agent_store.ensure_schema()
+
+    # Prometheus 指标（文本格式）+ JSON 视图（供前端/看板）
+    @app.route("/metrics")
+    def metrics_endpoint():
+        from backend import metrics as _m
+        return Response(_m.render_prometheus(_m.collect()), mimetype="text/plain; version=0.0.4")
+
+    @app.route("/api/system/metrics")
+    def metrics_json():
+        from backend import metrics as _m
+        return {"code": 0, "data": _m.collect(), "message": "ok"}
 
     @app.route("/")
     def root():
