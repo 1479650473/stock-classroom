@@ -18,7 +18,9 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
-DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+from backend.api.paths import DATA_DIR as _DATA_DIR
+
+DATA_DIR = Path(_DATA_DIR)
 DB_PATH = DATA_DIR / "fundamental.db"
 
 
@@ -85,13 +87,18 @@ def has_vals(code: str) -> bool:
 
 
 def fetch_fundamental(code: str) -> List[dict]:
-    """akshare 东财每日估值拉取并缓存。失败返回 []，加 retry+退避。"""
+    """akshare 每日估值抓取入库。失败返回 []。含 retry+退避 + 硬超时(东财接口可能永久挂起)."""
     import akshare as ak
     import time
+    from akshare_source import _run_with_timeout
+
+    def _fetch():
+        return ak.stock_value_em(symbol=code)
+
     for attempt in range(3):
         try:
-            df = ak.stock_value_em(symbol=code)
-            rows = parse_raw(df)
+            df = _run_with_timeout(_fetch, 25)
+            rows = parse_raw(df) if df is not None else []
             if rows:
                 store(code, rows)
                 return rows

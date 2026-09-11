@@ -74,36 +74,44 @@ def _log():
 
 def refresh_fundamentals(codes, workers=16, progress=None):
     """并行刷新基本面(东财估值, 每code ~2s 全历史). 只刷已缓存/有盘的, 防误杀新股. 返回 {updated, skipped}."""
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
     import fundamental as fund
     updated = skipped = 0
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futs = {pool.submit(fund.fetch_fundamental, c): c for c in codes}
         done = 0
-        for f in as_completed(futs):
-            done += 1
-            c = futs[f]
-            try:
-                rows = f.result()
-                if rows:
-                    updated += 1
-                else:
+        pending = dict(futs)
+        while pending:
+            # wait 20s 无任何完成 → 剩余全部放弃(东财接口可能永久挂起, 防死循环)
+            finished, _ = wait(list(pending), timeout=20, return_when=FIRST_COMPLETED)
+            if not finished:
+                skipped += len(pending)
+                pending.clear()
+                break
+            for f in finished:
+                done += 1
+                c = pending.pop(f)
+                try:
+                    rows = f.result()
+                    if rows:
+                        updated += 1
+                    else:
+                        skipped += 1
+                except Exception:
                     skipped += 1
-            except Exception:
-                skipped += 1
-            if progress and (done % 40 == 0 or done == len(codes)):
-                progress(done, len(codes), updated, skipped)
+                if progress and (done % 40 == 0 or done == len(codes)):
+                    progress(done, len(codes), updated, skipped)
     return {'updated': updated, 'skipped': skipped}
 
 
-def run(pool_only=False, skip_paper=False):
+def run(pool_only=False, skip_paper=False, skip_kline=False):
     """入口: 全局异常兜底, 任何一步崩溃都不让整个更新静默失败(9/8~9/9 曾 3 秒静默崩溃)."""
     lg = _log()
     t0 = time.time()
     lg.info('══ update_daily 开始 %s ══', datetime.now().isoformat(timespec='seconds'))
     out = {'started': datetime.now().isoformat(timespec='seconds'), 'steps': {}}
     try:
-        return _run_inner(pool_only, skip_paper, lg, t0, out)
+        return _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out)
     except Exception as e:
         import traceback
         tb = traceback.format_exc()
@@ -120,7 +128,7 @@ def run(pool_only=False, skip_paper=False):
         return out
 
 
-def _run_inner(pool_only, skip_paper, lg, t0, out):
+def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
 
     # 交易日检查(节假日/周末空跑幂等, 但跳过更干净)
     cal = _trade_calendar()
@@ -138,107 +146,109 @@ def _run_inner(pool_only, skip_paper, lg, t0, out):
     from backend.strategy.factor_selector import build_wide_pool
     pool = build_wide_pool() or []
     lg.info('量化池 %d 只', len(pool))
+    all_codes = []   # skip_kline 时仍供基本面轮换使用
 
-    # ① K线 全市场增量(含历史缺口检测) —— 每日覆盖全市场约5000只而非仅量化池
-    from data_manager import update_codes, _log_update, get_kline_db, update_stock_list
-    def _plog(msg, code=None):
-        lg.info(msg)
-    # 先刷新股票名录(ak_get_all_stocks) → 新股进入 stock_list, 后续首拉全历史
-    try:
-        _n = update_stock_list()
-        lg.info('股票名录刷新: %d 只', _n or 0)
-    except Exception as e:
-        lg.warning('股票名录刷新失败(%s)', str(e)[:60])
-    # 全市场代码(优先本地 stock_list 稳定来源, akshare 实时接口常被反爬拉空 → 兜底池)
-    all_codes = []
-    try:
-        _c = get_kline_db()
-        _rows = _c.execute("SELECT code FROM stock_list WHERE status='active' OR status IS NULL").fetchall()
-        _c.close()
-        all_codes = [str(r[0]) for r in _rows]
-        lg.info('全市场(本地stock_list) %d 只', len(all_codes))
-    except Exception as e:
-        lg.warning('本地stock_list读取失败(%s)', str(e)[:50])
-    if not all_codes:
+    if not skip_kline:
+        # ① K线 全市场增量(含历史缺口检测) —— 每日覆盖全市场约5000只而非仅量化池
+        from data_manager import update_codes, _log_update, get_kline_db, update_stock_list
+        def _plog(msg, code=None):
+            lg.info(msg)
+        # 先刷新股票名录(ak_get_all_stocks) → 新股进入 stock_list, 后续首拉全历史
         try:
-            from akshare_source import ak_get_all_stocks
-            _st = ak_get_all_stocks() or []
-            all_codes = [str(s["code"]) for s in _st]
-            lg.info('全市场(akshare) %d 只', len(all_codes))
+            _n = update_stock_list()
+            lg.info('股票名录刷新: %d 只', _n or 0)
         except Exception as e:
-            lg.warning('akshare获取全市场失败(%s), 回退量化池 %d 只', str(e)[:50], len(pool))
-            all_codes = [str(c) for c in pool]
-    # 新股(last_date 为空) 全历史首拉 — 否则新股永远只有增量窗口, 上市初期历史缺失
-    try:
-        _c = get_kline_db()
-        _new = [str(r[0]) for r in _c.execute(
-            "SELECT code FROM stock_list WHERE (last_date IS NULL OR last_date='') "
-            "AND (status='active' OR status IS NULL)").fetchall()]
-        _c.close()
-        if _new:
-            lg.info('新股首拉(全历史): %d 只', len(_new))
-            rn = update_codes(_new, catch_up_days=4000, workers=8, progress=_plog)
-            lg.info('  新股首拉: %s', {k: rn.get(k) for k in ('updated', 'errors', 'rows_added')})
-    except Exception as e:
-        lg.warning('新股首拉失败(%s)', str(e)[:80])
-    # 全市场增量: catch_up_days=None → 按 DB 最新到今日的日历缺口自动算(≥60根≈3个月缓冲),
-    # 自动覆盖"某几天只有量化池/漏更"等历史缺口(如 8/27~9/1 全市场缺失)
-    try:
-        rk = update_codes(all_codes, catch_up_days=None, workers=16, progress=_plog)
-        out['steps']['kline'] = {k: rk[k] for k in ('updated', 'skipped', 'errors', 'rows_added', 'total', 'elapsed') if k in rk}
-        lg.info('  K线全市场: %s', out['steps']['kline'])
-    except Exception as e:
-        import traceback
-        out['steps']['kline'] = {'error': '%s: %s' % (type(e).__name__, str(e)[:200])}
-        rk = {}
-        lg.error('  K线全市场失败(不中断后续): %s\n%s', str(e)[:200], traceback.format_exc()[-1500:])
-    try:
-        _c = get_kline_db()
-        _latest = _c.execute("SELECT MAX(date) FROM kline_daily").fetchone()[0]
-        _c.close()
-        if _latest and _latest < today.replace('-', ''):
-            lg.warning('  ⚠ 源未覆盖最新交易日: DB max=%s, 今日=%s — 源可能尚未发布当日数据, 请稍后重跑', _latest, today.replace('-', ''))
-        else:
-            lg.info('  K线最新=%s ✓', _latest)
-    except Exception as e:
-        lg.warning('  最新日校验失败: %s', str(e)[:60])
-    # 同步写 data_update_log(让数据管道面板'上次更新'对齐今日; 表里 update_date 用 YYYY-MM-DD)
-    try:
-        _log_update(datetime.now().strftime('%Y-%m-%d'),
-                    rk.get('total', 0), rk.get('updated', 0), rk.get('rows_added', 0),
-                    'ok' if rk.get('errors', 0) < rk.get('total', 0) * 0.5 else 'partial',
-                    'update_daily 量化池 +%d 行, 失败 %d' % (rk.get('rows_added', 0), rk.get('errors', 0)))
-    except Exception as e:
-        lg.warning('  data_update_log 写入失败: %s', str(e)[:60])
-
-    # ①.5 指数日线(全历史) + hs300.json 重建 + regime 重算 —— 大盘走势/回测基准依赖
-    try:
-        from akshare_source import ak_fetch_index_kline
-        from data_manager import _bulk_insert_kline
-        _idx_rows = []
-        for _idx in ('sh000001', 'sh000300', 'sh000016', 'sh000688', 'sz399001', 'sz399006'):
-            _rows = ak_fetch_index_kline(_idx, days=10000)
-            if _rows:
-                _idx_rows.extend(_rows)
-        if _idx_rows:
+            lg.warning('股票名录刷新失败(%s)', str(e)[:60])
+        # 全市场代码(优先本地 stock_list 稳定来源, akshare 实时接口常被反爬拉空 → 兜底池)
+        all_codes = []
+        try:
             _c = get_kline_db()
-            _bulk_insert_kline(_c, _idx_rows, replace=True)
-            _c.commit(); _c.close()
-        # 重建 hs300.json(沪深300 全历史, regime/trader 依赖)
-        import json as _json
-        _c = get_kline_db()
-        _hs = _c.execute("SELECT date, close FROM kline_daily WHERE code='sh000300' ORDER BY date").fetchall()
-        _c.close()
-        if _hs:
-            with open(os.path.join(DATA, 'hs300.json'), 'w', encoding='utf-8') as f:
-                _json.dump({'code': 'sh000300', 'name': '沪深300',
-                            'dates': ['%s-%s-%s' % (r[0][:4], r[0][4:6], r[0][6:]) for r in _hs],
-                            'closes': [float(r[1]) for r in _hs]}, f)
-        out['steps']['index'] = {'rows': len(_idx_rows), 'hs300_days': len(_hs)}
-        lg.info('  指数日线: %d 行, hs300 %d 天 ✓', len(_idx_rows), len(_hs))
-    except Exception as e:
-        out['steps']['index'] = str(e)[:100]
-        lg.warning('  指数更新失败: %s', str(e)[:80])
+            _rows = _c.execute("SELECT code FROM stock_list WHERE status='active' OR status IS NULL").fetchall()
+            _c.close()
+            all_codes = [str(r[0]) for r in _rows]
+            lg.info('全市场(本地stock_list) %d 只', len(all_codes))
+        except Exception as e:
+            lg.warning('本地stock_list读取失败(%s)', str(e)[:50])
+        if not all_codes:
+            try:
+                from akshare_source import ak_get_all_stocks
+                _st = ak_get_all_stocks() or []
+                all_codes = [str(s["code"]) for s in _st]
+                lg.info('全市场(akshare) %d 只', len(all_codes))
+            except Exception as e:
+                lg.warning('akshare获取全市场失败(%s), 回退量化池 %d 只', str(e)[:50], len(pool))
+                all_codes = [str(c) for c in pool]
+        # 新股(last_date 为空) 全历史首拉 — 否则新股永远只有增量窗口, 上市初期历史缺失
+        try:
+            _c = get_kline_db()
+            _new = [str(r[0]) for r in _c.execute(
+                "SELECT code FROM stock_list WHERE (last_date IS NULL OR last_date='') "
+                "AND (status='active' OR status IS NULL)").fetchall()]
+            _c.close()
+            if _new:
+                lg.info('新股首拉(全历史): %d 只', len(_new))
+                rn = update_codes(_new, catch_up_days=4000, workers=8, progress=_plog)
+                lg.info('  新股首拉: %s', {k: rn.get(k) for k in ('updated', 'errors', 'rows_added')})
+        except Exception as e:
+            lg.warning('新股首拉失败(%s)', str(e)[:80])
+        # 全市场增量: catch_up_days=None → 按 DB 最新到今日的日历缺口自动算(≥60根≈3个月缓冲),
+        # 自动覆盖"某几天只有量化池/漏更"等历史缺口(如 8/27~9/1 全市场缺失)
+        try:
+            rk = update_codes(all_codes, catch_up_days=None, workers=16, progress=_plog)
+            out['steps']['kline'] = {k: rk[k] for k in ('updated', 'skipped', 'errors', 'rows_added', 'total', 'elapsed') if k in rk}
+            lg.info('  K线全市场: %s', out['steps']['kline'])
+        except Exception as e:
+            import traceback
+            out['steps']['kline'] = {'error': '%s: %s' % (type(e).__name__, str(e)[:200])}
+            rk = {}
+            lg.error('  K线全市场失败(不中断后续): %s\n%s', str(e)[:200], traceback.format_exc()[-1500:])
+        try:
+            _c = get_kline_db()
+            _latest = _c.execute("SELECT MAX(date) FROM kline_daily").fetchone()[0]
+            _c.close()
+            if _latest and _latest < today.replace('-', ''):
+                lg.warning('  ⚠ 源未覆盖最新交易日: DB max=%s, 今日=%s — 源可能尚未发布当日数据, 请稍后重跑', _latest, today.replace('-', ''))
+            else:
+                lg.info('  K线最新=%s ✓', _latest)
+        except Exception as e:
+            lg.warning('  最新日校验失败: %s', str(e)[:60])
+        # 同步写 data_update_log(让数据管道面板'上次更新'对齐今日; 表里 update_date 用 YYYY-MM-DD)
+        try:
+            _log_update(datetime.now().strftime('%Y-%m-%d'),
+                        rk.get('total', 0), rk.get('updated', 0), rk.get('rows_added', 0),
+                        'ok' if rk.get('errors', 0) < rk.get('total', 0) * 0.5 else 'partial',
+                        'update_daily 量化池 +%d 行, 失败 %d' % (rk.get('rows_added', 0), rk.get('errors', 0)))
+        except Exception as e:
+            lg.warning('  data_update_log 写入失败: %s', str(e)[:60])
+
+        # ①.5 指数日线(全历史) + hs300.json 重建 + regime 重算 —— 大盘走势/回测基准依赖
+        try:
+            from akshare_source import ak_fetch_index_kline
+            from data_manager import _bulk_insert_kline
+            _idx_rows = []
+            for _idx in ('sh000001', 'sh000300', 'sh000016', 'sh000688', 'sz399001', 'sz399006'):
+                _rows = ak_fetch_index_kline(_idx, days=10000)
+                if _rows:
+                    _idx_rows.extend(_rows)
+            if _idx_rows:
+                _c = get_kline_db()
+                _bulk_insert_kline(_c, _idx_rows, replace=True)
+                _c.commit(); _c.close()
+            # 重建 hs300.json(沪深300 全历史, regime/trader 依赖)
+            import json as _json
+            _c = get_kline_db()
+            _hs = _c.execute("SELECT date, close FROM kline_daily WHERE code='sh000300' ORDER BY date").fetchall()
+            _c.close()
+            if _hs:
+                with open(os.path.join(DATA, 'hs300.json'), 'w', encoding='utf-8') as f:
+                    _json.dump({'code': 'sh000300', 'name': '沪深300',
+                                'dates': ['%s-%s-%s' % (r[0][:4], r[0][4:6], r[0][6:]) for r in _hs],
+                                'closes': [float(r[1]) for r in _hs]}, f)
+            out['steps']['index'] = {'rows': len(_idx_rows), 'hs300_days': len(_hs)}
+            lg.info('  指数日线: %d 行, hs300 %d 天 ✓', len(_idx_rows), len(_hs))
+        except Exception as e:
+            out['steps']['index'] = str(e)[:100]
+            lg.warning('  指数更新失败: %s', str(e)[:80])
 
     if not pool_only:
         # ② 基本面 (3日轮换: 量化池每日刷 + 全市场按 code%3 每日刷 1/3, 3 天覆盖全市场)
@@ -387,7 +397,7 @@ def _run_inner(pool_only, skip_paper, lg, t0, out):
             _limit_n = 0
             try:
                 _cal = _trade_calendar()
-                _today = datetime.now().strftime('%Y%m%d')
+                _today = datetime.now().strftime('%Y-%m-%d')   # 与日历同格式(YYYY-MM-DD)
                 _last5 = sorted([d for d in (_cal or set()) if d <= _today])[-5:] or [_today]
                 for _d in _last5:
                     _n = cache_limit_up_from_akshare(_d.replace('-', ''))
@@ -437,4 +447,5 @@ if __name__ == '__main__':
         pass
     po = '--pool-only' in sys.argv
     sp = '--skip-paper' in sys.argv
-    run(pool_only=po, skip_paper=sp)
+    sk = '--skip-kline' in sys.argv
+    run(pool_only=po, skip_paper=sp, skip_kline=sk)
