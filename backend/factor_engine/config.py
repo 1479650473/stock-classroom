@@ -77,8 +77,10 @@ def load_config_with_weights(weights=None, path: str = None) -> ScorecardConfig:
     """加载评分卡并按目标权重改写各因子组。
 
     实现语义：把某组内**所有条件分值按 s = 目标满分 / 原满分 等比缩放**，同时更新
-    该组 max_score/min_score。这样组内相对关系不变，只改变组与组之间的权重占比，
-   总分量级与默认口径保持一致（可直接比较）。
+    该组与指标的上下限（条件 `score`/`max`/`min`、指标级 `max_score`/`min_score`）。
+
+    注意：只缩放 `score` 而不缩放上限会被指标级 clamp 截断（稳定性组条件放大到 21 分
+    却仍被指标上限 10 卡住，效果等于「权重没改」），因此上限必须同步缩放。
     """
     w = resolve_weights(weights)
     if not w:
@@ -98,10 +100,20 @@ def load_config_with_weights(weights=None, path: str = None) -> ScorecardConfig:
         s = target / cur
         for ind in g.get("indicators", []):
             for cond in ind.get("conditions", []):
-                try:
-                    cond["score"] = round(float(cond.get("score", 0)) * s, 2)
-                except (TypeError, ValueError):
+                for key in ("score", "max", "min"):
+                    if key not in cond:
+                        continue
+                    try:
+                        cond[key] = round(float(cond[key]) * s, 2)
+                    except (TypeError, ValueError):
+                        continue
+            for key in ("max_score", "min_score"):
+                if ind.get(key) is None:
                     continue
+                try:
+                    ind[key] = round(float(ind[key]) * s, 2)
+                except (TypeError, ValueError):
+                    pass
         g["max_score"] = round(target, 2)
         g["weight"] = round(target, 2)
         if g.get("min_score") is not None:
