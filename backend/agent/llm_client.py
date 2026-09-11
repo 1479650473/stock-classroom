@@ -41,7 +41,7 @@ class LLMClient:
         cfg = get_agent_config()
         self.api_base = api_base or cfg["api_base"]
         self.api_key = api_key or cfg["api_key"]
-        self.model = model or cfg["model"] or "deepseek-v4-pro"
+        self.model = model or cfg["model"] or "deepseek-flash"
         if not self.api_key or not self.api_base:
             raise LLMError("未配置 LLM api_key/api_base(可在 backend/configs/settings.json 设置)")
         from openai import OpenAI

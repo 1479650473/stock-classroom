@@ -98,7 +98,7 @@ rem 输出: web\src-tauri\target\release\bundle\{msi,nsis}\StockClassroom_*.exe
 
 | 供应商 | 默认模型 |
 |--------|---------|
-| DeepSeek V4 | `deepseek-v4-pro` / `deepseek-v4-flash-vision-exp` |
+| DeepSeek V4 | `deepseek-flash`（V4.1-Flash，支持思考模式/工具调用/图像，1M 上下文） / `deepseek-v4-pro`（V4-Pro-0813） |
 | 智谱 GLM-4 | `glm-4-flash` |
 | Kimi K2.6 | `kimi-k2.6` |
 

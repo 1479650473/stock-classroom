@@ -11,7 +11,7 @@ const app = useAppStore()
 const toast = useToastStore()
 
 // ─── AI 定时 ───
-const sch = reactive({ enabled: false, at: '15:30', hp: 20, log: '' })
+const sch = reactive({ enabled: false, at: '17:00', hp: 20, log: '' })
 const schSaving = ref(false)
 const schRunning = ref(false)
 const schStatus = ref('')
@@ -20,7 +20,7 @@ async function loadScheduler() {
   try {
     const s = await getScheduler()
     sch.enabled = !!s.enabled
-    sch.at = s.at || '15:30'
+    sch.at = s.at || '17:00'
     sch.hp = s.hp || 20
     sch.log = s.log || ''
     schStatus.value = s.last_finish ? `完成于 ${s.last_finish.replace(/T/g, ' ').slice(0, 19)}` : '（从未运行）'
@@ -161,7 +161,7 @@ async function save() {
       </div>
       <div class="field">
         <label class="lbl">模型</label>
-        <input v-model="agentModel" class="inp" placeholder="deepseek-chat" />
+        <input v-model="agentModel" class="inp" placeholder="deepseek-flash" />
       </div>
       <div class="actions">
         <button class="btn ghost" @click="testConnection" :disabled="testingLlm">

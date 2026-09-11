@@ -188,7 +188,7 @@ function select(id: number) {
           <input v-model.number="draft.initial_capital" class="ui-input" type="number" min="10000" step="10000" />
         </FormField>
         <FormField label="模型" hint="留空使用全局默认模型（设置 → AI）">
-          <input v-model="draft.model" class="ui-input" placeholder="如 deepseek-v4-flash-vision-exp" />
+          <input v-model="draft.model" class="ui-input" placeholder="如 deepseek-flash" />
         </FormField>
         <FormField label="人设 / 风格说明" hint="可选；不预设时由 AI 自己形成风格">
           <textarea v-model="draft.persona" class="ui-input" rows="4" placeholder="（可选）" />
