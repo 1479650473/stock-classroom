@@ -174,10 +174,13 @@ def build_market_block() -> dict:
     return out
 
 
-def build_candidates_block(top_n: int = 12, weights=None) -> dict:
-    """候选池（实时）：多因子评分 Top N + 事件驱动池 + 完整选股链路口径。"""
+def build_candidates_block(top_n: int = 12, weights=None, source: str = "scorecard") -> dict:
+    """候选池（实时）：多因子评分 Top N + 事件驱动池 + 完整选股链路口径。
+
+    source='composite' 时改用固定权重因子组合（-1日反转/-5日反转/-远离60日高点/-小市值）。
+    """
     from .selection import build_snapshot
-    return build_snapshot(None, top_n=top_n, with_events=True, weights=weights)
+    return build_snapshot(None, top_n=top_n, with_events=True, weights=weights, source=source)
 
 
 # ───────────────────────── 新闻 ─────────────────────────
@@ -268,7 +271,9 @@ def build_daily_context(profile: dict, with_candidates: bool = True,
     weights = (profile.get("meta") or {}).get("weights")
     acct = build_account_block(account_id)
     market = build_market_block()
-    cands = build_candidates_block(weights=weights) if with_candidates else {"picks": [], "events": []}
+    scoring = str((profile or {}).get("meta", {}).get("scoring") or "scorecard")         if isinstance(profile, dict) else "scorecard"
+    cands = (build_candidates_block(weights=weights, source=scoring)
+             if with_candidates else {"picks": [], "events": []})
     news_block = (build_news_block(acct["positions"], cands.get("picks", []))
                   if with_news else {"market": [], "stocks": []})
     memory = build_memory_block(int(profile["id"]), acct["positions"],

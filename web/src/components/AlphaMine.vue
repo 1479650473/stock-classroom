@@ -15,9 +15,10 @@ import Icon from '@/components/Icon.vue'
 import { useJobsStore } from '@/stores/jobs'
 import { useToastStore } from '@/stores/toast'
 import {
-  getAlphaMeta, getAlphaRun, getAlphaRuns, startAlphaMine, startAlphaWalkforward,
+  getAlphaCompositeReport, getAlphaMeta, getAlphaRun, getAlphaRuns, getAlphaZoo,
+  startAlphaMine, startAlphaWalkforward,
 } from '@/api'
-import type { AlphaFormula, AlphaRun } from '@/api'
+import type { AlphaCompositeReport, AlphaFormula, AlphaRun, AlphaZooRow } from '@/api'
 
 const jobs = useJobsStore()
 const toast = useToastStore()
@@ -28,6 +29,12 @@ const runs = ref<AlphaRun[]>([])
 const current = ref<AlphaRun | null>(null)
 const openForm = ref(false)
 const meta = ref<{ defaults: Record<string, number | string>; features: string[]; operators: string[] } | null>(null)
+// 因子体检榜 + 组合验证（借鉴 Qbot 的因子体系，服务我们自己的体检台）
+const tab = ref<'mine' | 'zoo' | 'composite'>('mine')
+const zooSort = ref('ic')
+const zoo = ref<AlphaZooRow[]>([])
+const zooMeta = ref<Record<string, unknown>>({})
+const comp = ref<AlphaCompositeReport | null>(null)
 
 const form = ref({
   codes: 300, start: '2021-07-01', end: '2025-12-31',
@@ -111,6 +118,27 @@ watch(activeJob, (v) => {
 const tr = (row: unknown) => (((row as AlphaFormula).train_metrics || {}) as Record<string, number>)
 const oo = (row: unknown) => (((row as AlphaFormula).oos_metrics || {}) as Record<string, number>)
 
+const fmtPct4 = (v: unknown) => {
+  const n = Number(v)
+  return Number.isFinite(n) ? (n >= 0 ? '+' : '') + (n * 100).toFixed(2) + '%' : '—'
+}
+const compFolds = computed(() => comp.value?.folds || [])
+const compMean = computed(() => {
+  const xs = compFolds.value.map((f) => Number(f.oos_ex) || 0)
+  return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0
+})
+const compMedian = computed(() => {
+  const xs = compFolds.value.map((f) => Number(f.oos_ex) || 0).sort((a, b) => a - b)
+  if (!xs.length) return 0
+  const m = Math.floor(xs.length / 2)
+  return xs.length % 2 ? xs[m] : (xs[m - 1] + xs[m]) / 2
+})
+const compPositive = computed(() => compFolds.value.filter((f) => Number(f.oos_ex) > 0).length)
+const compSortino = computed(() => {
+  const xs = compFolds.value.map((f) => Number(f.oos_sortino) || 0)
+  return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0
+})
+
 const keptFormulas = computed<Record<string, unknown>[]>(() =>
   (current.value?.formulas || [])
     .filter((f) => f.kept && f.rank > 0)
@@ -130,7 +158,27 @@ const wfFolds = computed(() => {
   return s.folds || []
 })
 
-onMounted(async () => { await Promise.all([load(), loadMeta()]) })
+async function loadZoo() {
+  try {
+    const r = await getAlphaZoo(zooSort.value, 120)
+    zoo.value = r.factors || []
+    zooMeta.value = r.meta || {}
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : String(e))
+  }
+}
+
+async function loadComposite() {
+  try {
+    comp.value = await getAlphaCompositeReport()
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : String(e))
+  }
+}
+
+watch(zooSort, loadZoo)
+
+onMounted(async () => { await Promise.all([load(), loadMeta(), loadZoo(), loadComposite()]) })
 </script>
 
 <template>
@@ -179,7 +227,92 @@ onMounted(async () => { await Promise.all([load(), loadMeta()]) })
         </p>
       </div>
 
-      <LoadingBlock v-if="loading && !runs.length" />
+      <div class="subtabs">
+        <button class="subtab" :class="{ 'subtab--on': tab === 'mine' }" @click="tab = 'mine'">挖掘 / 滚动验证</button>
+        <button class="subtab" :class="{ 'subtab--on': tab === 'zoo' }" @click="tab = 'zoo'">因子体检榜</button>
+        <button class="subtab" :class="{ 'subtab--on': tab === 'composite' }" @click="tab = 'composite'">组合验证（已验证有效）</button>
+      </div>
+
+      <!-- 因子体检榜 -->
+      <div v-if="tab === 'zoo'" class="zoo">
+        <div class="zoo__bar">
+          <span>排序</span>
+          <button class="chip" :class="{ 'chip--on': zooSort === 'ic' }" @click="zooSort = 'ic'">|IC|</button>
+          <button class="chip" :class="{ 'chip--on': zooSort === 'ic_neutral' }" @click="zooSort = 'ic_neutral'">中性化 IC</button>
+          <button class="chip" :class="{ 'chip--on': zooSort === 'ex_ann' }" @click="zooSort = 'ex_ann'">超额年化</button>
+          <span class="zoo__meta">{{ zooMeta.codes }} 只 × {{ zooMeta.days }} 日 · 等权池年化
+            {{ ((Number(zooMeta.pool_ann) || 0) * 100).toFixed(1) }}%</span>
+        </div>
+        <DataTable :rows="zoo" :columns="[
+          { key: 'factor', title: '因子' },
+          { key: 'ic', title: 'IC', align: 'right' },
+          { key: 'ic20', title: 'IC(20日)', align: 'right' },
+          { key: 'ic_neutral', title: 'IC(中性)', align: 'right' },
+          { key: 'ex_ann', title: '超额年化', align: 'right' },
+          { key: 'ex_neutral', title: '超额(中性)', align: 'right' },
+          { key: 'ex_sortino', title: 'Sortino', align: 'right' },
+          { key: 'maxdd', title: '回撤', align: 'right' },
+          { key: 'turnover', title: '换手', align: 'right' },
+          { key: 'seg_pos', title: '半年为正', align: 'right' },
+        ]">
+          <template #cell-ic="{ row }">{{ fmtPct4(row.ic) }}</template>
+          <template #cell-ic20="{ row }">{{ fmtPct4(row.ic20) }}</template>
+          <template #cell-ic_neutral="{ row }">{{ fmtPct4(row.ic_neutral) }}</template>
+          <template #cell-ex_ann="{ row }"><span :class="Number(row.ex_ann) >= 0 ? 'up' : 'down'">{{ fmt(row.ex_ann) }}</span></template>
+          <template #cell-ex_neutral="{ row }"><span :class="Number(row.ex_neutral) >= 0 ? 'up' : 'down'">{{ fmt(row.ex_neutral) }}</span></template>
+          <template #cell-ex_sortino="{ row }">{{ num(row.ex_sortino) }}</template>
+          <template #cell-maxdd="{ row }">{{ fmt(-Math.abs(Number(row.maxdd) || 0)) }}</template>
+          <template #cell-turnover="{ row }">{{ num(row.turnover) }}</template>
+          <template #cell-seg_pos="{ row }">{{ row.seg_pos }}/{{ Number(row.n_seg) - 1 }}</template>
+        </DataTable>
+        <p class="hint">
+          判读：<b>IC(中性)</b> 是剥离市值/波动风格后的排序预测力，|IC| ≥ 0.005 才算有信号；
+          <b>超额(中性)</b> 是 Top-K 组合相对等权池的表现。注意「超额为正但多空价差为负」的因子
+          （如低波动类）其实是风格 beta，不是选股能力。
+        </p>
+      </div>
+
+      <!-- 组合验证 -->
+      <div v-else-if="tab === 'composite'" class="comp">
+        <template v-if="compFolds.length">
+          <div class="sum">
+            <div class="sum__cell"><span class="k">组合成分</span>
+              <span class="v small">{{ (comp?.meta?.components || []).join('  ') }}</span></div>
+            <div class="sum__cell"><span class="k">全期 IC / IC_IR</span>
+              <span class="v">{{ fmtPct4(comp?.full?.ic) }} / {{ num(comp?.full?.ic_ir) }}</span></div>
+            <div class="sum__cell"><span class="k">全期年化 / 超额</span>
+              <span class="v">{{ fmt(comp?.full?.ann) }} / {{ fmt(comp?.full?.ex_ann) }}</span></div>
+            <div class="sum__cell"><span class="k">样本外超额（均值 / 中位）</span>
+              <span class="v">{{ fmt(compMean) }} / {{ fmt(compMedian) }}</span></div>
+            <div class="sum__cell"><span class="k">为正折数</span>
+              <span class="v">{{ compPositive }}/{{ compFolds.length }}</span></div>
+            <div class="sum__cell"><span class="k">平均 Sortino</span>
+              <span class="v">{{ num(compSortino) }}</span></div>
+          </div>
+          <DataTable :rows="compFolds" :columns="[
+            { key: 'fold', title: '#', width: '44px' },
+            { key: 'test', title: '测试窗口' },
+            { key: 'oos_ex', title: '样本外超额', align: 'right' },
+            { key: 'oos_sortino', title: 'Sortino', align: 'right' },
+            { key: 'oos_ic', title: 'IC', align: 'right' },
+            { key: 'oos_dd', title: '回撤', align: 'right' },
+          ]">
+            <template #cell-oos_ex="{ row }"><span :class="Number(row.oos_ex) >= 0 ? 'up' : 'down'">{{ fmt(row.oos_ex) }}</span></template>
+            <template #cell-oos_sortino="{ row }">{{ num(row.oos_sortino) }}</template>
+            <template #cell-oos_ic="{ row }">{{ fmtPct4(row.oos_ic) }}</template>
+            <template #cell-oos_dd="{ row }">{{ fmt(-Math.abs(Number(row.oos_dd) || 0)) }}</template>
+          </DataTable>
+          <p class="hint">
+            组合 = 等权 rank 合成（无搜索、无挑选偏差），10 折滚动窗口样本外评估。
+            结论：短期反转 + 小市值 + 远离 60 日高点在本土数据上稳定为正；
+            低波动类因子在同期是<b>反向</b>的（高波动占优），已从组合中剔除。
+          </p>
+        </template>
+        <EmptyGuide v-else title="还没有组合验证报告"
+          desc="运行 python -m backend.alpha.composite_test 生成（约 40 秒，纯本地计算）" />
+      </div>
+
+      <LoadingBlock v-else-if="loading && !runs.length" />
       <EmptyGuide v-else-if="!runs.length" title="还没有挖掘记录"
         desc="点「开始挖掘」跑第一次（默认 300 只 × 4 年，约 3~5 分钟，纯本地计算不调用大模型）" />
 
@@ -269,6 +402,15 @@ onMounted(async () => { await Promise.all([load(), loadMeta()]) })
 
 <style scoped>
 .alpha { display: flex; flex-direction: column; gap: 12px; }
+.subtabs { display: flex; gap: 6px; margin: 10px 0 4px; }
+.subtab { padding: 4px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel);
+  color: var(--text-sub); font-size: var(--fs-xs); cursor: pointer; }
+.subtab--on { border-color: var(--accent); color: var(--accent); }
+.zoo { display: flex; flex-direction: column; gap: 8px; }
+.zoo__bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: var(--fs-xs); color: var(--text-faint); }
+.zoo__meta { margin-left: auto; }
+.comp { display: flex; flex-direction: column; gap: 10px; }
+.sum__cell .v.small { font-size: var(--fs-xs); font-weight: 500; }
 .prog { display: flex; flex-direction: column; gap: 6px; margin: 10px 0 2px; }
 .prog__bar { height: 6px; border-radius: 999px; background: var(--panel-2); overflow: hidden; }
 .prog__bar i { display: block; height: 100%; background: var(--accent); transition: width .3s; }

@@ -13,12 +13,14 @@
 """
 from __future__ import annotations
 
+import json
+import os
 import sqlite3
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-from ..api.paths import KLINE_DB
+from ..api.paths import DATA_DIR, KLINE_DB
 
 #: 特征名 → 计算函数（输入是 [N,T] 的原始面板，输出同形状）
 FEATURE_NAMES: Tuple[str, ...] = (
@@ -95,13 +97,48 @@ def _ema(x: np.ndarray, span: int) -> np.ndarray:
 
 # ───────────────────────── 数据加载 ─────────────────────────
 
+_UNIVERSE_CACHE: Dict[str, List[str]] = {}
+
+
+def _universe_cache_path() -> str:
+    return os.path.join(str(DATA_DIR), "alpha_universe_cache.json")
+
+
+def _cache_get(key: str) -> Optional[List[str]]:
+    if key in _UNIVERSE_CACHE:
+        return _UNIVERSE_CACHE[key]
+    try:
+        with open(_universe_cache_path(), encoding="utf-8") as f:
+            _UNIVERSE_CACHE.update(json.load(f))
+    except Exception:
+        pass
+    return _UNIVERSE_CACHE.get(key)
+
+
+def _cache_put(key: str, value: List[str]) -> None:
+    _UNIVERSE_CACHE[key] = value
+    try:
+        os.makedirs(os.path.dirname(_universe_cache_path()), exist_ok=True)
+        # 只保留最近 40 个键，避免文件无限增长
+        items = list(_UNIVERSE_CACHE.items())[-40:]
+        with open(_universe_cache_path(), "w", encoding="utf-8") as f:
+            json.dump(dict(items), f)
+    except Exception:
+        pass
+
+
 def pick_universe(limit: int = 400, min_amount: float = 5e7, lookback_days: int = 120,
                   exclude_st: bool = True, as_of: Optional[str] = None) -> List[str]:
     """按成交额挑流动性最好的 limit 只（默认剔除 ST/退市）。
 
     as_of 非空时，只用 **该日之前** 的成交额排序，并要求股票在该日之前已有行情
     （避免用未来流动性选池造成的选择偏误与前视）。
+    结果按 (as_of, limit, min_amount) 做磁盘缓存 —— 成交额聚合要扫全库，约 20 秒。
     """
+    ckey = f"{as_of or 'live'}|{limit}|{int(min_amount)}|{lookback_days}"
+    hit = _cache_get(ckey)
+    if hit:
+        return list(hit)
     con = sqlite3.connect(KLINE_DB)
     try:
         rows = con.execute(
@@ -129,7 +166,9 @@ def pick_universe(limit: int = 400, min_amount: float = 5e7, lookback_days: int 
             amt[str(code)] = float(s or 0)
         ranked = sorted(codes, key=lambda c: -amt.get(c, 0))
         out = [c for c in ranked if amt.get(c, 0) >= min_amount][:limit]
-        return out or ranked[:limit]
+        out = out or ranked[:limit]
+        _cache_put(ckey, out)
+        return out
     finally:
         con.close()
 

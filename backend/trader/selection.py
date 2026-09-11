@@ -90,7 +90,7 @@ def _events_block(top_n: int) -> dict:
 
 
 def build_snapshot(ref_date: str | None = None, top_n: int = 12,
-                   with_events: bool = True, weights=None) -> dict:
+                   with_events: bool = True, weights=None, source: str = "scorecard") -> dict:
     """构建候选池快照。
 
     Args:
@@ -98,7 +98,11 @@ def build_snapshot(ref_date: str | None = None, top_n: int = 12,
         top_n: 返回候选数量
         with_events: 是否附事件驱动池（回放应为 False）
         weights: 评分口径覆盖（预设名 'steady' / {组id:满分} / "trend:18,..."），None=默认口径
+        source: 'scorecard'=五组加权评分卡（默认）；'composite'=固定权重因子组合
+                （-RET1 / -RET5 / -HIGH60_GAP / -LOG_AMT20，10 折样本外为正 8/10）
     """
+    if str(source) == "composite":
+        return _composite_snapshot(ref_date, top_n, with_events)
     ref = (str(ref_date or "").replace("-", "") or None)
     from ..factor_engine.config import resolve_weights
     wover = resolve_weights(weights)
@@ -160,6 +164,52 @@ def build_snapshot(ref_date: str | None = None, top_n: int = 12,
     return out
 
 
+COMPOSITE_CHAIN = ("stock_list(active) → 规则过滤 → 130 日面板 → "
+                   "四因子等权 rank 合成(-1日反转/-5日反转/-远离60日高点/-小市值) → TopN")
+
+
+def _composite_snapshot(ref_date: str | None, top_n: int, with_events: bool) -> dict:
+    """用已验证的固定权重因子组合构建候选池（口径可审计：成分与各自得分都会输出）。"""
+    from ..alpha import composite as C
+    snap = C.snapshot(ref_date, top_n=int(top_n or 12))
+    picks = snap.get("picks") or []
+    out = {
+        "as_of": snap.get("as_of") or (str(ref_date or "").replace("-", "") or "实时最新"),
+        "mode": "as_of" if ref_date else "live",
+        "chain": COMPOSITE_CHAIN,
+        "source": "composite",
+        "universe": ("kline.db · stock_list(status='active') 60/00/30/68；股票池按基准日前"
+                     f"成交额取前 {snap.get('universe', '')} 只"),
+        "reference_date": str(ref_date or "").replace("-", ""),
+        "scorecard": {
+            "name": "固定权重因子组合（已做 10 折滚动验证：样本外超额为正 8/10 折）",
+            "components": snap.get("components") or [],
+            "note": "等权 rank 合成；组合分 0~100 便于与评分卡比较",
+        },
+        "weights_override": {},
+        "filters": [{"rule": "剔除 ST/*ST", "on": True},
+                    {"rule": "剔除北交所（83/87/43 开头）", "on": True},
+                    {"rule": "剔除当日无行情（停牌/退市）", "on": True}],
+        "stats": {
+            "universe_total": snap.get("stats", {}).get("universe", 0),
+            "after_filters": snap.get("stats", {}).get("universe", 0),
+            "scored": snap.get("stats", {}).get("scored", 0),
+            "skipped_short_history": 0, "failed": 0,
+            "returned": len(picks),
+        },
+        "picks": [{"rank": p.get("rank"), "code": p.get("code"), "name": p.get("name") or "",
+                   "score": p.get("score"), "groups": p.get("groups") or []} for p in picks],
+        "events": [], "hot_sectors": [], "error": snap.get("error", ""),
+    }
+    if with_events:
+        ev = _events_block(int(top_n or 12))
+        out["events"] = ev["events"]
+        out["hot_sectors"] = ev["hot_sectors"]
+        out["events_as_of"] = ev["as_of"]
+    out["scope_note"] = compact_note(out)
+    return out
+
+
 def compact_note(snap: dict) -> dict:
     """给模型的「候选池说明」——只保留口径，不重复候选明细。"""
     st = snap.get("stats") or {}
@@ -171,7 +221,8 @@ def compact_note(snap: dict) -> dict:
         "评分卡": {
             "名称": (snap.get("scorecard") or {}).get("name"),
             "窗口": f"{(snap.get('scorecard') or {}).get('data_window')} 个交易日",
-            "权重": [f"{g.get('name')}{g.get('weight'):g}" for g in (snap.get("scorecard") or {}).get("groups") or []],
+            "权重": [f"{g.get('name')}{g.get('weight'):g}" for g in (snap.get("scorecard") or {}).get("groups") or []]
+                    or [f"{c.get('direction')}{c.get('cn')}" for c in (snap.get("scorecard") or {}).get("components") or []],
         },        "统计": {
             "股票池": st.get("universe_total"),
             "过滤后": st.get("after_filters"),

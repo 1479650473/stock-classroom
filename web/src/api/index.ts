@@ -573,6 +573,23 @@ export interface AlphaRun {
   error?: string | null; created_at?: string; finished_at?: string
   formulas?: AlphaFormula[]
 }
+export interface AlphaZooRow {
+  factor: string; ic: number; ic_ir: number; ic20: number; ic_neutral: number
+  ex_ann: number; ex_neutral: number; ex_sortino: number; turnover: number
+  maxdd: number; seg_ex: number[]; seg_pos: number; n_seg: number
+}
+export interface AlphaCompositeReport {
+  meta: { components?: string[]; neutralized?: boolean; top_k?: number; hold?: number; [k: string]: unknown }
+  full?: { ic?: number; ic_ir?: number; ann?: number; ex_ann?: number; ex_sortino?: number; maxdd?: number; turnover?: number }
+  folds?: { fold: number; test: string; train_ex: number; oos_ex: number; oos_sortino: number; oos_ic: number; oos_dd: number }[]
+  hint?: string
+}
+export const getAlphaZoo = (sort = 'ic', top = 200) =>
+  api.get<{ meta: Record<string, unknown>; sort: string; factors: AlphaZooRow[]; hint?: string }>('/api/alpha/zoo', { sort, top })
+export const getAlphaCompositeReport = () =>
+  api.get<AlphaCompositeReport>('/api/alpha/composite_report')
+export const getAlphaComposite = (date?: string, top = 12) =>
+  api.get<Record<string, unknown>>('/api/alpha/composite', date ? { date, top } : { top })
 export const getAlphaMeta = () =>
   api.get<{ defaults: Record<string, number | string>; features: string[]; operators: string[] }>('/api/alpha/meta')
 export const startAlphaMine = (params: Record<string, unknown>) =>

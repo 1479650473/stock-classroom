@@ -184,10 +184,10 @@ def _account_block(account_id: int, as_of: str) -> dict:
     }
 
 
-def _candidates_block(as_of: str, top_n: int = 12, weights=None) -> dict:
+def _candidates_block(as_of: str, top_n: int = 12, weights=None, source: str = "scorecard") -> dict:
     """回放候选池：按当日 as-of 截断，不附事件池（历史新闻不可回溯）。"""
     from .selection import build_snapshot
-    return build_snapshot(as_of, top_n=top_n, with_events=False, weights=weights)
+    return build_snapshot(as_of, top_n=top_n, with_events=False, weights=weights, source=source)
 
 
 def _memory_block(profile_id: int, positions: list, account_id: int = 0,

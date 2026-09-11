@@ -309,7 +309,8 @@ def selection_preview():
     ref = request.args.get("date") or None
     top_n = int_arg(request.args.get("top"), 12, 1, 50)
     weights = request.args.get("weights") or None
-    return ok(build_snapshot(ref, top_n=top_n, with_events=not ref, weights=weights))
+    source = str(request.args.get("source") or "scorecard")
+    return ok(build_snapshot(ref, top_n=top_n, with_events=not ref, weights=weights, source=source))
 
 
 @bp.route("/rules", methods=["GET"])

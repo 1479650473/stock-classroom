@@ -160,11 +160,13 @@ class TraderTools:
         return build_market_block()
 
     def get_candidates(self, top: int = 10) -> dict:
+        src = str(getattr(self, "scoring", "scorecard") or "scorecard")
         if self.trade_date:
             from .replay import _candidates_block
-            return _candidates_block(self.trade_date, top_n=int(top or 10), weights=self.weights)
+            return _candidates_block(self.trade_date, top_n=int(top or 10),
+                                    weights=self.weights, source=src)
         from .context import build_candidates_block
-        return build_candidates_block(top_n=int(top or 10), weights=self.weights)
+        return build_candidates_block(top_n=int(top or 10), weights=self.weights, source=src)
 
     # ── 下单预览（只读，不成交） ──
     def preview_order(self, code: str, side: str, order_type: str = "market",

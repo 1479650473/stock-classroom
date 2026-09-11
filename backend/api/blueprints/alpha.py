@@ -71,6 +71,51 @@ def walkforward():
     return ok({"job": job})
 
 
+@bp.route("/composite", methods=["GET"])
+def composite():
+    """固定权重因子组合的候选池（-1日反转/-5日反转/-远离60日高点/-小市值）。"""
+    from backend.alpha import composite as C
+    ref = request.args.get("date") or None
+    top = int_arg(request.args.get("top"), 12, 1, 50)
+    return ok(C.snapshot(ref, top_n=top))
+
+
+@bp.route("/zoo", methods=["GET"])
+def zoo():
+    """因子体检榜：factor_zoo.py 产出的全量因子指标（IC/中性化/超额/分段稳定）。"""
+    import json as _json
+    import os as _os
+    from ..paths import DATA_DIR
+    path = _os.path.join(str(DATA_DIR), "factor_zoo.json")
+    if not _os.path.exists(path):
+        return ok({"meta": {}, "factors": [], "hint": "尚未运行 factor_zoo.py"})
+    with open(path, encoding="utf-8") as f:
+        data = _json.load(f)
+    top = int_arg(request.args.get("top"), 200, 1, 500)
+    sort = str(request.args.get("sort") or "ic")
+    rows = data.get("factors") or []
+    if sort == "ic_neutral":
+        rows.sort(key=lambda r: -abs(float(r.get("ic_neutral") or 0)))
+    elif sort == "ex_ann":
+        rows.sort(key=lambda r: -float(r.get("ex_ann") or 0))
+    else:
+        rows.sort(key=lambda r: -abs(float(r.get("ic") or 0)))
+    return ok({"meta": data.get("meta") or {}, "sort": sort, "factors": rows[:top]})
+
+
+@bp.route("/composite_report", methods=["GET"])
+def composite_report():
+    """组合因子验证报告（composite_test.py 产出：全期指标 + 10 折样本外）。"""
+    import json as _json
+    import os as _os
+    from ..paths import DATA_DIR
+    path = _os.path.join(str(DATA_DIR), "alpha_composite.json")
+    if not _os.path.exists(path):
+        return ok({"meta": {}, "folds": [], "hint": "尚未运行 composite_test.py"})
+    with open(path, encoding="utf-8") as f:
+        return ok(_json.load(f))
+
+
 @bp.route("/runs", methods=["GET"])
 def runs():
     from backend.alpha import store
