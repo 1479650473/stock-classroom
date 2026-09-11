@@ -229,14 +229,14 @@ def _rolling_mad(x: np.ndarray, d: int) -> np.ndarray:
 
 def _rolling_skew(x: np.ndarray, d: int) -> np.ndarray:
     m = _rolling_mean(x, d)
-    s = _rolling_std(x, d) + 1e-9
-    return (_rolling_mean((x - m) ** 3, d) / (s ** 3)).astype(np.float32)
+    z = np.clip((x - m) / (_rolling_std(x, d) + 1e-9), -10.0, 10.0)
+    return _rolling_mean(z ** 3, d).astype(np.float32)
 
 
 def _rolling_kurt(x: np.ndarray, d: int) -> np.ndarray:
     m = _rolling_mean(x, d)
-    s = _rolling_std(x, d) + 1e-9
-    return (_rolling_mean((x - m) ** 4, d) / (s ** 4) - 3.0).astype(np.float32)
+    z = np.clip((x - m) / (_rolling_std(x, d) + 1e-9), -10.0, 10.0)
+    return (_rolling_mean(z ** 4, d) - 3.0).astype(np.float32)
 
 
 def _rolling_corr(x: np.ndarray, y: np.ndarray, d: int) -> np.ndarray:
