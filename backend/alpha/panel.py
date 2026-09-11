@@ -24,7 +24,7 @@ from ..api.paths import KLINE_DB
 FEATURE_NAMES: Tuple[str, ...] = (
     "RET1", "RET5", "RET20", "VOL_CHG", "VOL_RATIO", "TURN_RATIO",
     "TREND20", "TREND60", "RSI14", "MACD_H", "CLOSE_POS", "AMP",
-    "HL_RANGE", "AMT_TREND", "HIGH20_GAP", "LOW20_GAP",
+    "HL_RANGE", "AMT_TREND", "HIGH20_GAP", "LOW20_GAP", "LOG_AMT20",
 )
 
 
@@ -201,6 +201,8 @@ def build_features(fields: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
         "AMT_TREND": amt / (amt_ma20 + 1e-9) - 1.0,
         "HIGH20_GAP": close / (_rolling_max(high, 20) + 1e-9) - 1.0,
         "LOW20_GAP": close / (_rolling_min(low, 20) + 1e-9) - 1.0,
+        # 市值代理：20 日均成交额的对数（截面标准化后保留相对大小关系）
+        "LOG_AMT20": np.log(amt_ma20 + 1.0),
     }
     feats = {k: _cs_norm(v) for k, v in feats_raw.items()}
     feats["_TRADABLE"] = tradable

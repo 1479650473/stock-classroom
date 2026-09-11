@@ -187,7 +187,11 @@ def evaluate(sig: np.ndarray, target: np.ndarray, masks: Dict[str, np.ndarray],
         ex_ann = float(ex_eq[-1] ** (TRADING_DAYS / max(1, idx_size)) - 1.0) if ex_eq[-1] > 0 else -1.0
         ex_dd = _max_drawdown(ex_eq)
 
-    ics = _rank_ic(s_all, tg, ok_all)
+    # IC 口径：只在"有行情的股票"上算相关，**不能叠加次日涨停过滤**——
+    # A 股的短期反转/投机类信号恰好集中在次日涨停的样本上（实测：20 日反转 IC
+    # 从 +0.0050 掉到 0.0000），混入可买性约束会把信号本身抹掉，搜索会变成瞎子。
+    # 可买性只用于组合构建（score 处已经过滤）。
+    ics = _rank_ic(s_all, tg, tradable)
     ic = float(np.mean(ics))
     ic_ir = float(np.mean(ics) / (np.std(ics) + 1e-9))
     turn_mean = float(np.mean(turn))
