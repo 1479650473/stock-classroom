@@ -25,6 +25,10 @@ FEATURE_NAMES: Tuple[str, ...] = (
     "RET1", "RET5", "RET20", "VOL_CHG", "VOL_RATIO", "TURN_RATIO",
     "TREND20", "TREND60", "RSI14", "MACD_H", "CLOSE_POS", "AMP",
     "HL_RANGE", "AMT_TREND", "HIGH20_GAP", "LOW20_GAP", "LOG_AMT20", "VOL20",
+    # —— 因子动物园扩充（借鉴 Qbot 的 Alpha158/技指清单）——
+    "TREND5", "TREND10", "TREND30", "SKEW20", "KURT20", "CORR_PV20", "ATR14",
+    "UP_SHADOW", "DN_SHADOW", "TURN_STD20", "TURN_Z20", "RVOL_5_20", "MOM_DIFF",
+    "PSY12", "CCI14", "KDJ_K", "OBV_SLOPE20", "VR20", "AMT_Z20", "HIGH60_GAP", "CONS_UP",
 )
 
 
@@ -161,6 +165,103 @@ def load_panel(codes: List[str], start: str, end: str) -> Dict[str, object]:
         con.close()
 
 
+def _extra_features(fields: Dict[str, np.ndarray], base: Dict[str, np.ndarray],
+                    close, high, low, open_, vol, amt, turn, rng) -> Dict[str, np.ndarray]:
+    """因子动物园扩充（全部因果、截面标准化前）：均线族、分布形状、量价关系、
+    技术指标（ATR/CCI/KDJ/PSY/OBV/VR）、换手率统计量等。"""
+    ret1 = base["RET1"]
+    tp = (high + low + close) / 3.0
+    ma = lambda n: _rolling_mean(close, n)
+    out = {
+        "TREND5": close / (ma(5) + 1e-9) - 1.0,
+        "TREND10": close / (ma(10) + 1e-9) - 1.0,
+        "TREND30": close / (ma(30) + 1e-9) - 1.0,
+        # 分布形状：收益的偏度/峰度（20 日）
+        "SKEW20": _rolling_skew(ret1, 20),
+        "KURT20": _rolling_kurt(ret1, 20),
+        # 量价关系：收益与成交量变化的 20 日相关系数
+        "CORR_PV20": _rolling_corr(ret1, _pct_change(vol, 1), 20),
+        "ATR14": _rolling_mean((high - low) / (close + 1e-9), 14),
+        # K 线形态：上下影线占振幅比例
+        "UP_SHADOW": (high - np.maximum(open_, close)) / (rng + 1e-9),
+        "DN_SHADOW": (np.minimum(open_, close) - low) / (rng + 1e-9),
+        # 换手率统计量
+        "TURN_STD20": _rolling_std(turn, 20),
+        "TURN_Z20": (turn - _rolling_mean(turn, 20)) / (_rolling_std(turn, 20) + 1e-9),
+        # 量能结构
+        "RVOL_5_20": _rolling_mean(vol, 5) / (_rolling_mean(vol, 20) + 1e-9) - 1.0,
+        "MOM_DIFF": base["RET5"] - base["RET20"],
+        "PSY12": _rolling_mean((ret1 > 0).astype(np.float32), 12) * 100.0,
+        # CCI(14)：典型价偏离其均值，用平均绝对偏差
+        "CCI14": (tp - _rolling_mean(tp, 14)) / (0.015 * (_rolling_mad(tp, 14) + 1e-9)),
+        # KDJ 的 K 值（9 日）
+        "KDJ_K": 100.0 * (close - _rolling_min(low, 9)) /
+                 (_rolling_max(high, 9) - _rolling_min(low, 9) + 1e-9),
+        # OBV（能量潮）20 日斜率，用 20 日均量归一
+        "OBV_SLOPE20": (_obv(close, vol) - _delay_arr(_obv(close, vol), 20)) /
+                       (_rolling_mean(vol, 20) + 1e-9),
+        # VR(20)：上涨日量能 / 下跌日量能
+        "VR20": _rolling_sum(np.where(ret1 > 0, vol, 0.0), 20) /
+                (_rolling_sum(np.where(ret1 < 0, vol, 0.0), 20) + 1e-9),
+        "AMT_Z20": (amt - _rolling_mean(amt, 20)) / (_rolling_std(amt, 20) + 1e-9),
+        "HIGH60_GAP": close / (_rolling_max(high, 60) + 1e-9) - 1.0,
+        "CONS_UP": _consecutive_up(ret1),
+    }
+    return out
+
+
+def _delay_arr(x: np.ndarray, d: int) -> np.ndarray:
+    out = np.zeros_like(x)
+    if x.shape[1] > d:
+        out[:, d:] = x[:, :-d]
+    return out
+
+
+def _rolling_sum(x: np.ndarray, d: int) -> np.ndarray:
+    return _rolling_mean(x, d) * float(d)
+
+
+def _rolling_mad(x: np.ndarray, d: int) -> np.ndarray:
+    """滚动平均绝对偏差（相对滚动均值的绝对值平均）。"""
+    m = _rolling_mean(x, d)
+    return _rolling_mean(np.abs(x - m), d)
+
+
+def _rolling_skew(x: np.ndarray, d: int) -> np.ndarray:
+    m = _rolling_mean(x, d)
+    s = _rolling_std(x, d) + 1e-9
+    return (_rolling_mean((x - m) ** 3, d) / (s ** 3)).astype(np.float32)
+
+
+def _rolling_kurt(x: np.ndarray, d: int) -> np.ndarray:
+    m = _rolling_mean(x, d)
+    s = _rolling_std(x, d) + 1e-9
+    return (_rolling_mean((x - m) ** 4, d) / (s ** 4) - 3.0).astype(np.float32)
+
+
+def _rolling_corr(x: np.ndarray, y: np.ndarray, d: int) -> np.ndarray:
+    mx, my = _rolling_mean(x, d), _rolling_mean(y, d)
+    cov = _rolling_mean(x * y, d) - mx * my
+    sx, sy = _rolling_std(x, d), _rolling_std(y, d)
+    return (cov / (sx * sy + 1e-9)).astype(np.float32)
+
+
+def _obv(close: np.ndarray, vol: np.ndarray) -> np.ndarray:
+    sign = np.sign(np.concatenate([np.zeros((close.shape[0], 1), dtype=np.float32),
+                                   np.diff(close, axis=1)], axis=1))
+    return np.cumsum(sign * vol, axis=1, dtype=np.float32)
+
+
+def _consecutive_up(ret1: np.ndarray) -> np.ndarray:
+    """连续上涨天数（上限 5，因果计算）。"""
+    up = (ret1 > 0).astype(np.float32)
+    out = np.zeros_like(up)
+    for t in range(up.shape[1]):
+        prev = out[:, t - 1] if t else np.zeros(up.shape[0], dtype=np.float32)
+        out[:, t] = np.minimum(prev + 1.0, 5.0) * up[:, t]
+    return out
+
+
 def _cs_norm(x: np.ndarray) -> np.ndarray:
     """截面 robust z（逐日、跨股票），NaN→0。"""
     out = np.zeros_like(x)
@@ -206,6 +307,7 @@ def build_features(fields: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
         # 20 日已实现波动（波动率风格因子，同时用于风格中性化）
         "VOL20": _rolling_std(ret1, 20),
     }
+    feats_raw.update(_extra_features(fields, feats_raw, close, high, low, open_, vol, amt, turn, rng))
     feats = {k: _cs_norm(v) for k, v in feats_raw.items()}
     feats["_TRADABLE"] = tradable
     return feats
