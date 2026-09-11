@@ -97,7 +97,8 @@ def _max_drawdown(equity: np.ndarray) -> float:
 
 def evaluate(sig: np.ndarray, target: np.ndarray, masks: Dict[str, np.ndarray],
              sl: slice, top_k: int = 20, cost_one_way: float = DEFAULT_COST_ONE_WAY,
-             bench_daily: Optional[np.ndarray] = None, hold: int = 1) -> Dict[str, float]:
+             bench_daily: Optional[np.ndarray] = None, hold: int = 1,
+             neutralize_fn=None) -> Dict[str, float]:
     """在 sl 指定的时间段上评估信号。sig/target 形状 [N, T]。
 
     bench_daily：可选，等权股票池的日收益序列（长度 T）。给了之后就额外给出
@@ -114,6 +115,8 @@ def evaluate(sig: np.ndarray, target: np.ndarray, masks: Dict[str, np.ndarray],
                 "ann": 0.0, "sharpe": 0.0, "sortino": 0.0, "maxdd": 0.0,
                 "turnover": 1.0, "void_ratio": 1.0, "win_rate": 0.0, "n_days": float(idx.size)}
 
+    if neutralize_fn is not None:
+        sig = neutralize_fn(sig)
     tg = target[:, idx]
     can_buy = (masks["can_buy"][:, idx] > 0)
     if "_tradable" in masks:

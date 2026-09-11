@@ -46,6 +46,7 @@ def main() -> None:
     ap.add_argument("--topk", type=int, default=20)
     ap.add_argument("--hold", type=int, default=5)
     ap.add_argument("--start-folds", default="2020-12-01", help="逐段统计的起点（与 10 折验证对齐）")
+    ap.add_argument("--neutralize", action="store_true", help="额外输出风格中性化后的 IC/超额")
     args = ap.parse_args()
 
     t0 = time.time()
@@ -85,7 +86,9 @@ def main() -> None:
         tmp = np.zeros_like(o1)
         tmp[ok] = o2[ok] / o1[ok] - 1.0
         fwd20[:, :-21] = tmp
-    hdr = (f"{'因子':<12}{'IC(1日)':>10}{'IC(20日)':>10}{'年化':>9}{'超额年化':>10}"
+    nz = (lambda s: P.neutralize(s, feats, masks["_tradable"] > 0.5)) if args.neutralize else None
+    extra = f"{'IC(中性)':>9}{'超额(中性)':>11}" if args.neutralize else ""
+    hdr = (f"{'因子':<12}{'IC(1日)':>10}{'IC(20日)':>10}{extra}{'年化':>9}{'超额年化':>10}"
            f"{'超额Sortino':>12}{'回撤':>8}{'换手':>7}   分段超额(6个月)")
     print(hdr)
     print("-" * len(hdr))
@@ -105,7 +108,15 @@ def main() -> None:
         ic20 = float(np.mean(R._rank_ic(sig, fwd20, masks["_tradable"] > 0.5)))
         segs_str = " ".join(f"{x * 100:+.0f}" for x in seg_ex)
         pos = sum(1 for x in seg_ex if x > 0)
-        print(f"{name:<12}{m['ic']:>+10.4f}{ic20:>+10.4f}{m['ann'] * 100:>8.1f}%"
+        if args.neutralize and nz is not None:
+            sn = nz(sig)
+            icn = float(np.mean(R._rank_ic(sn, target, masks["_tradable"] > 0.5)))
+            mn = R.evaluate(sn, target, masks, slice(0, len(dates)), top_k=args.topk,
+                            bench_daily=bench, hold=args.hold)
+            extra_v = f"{icn:>+9.4f}{mn['ex_ann'] * 100:>10.1f}%"
+        else:
+            extra_v = ""
+        print(f"{name:<12}{m['ic']:>+10.4f}{ic20:>+10.4f}{extra_v}{m['ann'] * 100:>8.1f}%"
               f"{m['ex_ann'] * 100:>9.1f}%{m['ex_sortino']:>+12.2f}{m['maxdd'] * 100:>7.1f}%"
               f"{m['turnover']:>7.2f}   {segs_str}  ({pos}/{len(seg_ex)} 段为正)")
         rows.append({"name": name, "formula": decode(tokens), "ic": m["ic"], "ic_ir": m["ic_ir"],

@@ -72,6 +72,8 @@ def main() -> None:
     ap.add_argument("--topk", type=int, default=20)
     ap.add_argument("--hold", type=int, default=5)
     ap.add_argument("--combo", type=int, default=5, help="合成用 Top-N 公式")
+    ap.add_argument("--neutralize", action="store_true",
+                    help="风格中性化：信号先对 市值/波动 做截面回归取残差，再算 IC 与组合（剥离风格 beta）")
     ap.add_argument("--controls", type=int, default=120,
                     help="随机对照公式数量（同预算下随机搜索能拿到什么，用于多重检验校正）")
     ap.add_argument("--out", default=os.path.join(str(DATA_DIR), "alpha_walkforward.json"))
@@ -88,6 +90,9 @@ def main() -> None:
     masks["_tradable"] = feats_all["_TRADABLE"]
     bench = R.bench_series(target, masks)
     feats = {k: v for k, v in feats_all.items()}
+
+    def _nz(sig: np.ndarray) -> np.ndarray:
+        return P.neutralize(sig, feats, feats["_TRADABLE"] > 0.5) if args.neutralize else sig
     print(f"[1/3] 面板 {len(codes)} 只 × {len(dates)} 日（{dates[0]}~{dates[-1]}）"
           f" {time.time() - t0:.0f}s", flush=True)
 
@@ -112,7 +117,8 @@ def main() -> None:
             if sig is None:
                 res = (-3.0, {"invalid": 1.0})
             else:
-                m = R.evaluate(sig, target, masks, _sl, top_k=args.topk, bench_daily=_b, hold=args.hold)
+                m = R.evaluate(sig, target, masks, _sl, top_k=args.topk, bench_daily=_b,
+                               hold=args.hold, neutralize_fn=_nz)
                 res = (float(m.get("fitness", -3.0)), m)
             _cache[key] = res
             return res
@@ -125,7 +131,8 @@ def main() -> None:
             if sig is None:
                 res = (-3.0, {"invalid": 1.0})
             else:
-                m = R.evaluate(sig, target, masks, _sl, top_k=args.topk, bench_daily=_b, hold=args.hold)
+                m = R.evaluate(sig, target, masks, _sl, top_k=args.topk, bench_daily=_b,
+                               hold=args.hold, neutralize_fn=_nz)
                 res = (float(m.get("fitness", -3.0)), m)
             _cache[key] = res
             return res
@@ -156,9 +163,9 @@ def main() -> None:
             row["best_oos"] = {k: round(float(v), 4) for k, v in oo_m.items() if isinstance(v, (int, float))}
         if combo_sig is not None:
             tr_c = R.evaluate(combo_sig, target, masks, slice(tr_lo, tr_hi), top_k=args.topk,
-                              bench_daily=bench_train, hold=args.hold)
+                              bench_daily=bench_train, hold=args.hold, neutralize_fn=_nz)
             oo_c = R.evaluate(combo_sig, target, masks, slice(tr_hi, te_hi), top_k=args.topk,
-                              bench_daily=bench_oos, hold=args.hold)
+                              bench_daily=bench_oos, hold=args.hold, neutralize_fn=_nz)
             row["combo_train"] = {k: round(float(v), 4) for k, v in tr_c.items() if isinstance(v, (int, float))}
             row["combo_oos"] = {k: round(float(v), 4) for k, v in oo_c.items() if isinstance(v, (int, float))}
 
@@ -196,7 +203,8 @@ def main() -> None:
                     rsig = R.combine_signals([sig_of(tk) for tk in pick])
                     ctrl["top5_combo_oos"] = float(R.evaluate(
                         rsig, target, masks, slice(tr_hi, te_hi), top_k=args.topk,
-                        bench_daily=bench_oos, hold=args.hold).get("ex_ann", 0.0))
+                        bench_daily=bench_oos, hold=args.hold,
+                        neutralize_fn=_nz).get("ex_ann", 0.0))
             row["control"] = {k: round(float(v), 4) for k, v in ctrl.items()}
         rows.append(row)
         b_oos = row.get("best_oos", {}).get("ex_ann", 0) * 100
@@ -239,6 +247,7 @@ def main() -> None:
                     "train_months": args.train_months, "test_months": args.test_months,
                     "folds": len(rows), "hold": args.hold, "top_k": args.topk,
                     "population": args.pop, "generations": args.gens, "combo_top": args.combo,
+                    "neutralized": bool(args.neutralize),
                     "elapsed_sec": round(time.time() - t0, 1), "search": "GA(numpy)"},
            "summary": summary, "folds": rows}
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
@@ -246,7 +255,8 @@ def main() -> None:
         json.dump(out, f, ensure_ascii=False, indent=1)
 
     print("\n" + "=" * 92)
-    print(f"滚动窗口汇总（{len(rows)} 折，hold={args.hold}，Top{args.topk} 组合，与等权池比）")
+    print(f"滚动窗口汇总（{len(rows)} 折，hold={args.hold}，Top{args.topk} 组合，与等权池比"
+          f"{'，已做风格中性化' if args.neutralize else ''}）")
     print("=" * 92)
     if cs:
         print(f"单公式样本外超额：均值 {summary['best_mean_ex_ann'] * 100:+.1f}% / 中位 "

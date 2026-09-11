@@ -24,7 +24,7 @@ from ..api.paths import KLINE_DB
 FEATURE_NAMES: Tuple[str, ...] = (
     "RET1", "RET5", "RET20", "VOL_CHG", "VOL_RATIO", "TURN_RATIO",
     "TREND20", "TREND60", "RSI14", "MACD_H", "CLOSE_POS", "AMP",
-    "HL_RANGE", "AMT_TREND", "HIGH20_GAP", "LOW20_GAP", "LOG_AMT20",
+    "HL_RANGE", "AMT_TREND", "HIGH20_GAP", "LOW20_GAP", "LOG_AMT20", "VOL20",
 )
 
 
@@ -203,6 +203,8 @@ def build_features(fields: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
         "LOW20_GAP": close / (_rolling_min(low, 20) + 1e-9) - 1.0,
         # 市值代理：20 日均成交额的对数（截面标准化后保留相对大小关系）
         "LOG_AMT20": np.log(amt_ma20 + 1.0),
+        # 20 日已实现波动（波动率风格因子，同时用于风格中性化）
+        "VOL20": _rolling_std(ret1, 20),
     }
     feats = {k: _cs_norm(v) for k, v in feats_raw.items()}
     feats["_TRADABLE"] = tradable
@@ -240,6 +242,38 @@ def trade_masks(fields: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
     can_buy = ~suspended & ~limit_up
     can_sell = ~suspended & ~limit_down
     return {"can_buy": can_buy, "can_sell": can_sell, "gap": gap}
+
+
+#: 风格因子（中性化用）：市值代理 + 波动
+STYLE_FACTORS: Tuple[str, ...] = ("LOG_AMT20", "VOL20")
+
+
+def neutralize(sig: np.ndarray, feats: Dict[str, np.ndarray],
+               mask: np.ndarray, styles: Tuple[str, ...] = STYLE_FACTORS) -> np.ndarray:
+    """截面风格中性化：每个交易日把信号对 [1, 风格因子…] 做 OLS，取残差。
+
+    目的：把"小市值 / 高波动"这类可以整体押注的风格暴露从信号里剥离，
+    只留下与风格无关的选股信息（否则超额很难区分是 alpha 还是风格 beta）。
+    """
+    Xs = [feats.get(n) for n in styles if feats.get(n) is not None]
+    if not Xs:
+        return sig
+    N, T = sig.shape
+    out = np.zeros_like(sig)
+    m_all = mask if mask.dtype == bool else mask > 0
+    for t in range(T):
+        m = m_all[:, t]
+        cnt = int(m.sum())
+        if cnt < 30:
+            continue
+        y = sig[m, t].astype(np.float64)
+        X = np.column_stack([np.ones(cnt, dtype=np.float64)] + [s[m, t].astype(np.float64) for s in Xs])
+        try:
+            beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+        except Exception:
+            continue
+        out[m, t] = (y - X @ beta).astype(np.float32)
+    return out
 
 
 def split_index(dates: List[str], train_ratio: float = 0.8) -> int:
