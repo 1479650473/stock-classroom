@@ -8,6 +8,7 @@ AKShare 安装位置：C:/Python314/Lib/site-packages/akshare/
 """
 
 import logging
+import time
 from typing import List, Dict, Optional
 import pandas as pd
 import akshare as ak
@@ -181,7 +182,11 @@ def _run_with_timeout(fn, timeout: float):
 
 
 def _fetch_kline_with_fallback(symbol: str, days: int, timeout: float):
-    """依次尝试 新浪/腾讯/东财 三个 akshare 源, 每个挂在独立线程 + 硬超时。"""
+    """依次尝试 新浪/腾讯/东财 三个 akshare 源, 每个挂在独立线程 + 硬超时。
+
+    源健康缓存: 某源连续异常 3 次 → 进程内暂停 300s(跳过), 避免单源被反爬/故障时
+    每只股票都 3 源空转(5000 只 × 3 源 × 重试 3 次 会拖到 1 小时+)。成功一次即恢复。
+    """
     import akshare as ak
 
     def _sina():
@@ -209,14 +214,45 @@ def _fetch_kline_with_fallback(symbol: str, days: int, timeout: float):
 
     df = None
     for name, fn in (("sina", _sina), ("tx", _tx), ("em", _em)):
+        if _src_bad(name):
+            continue
         try:
             df = _run_with_timeout(fn, timeout)
         except Exception as e:
             log.warning("ak_fetch_kline[%s] %s 异常: %s", name, symbol, str(e)[:50])
+            _src_note_fail(name)
             df = None
         if df is not None and not df.empty:
+            _src_note_ok(name)
             return df
+        if df is not None:
+            _src_note_ok(name)   # 源本身正常(空=该股无数据), 不记故障
     return None
+
+
+# ══════════════════════════════════════════════════════════════
+#  数据源健康状态(进程内): 连续异常 → 暂停, 防单源故障拖垮全市场更新
+# ══════════════════════════════════════════════════════════════
+_SRC_HEALTH: dict = {}
+_SRC_PAUSE_SECS = 300
+
+
+def _src_bad(name: str) -> bool:
+    st = _SRC_HEALTH.get(name)
+    return bool(st and time.time() < st.get("until", 0))
+
+
+def _src_note_fail(name: str) -> None:
+    st = _SRC_HEALTH.setdefault(name, {"fail": 0, "until": 0})
+    st["fail"] += 1
+    if st["fail"] >= 3:
+        st["until"] = time.time() + _SRC_PAUSE_SECS
+        st["fail"] = 0
+        log.warning("数据源 %s 连续异常 3 次 → 暂停 %ss", name, _SRC_PAUSE_SECS)
+
+
+def _src_note_ok(name: str) -> None:
+    _SRC_HEALTH.setdefault(name, {"fail": 0, "until": 0})["fail"] = 0
 
 
 def _normalize_kline_rows(stored: str, df, days: int = 10):

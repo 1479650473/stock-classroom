@@ -901,6 +901,57 @@ def cache_sectors_from_akshare():
     log.info("cached %d sector rows", total)
     return total
 
+def cache_sector_board_from_akshare():
+    """写入 sector_board 快照表(991行: 行业/概念板块涨跌榜, 含 leader).
+
+    此前该表只有历史一次性手动写入, 现纳入每日更新. leader 尽量保留旧值,
+    避免覆盖历史留下的领涨股信息; 若旧值不存在则从涨停池当日数据补.
+    """
+    try:
+        from akshare_source import ak_get_sectors, ak_get_limit_up
+        conn = get_kline_db()
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        conn.execute("""CREATE TABLE IF NOT EXISTS sector_board (
+            code TEXT, name TEXT, type TEXT, rank INTEGER, latest_price REAL,
+            change_pct REAL, up_count INTEGER, dn_count INTEGER,
+            leader TEXT, leader_chg REAL, updated_at TEXT,
+            PRIMARY KEY (code, type))""")
+        # 当日涨停池 → code->name 映射, 用于 leader 兜底(板块领涨=板块内涨停股)
+        limit_map = {}
+        try:
+            for d in ak_get_limit_up(datetime.now().strftime("%Y%m%d")) or []:
+                limit_map[str(d.get("code", ""))] = d.get("name", "")
+        except Exception:
+            pass
+        total = 0
+        for s_type in ("industry", "concept"):
+            data = ak_get_sectors(s_type) or []
+            for i, d in enumerate(data):
+                code = str(d.get("code", ""))
+                name = str(d.get("name", ""))
+                old = conn.execute("SELECT leader, leader_chg FROM sector_board WHERE code=? AND type=?",
+                                   (code, s_type)).fetchone()
+                leader = (old[0] if old and old[0] else
+                          limit_map.get(code, limit_map.get(str(i + 1), "")))
+                leader_chg = (old[1] if old and old[1] is not None else 0.0)
+                conn.execute("""INSERT OR REPLACE INTO sector_board
+                    (code, name, type, rank, latest_price, change_pct, up_count, dn_count,
+                     leader, leader_chg, updated_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                             (code, name, s_type, i + 1,
+                              float(d.get("price", 0) or 0), float(d.get("change_pct", 0) or 0),
+                              int(d.get("up_count", 0) or 0), int(d.get("down_count", 0) or 0),
+                              leader, leader_chg, now))
+            total += len(data)
+        conn.commit()
+        conn.close()
+        log.info("cached %d sector_board rows", total)
+        return total
+    except Exception as e:
+        log.warning("cache sector_board failed: %s", str(e)[:80])
+        return 0
+
+
 def cache_north_flow_from_akshare():
     """Cache north-bound (HSGT) flow data from AKShare"""
     import akshare as ak

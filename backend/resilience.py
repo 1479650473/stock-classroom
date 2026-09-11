@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import random
+import threading
 import time
 from functools import wraps
 from typing import Callable, Optional, Tuple, Type
@@ -40,29 +41,32 @@ def get_request_headers(referer: Optional[str] = None) -> dict:
 
 
 class RateLimiter:
-    """进程内限流：最小间隔 + 随机抖动。"""
+    """进程内限流：最小间隔 + 随机抖动。线程安全(加锁防多线程齐射)。"""
 
     def __init__(self, min_interval: float = 1.0, jitter_min: float = 0.5, jitter_max: float = 1.5):
         self.min_interval = min_interval
         self.jitter_min = jitter_min
         self.jitter_max = jitter_max
         self._last_request_time: Optional[float] = None
+        self._lock = threading.Lock()
 
     def wait(self) -> float:
-        wait_time = 0.0
-        if self._last_request_time is not None:
-            elapsed = time.time() - self._last_request_time
-            if elapsed < self.min_interval:
-                wait_time = self.min_interval - elapsed
-                time.sleep(wait_time)
-        jitter = random.uniform(self.jitter_min, self.jitter_max)
-        time.sleep(jitter)
-        wait_time += jitter
-        self._last_request_time = time.time()
-        return wait_time
+        with self._lock:
+            wait_time = 0.0
+            if self._last_request_time is not None:
+                elapsed = time.time() - self._last_request_time
+                if elapsed < self.min_interval:
+                    wait_time = self.min_interval - elapsed
+                    time.sleep(wait_time)
+            jitter = random.uniform(self.jitter_min, self.jitter_max)
+            time.sleep(jitter)
+            wait_time += jitter
+            self._last_request_time = time.time()
+            return wait_time
 
     def reset(self) -> None:
-        self._last_request_time = None
+        with self._lock:
+            self._last_request_time = None
 
 
 _akshare_limiter = RateLimiter(min_interval=1.5, jitter_min=0.8, jitter_max=2.5)
@@ -70,7 +74,17 @@ _sina_limiter = RateLimiter(min_interval=1.0, jitter_min=0.4, jitter_max=1.4)
 
 
 def akshare_wait() -> float:
-    return _akshare_limiter.wait()
+    """akshare 请求限流。
+
+    2026-09-11 修复: 原先 RateLimiter 无锁, 多线程 wait() 各自读到相同 _last_request_time,
+    同时 sleep 结束后"齐射"请求 → 新浪接口(内部 py_mini_racer/V8) 并发构造 native 崩溃
+    (update_daily 8/28、9/1、9/2、9/8、9/9 的 3 秒静默死亡根因)。
+
+    改为纯随机间隔(无共享状态): 每线程独立随机 sleep → 请求天然分散, 不齐射不崩溃,
+    同时保持多线程吞吐(16 线程 × ~0.75s ≈ 全市场 5000 只 25-35 分钟)。
+    """
+    time.sleep(random.uniform(0.3, 1.2))
+    return 0.0
 
 
 def sina_wait() -> float:
