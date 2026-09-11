@@ -74,6 +74,9 @@ def create_app():
     # 因子挖掘 (公式搜索 + 回测奖励, AlphaGPT 式)
     from .blueprints import alpha
     app.register_blueprint(alpha.bp)
+    # 回测/因子报告 (自包含 HTML)
+    from .blueprints import report as report_bp
+    app.register_blueprint(report_bp.bp)
     # ETF (全市场列表/单只K线/多只归一化对比)
     from .blueprints import etf
     app.register_blueprint(etf.bp)

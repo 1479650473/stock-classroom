@@ -191,10 +191,12 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
                 lg.info('  新股首拉: %s', {k: rn.get(k) for k in ('updated', 'errors', 'rows_added')})
         except Exception as e:
             lg.warning('新股首拉失败(%s)', str(e)[:80])
-        # 全市场增量: catch_up_days=None → 按 DB 最新到今日的日历缺口自动算(≥60根≈3个月缓冲),
-        # 自动覆盖"某几天只有量化池/漏更"等历史缺口(如 8/27~9/1 全市场缺失)
+        # 全市场增量: `catch_up_days` 给安全下限(≥10 个自然日) ——
+        # 只用“库内最新日期到今天”的全局缺口，会漏掉“某一天只有部分股票有数据”的情况
+        #（2026-09-11 实测：全库最新已是 09-11，但 5194 只里只更新了 1689 只，
+        #  gap=0 导致后续每天都不会补），所以固定回看 10 天保证补齐。
         try:
-            rk = update_codes(all_codes, catch_up_days=None, workers=16, progress=_plog)
+            rk = update_codes(all_codes, catch_up_days=10, workers=16, progress=_plog)
             out['steps']['kline'] = {k: rk[k] for k in ('updated', 'skipped', 'errors', 'rows_added', 'total', 'elapsed') if k in rk}
             lg.info('  K线全市场: %s', out['steps']['kline'])
         except Exception as e:

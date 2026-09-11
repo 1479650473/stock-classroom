@@ -123,6 +123,11 @@ const fmtPct4 = (v: unknown) => {
   return Number.isFinite(n) ? (n >= 0 ? '+' : '') + (n * 100).toFixed(2) + '%' : '—'
 }
 const compFolds = computed(() => comp.value?.folds || [])
+const reportUrl = (kind: string) => `${apiBase()}/api/report/${kind}`
+const apiBase = () => {
+  const env = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_API_BASE
+  return env || 'http://127.0.0.1:5000'
+}
 const compMean = computed(() => {
   const xs = compFolds.value.map((f) => Number(f.oos_ex) || 0)
   return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0
@@ -240,6 +245,7 @@ onMounted(async () => { await Promise.all([load(), loadMeta(), loadZoo(), loadCo
           <button class="chip" :class="{ 'chip--on': zooSort === 'ic' }" @click="zooSort = 'ic'">|IC|</button>
           <button class="chip" :class="{ 'chip--on': zooSort === 'ic_neutral' }" @click="zooSort = 'ic_neutral'">中性化 IC</button>
           <button class="chip" :class="{ 'chip--on': zooSort === 'ex_ann' }" @click="zooSort = 'ex_ann'">超额年化</button>
+          <a class="chip" :href="reportUrl('factor-zoo')" target="_blank" rel="noopener">打开报告</a>
           <span class="zoo__meta">{{ zooMeta.codes }} 只 × {{ zooMeta.days }} 日 · 等权池年化
             {{ ((Number(zooMeta.pool_ann) || 0) * 100).toFixed(1) }}%</span>
         </div>
@@ -274,6 +280,10 @@ onMounted(async () => { await Promise.all([load(), loadMeta(), loadZoo(), loadCo
 
       <!-- 组合验证 -->
       <div v-else-if="tab === 'composite'" class="comp">
+        <div class="zoo__bar">
+          <span>已通过 10 折滚动验证（8/10 折样本外为正）</span>
+          <a class="chip" :href="reportUrl('composite')" target="_blank" rel="noopener">打开报告</a>
+        </div>
         <template v-if="compFolds.length">
           <div class="sum">
             <div class="sum__cell"><span class="k">组合成分</span>
