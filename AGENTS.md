@@ -97,7 +97,9 @@ Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
 | Backend | `backend/agent/toolkit.py` | **对话 Agent 工具集(16)**: 交易6/研究4/策略6, `execute_tool(name, args)` |
 | Backend | `backend/trader/` | **AI 操盘手** (见上节) |
 | Backend | `backend/trade_engine/` | **Simulated trading engine** (accounts/orders/positions/trades/account_nav) |
-| Backend | `backend/update_daily.py` | **每日自动化**: K线池+基本面+纸面盘+净值快照+regime+事件池+深挖+守护+AI操盘手 |
+| Backend | `backend/update_daily.py` | **每日自动化(11步)**: 名录刷新+新股首拉+全市场K线(自动缺口检测≥60根缓冲)+指数/hs300/regime+基本面(3日轮换)+纸面盘+事件池+深挖+守护+净值+AI操盘手+收盘后数据(涨停5日回补/北向/龙虎榜/新高/板块快照)+宏观; 全局异常兜底+stderr落盘, 支持 `--pool-only/--skip-paper/--skip-kline` |
+| Scripts | `scripts/rebuild_kline_unified.py` | 新浪qfq多进程全库重拉(统一qfq基准=最新 + volume=股/amount=元, 2026-09-11 修复2022/2023边界断层24%与2023缺2600只); `backfill_gaps.py --year/--days/--codes` 补缺; `check_data_health.py` 健康报告 |
+| Backend | `backend/resilience.py` | akshare_wait 改随机分散(2026-09-11 修复 RateLimiter 无锁齐射致 py_mini_racer/V8 并发崩溃 = update_daily 多次3秒静默死亡根因) |
 | Configs | `backend/configs/settings.json` | `font_size` + `theme` + `window_size` + `agent{api_base, api_key, model}` + `search{api_key}` |
 
 ## Navigation (v6)
@@ -132,7 +134,7 @@ rem 便携版: package\dist\stock-api.exe 与 web\src-tauri\target\release\stock
 
 ## Dependencies
 Core: `flask`, `akshare`, `pandas`, `requests`, `py_mini_racer`, `openai`
-- 项目固定 venv `.update-venv/` (uv, 供每日自动化 update_daily.py) 装 akshare/pandas.
+- 项目固定 venv `.update-venv/` (uv, 供每日自动化 update_daily.py) 装 akshare/pandas/openai/baostock.
 
 ## Git
 Remote: `https://github.com/1479650473/stock-classroom`
