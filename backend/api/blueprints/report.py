@@ -146,6 +146,54 @@ def factor_analysis_report():
     return _html(body, f"factor_{factor}.html")
 
 
+@bp.route("/smb", methods=["GET"])
+def smb_report():
+    """规模因子（SMB）策略报告：小盘−大盘 + 最小 N 只月度策略 + 成本敏感性。"""
+    import json as _json
+    from backend.strategy.report import build_report
+    path = os.path.join(str(DATA_DIR), "smb_result.json")
+    if not os.path.exists(path):
+        return err(404, "not_found", "尚未生成 SMB 报告（先运行 python -m backend.alpha.smb）",
+                   retriable=False)
+    with open(path, encoding="utf-8") as f:
+        d = _json.load(f)
+    st = d.get("strategy") or {}
+    meta = d.get("meta") or {}
+    smb = d.get("smb") or {}
+    eq = [1.0] + [round(1.0 * x, 4) for x in (st.get("equity") or [])]
+    months = (st.get("picks") or [])
+    trades = [{"date": p.get("month"), "code": f"{p.get('next_ret', 0) * 100:+.1f}%",
+               "name": "、".join(p.get("names") or [])[:40],
+               "side": f"平均市值 {p.get('avg_mv_yi', 0)} 亿",
+               "qty": "", "price": "", "pnl": "", "pnl_pct": "", "reason": ""}
+              for p in months[-36:]]
+    cost = d.get("cost_curve") or []
+    variants = d.get("variants") or []
+    dl = d.get("delay_one_day") or {}
+    notes = (f"规则：{meta.get('rule', '')}；每月最后一个交易日按流通市值升序取最小的 {meta.get('top')} 只"
+             f"（叠加 {meta.get('mom_key')} 权重 {meta.get('mom_weight')}），等权持有一个月。<br>"
+             f"SMB（小盘 {meta.get('smb_group')} 只 − 大盘 {meta.get('smb_group')} 只）：月均 "
+             f"{float(smb.get('mean_month') or 0) * 100:+.2f}%（年化 {float(smb.get('ann') or 0) * 100:+.1f}%，"
+             f"t={float(smb.get('t_stat') or 0):+.2f}）。<br>"
+             f"宽度对照：" + "、".join(f"Top{v.get('top')} {float(v.get('ann') or 0) * 100:+.1f}%" for v in variants) +
+             f"。<br>成本敏感性：" + "、".join(
+                 f"单边{float(c.get('cost_one_way') or 0) * 100:.1f}%→{float(c.get('ann') or 0) * 100:+.1f}%"
+                 for c in cost) +
+             f"。<br>延后一天成交（买下月首个交易日、卖下下月首个交易日）：年化 "
+             f"{float(dl.get('ann') or 0) * 100:+.1f}%、回撤 {float(dl.get('maxdd') or 0) * 100:.1f}%。<br>"
+             f"⚠️ 平均持仓流通市值仅 {sum(float(p.get('avg_mv_yi') or 0) for p in months) / max(1, len(months)):.1f} 亿元，"
+             "实盘冲击成本与成交难度远高于常规股票；回测用月末收盘价、未建模涨跌停/停牌与冲击成本，"
+             "结论应以成本敏感性表为准。")
+    body = build_report(
+        title="规模因子（SMB）月度策略报告",
+        subtitle=(f"{meta.get('start')}~{meta.get('end')} · {meta.get('months')} 个月 · "
+                  f"股票池 {meta.get('universe_codes')} 只 · 可选中位数 "
+                  f"{float((d.get('mask_stats') or {}).get('avg_selectable') or 0) * 100:.0f}%"),
+        series=eq, metrics={**st, "days": float(meta.get("months") or 0) * 20.3},
+        trades=trades, notes=notes)
+    return _html(body, "smb_report.html")
+
+
 @bp.route("/backtest", methods=["POST"])
 def backtest_report():
     """通用报告：前端把回测结果 POST 上来，直接返回可打开的 HTML。"""
