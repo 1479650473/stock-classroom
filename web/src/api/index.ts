@@ -599,3 +599,17 @@ export const startAlphaWalkforward = (params: Record<string, unknown>) =>
 export const getAlphaRuns = (limit = 20, kind?: string) =>
   api.get<{ items: AlphaRun[] }>('/api/alpha/runs', kind ? { limit, kind } : { limit })
 export const getAlphaRun = (id: number) => api.get<AlphaRun>(`/api/alpha/run/${id}`)
+
+export interface AlphaSmbResult {
+  meta?: Record<string, unknown>
+  summary?: { ann?: number; sharpe?: number; maxdd?: number; month_win?: number; t_stat?: number; total?: number; months?: number }
+  smb?: { mean_month?: number; ann?: number; t_stat?: number; win?: number; months?: number }
+  cost_curve?: { cost_one_way: number; ann: number; sharpe: number; maxdd: number }[]
+  variants?: { top: number; ann: number; sharpe: number; maxdd: number; month_win: number }[]
+  tilt_compare?: { name: string; ann: number; sharpe: number; maxdd: number; month_win: number; t_stat: number }[]
+  benchmark?: { ann?: number }
+  recent_picks?: { month: string; codes: string[]; names: string[]; mv_yi: number[]; avg_mv_yi: number; next_ret: number }[]
+  years?: { year: string; ret: number; months: number }[]
+  hint?: string
+}
+export const getAlphaSmb = () => api.get<AlphaSmbResult>('/api/alpha/smb')

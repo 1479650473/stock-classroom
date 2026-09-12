@@ -48,14 +48,14 @@ def _filter_rows(filters: dict) -> list:
     return rows
 
 
-def _scorecard_info(weights=None) -> dict:
+def _scorecard_info(weights=None, card: str = "default") -> dict:
     """评分卡口径：数据窗口 + 各因子组权重（config.groups 是 dict 列表）。
 
     weights 非空时展示覆盖后的口径（对照实验用），并标出改了哪几组。
     """
     try:
-        from ..factor_engine.config import load_config_with_weights, resolve_weights
-        cfg = load_config_with_weights(weights)
+        from ..factor_engine.config import load_config, load_config_with_weights, resolve_weights
+        cfg = load_config(name=card) if card != "default" else load_config_with_weights(weights)
         groups = []
         for g in cfg.groups or []:
             groups.append({
@@ -90,7 +90,8 @@ def _events_block(top_n: int) -> dict:
 
 
 def build_snapshot(ref_date: str | None = None, top_n: int = 12,
-                   with_events: bool = True, weights=None, source: str = "scorecard") -> dict:
+                   with_events: bool = True, weights=None, source: str = "scorecard",
+                   card: str = "default") -> dict:
     """构建候选池快照。
 
     Args:
@@ -98,11 +99,19 @@ def build_snapshot(ref_date: str | None = None, top_n: int = 12,
         top_n: 返回候选数量
         with_events: 是否附事件驱动池（回放应为 False）
         weights: 评分口径覆盖（预设名 'steady' / {组id:满分} / "trend:18,..."），None=默认口径
-        source: 'scorecard'=五组加权评分卡（默认）；'composite'=固定权重因子组合
-                （-RET1 / -RET5 / -HIGH60_GAP / -LOG_AMT20，10 折样本外为正 8/10）
+        source: 'scorecard'=五组加权评分卡（默认）；'smallcap'=小盘动量评分卡
+                （规模×历史涨跌幅，见 backend/configs/smallcap_scorecard.json）；
+                'composite'=固定权重因子组合（-RET1/-RET5/-HIGH60_GAP/-LOG_AMT20）
     """
     if str(source) == "composite":
         return _composite_snapshot(ref_date, top_n, with_events)
+    if str(source) == "smallcap":
+        return _scorecard_snapshot(ref_date, top_n, with_events, weights=None, card="smallcap")
+    return _scorecard_snapshot(ref_date, top_n, with_events, weights, card)
+
+
+def _scorecard_snapshot(ref_date: str | None, top_n: int, with_events: bool,
+                        weights=None, card: str = "default") -> dict:
     ref = (str(ref_date or "").replace("-", "") or None)
     from ..factor_engine.config import resolve_weights
     wover = resolve_weights(weights)
@@ -111,8 +120,9 @@ def build_snapshot(ref_date: str | None = None, top_n: int = 12,
         "mode": "as_of" if ref else "live",
         "chain": "stock_list(active) → 规则过滤 → 60日K线 → 五组加权打分 → TopN",        "universe": UNIVERSE_NOTE,
         "reference_date": ref or "",
-        "scorecard": _scorecard_info(weights),
+        "scorecard": _scorecard_info(weights, card),
         "weights_override": wover,
+        "card": card,
         "filters": [],
         "stats": {},
         "picks": [],
@@ -128,7 +138,9 @@ def build_snapshot(ref_date: str | None = None, top_n: int = 12,
         universe = FactorScorer._get_candidates(KLINE_DB)
         kept_pairs = apply_filters(universe, DEFAULT_FILTERS, KLINE_DB)
         stats: dict = {}
-        scorer = FactorScorer(config=load_config_with_weights(weights))
+        scorer = FactorScorer(config=(load_config_with_weights(weights)
+                                      if card == "default"
+                                      else __import__("backend.factor_engine.config", fromlist=["load_config"]).load_config(name=card)))
         picks = scorer.score_batch(KLINE_DB, top_n=int(top_n or 12), min_klines=10,
                                    timeout_seconds=90, filters=DEFAULT_FILTERS,
                                    ref_date=ref, stats=stats)

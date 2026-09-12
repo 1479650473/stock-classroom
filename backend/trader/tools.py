@@ -159,6 +159,29 @@ class TraderTools:
         from .context import build_market_block
         return build_market_block()
 
+    # ── 自主选股：检索市场（不再依赖固定候选池） ──
+    def screen_stocks(self, filters: dict = None, sort_by: str = "circ_mv",
+                      ascending: bool = True, limit: int = 20) -> dict:
+        """按条件筛选全市场并排序取前 N（as-of 安全，回放里也按当天截断）。
+
+        filters 例：{"circ_mv_min":5,"circ_mv_max":30,"amount_min":0.5,"ret60_min":0}
+        维度见返回里的 dimensions。
+        """
+        from . import screen as _s
+        return _s.screen(self.trade_date, filters, sort_by, ascending, limit)
+
+    def get_stock_factors(self, code: str) -> dict:
+        """单只股票的可用指标（流通市值/涨跌幅/换手/振幅/波动/位置/ST代理）。"""
+        from . import screen as _s
+        out = _s.factors_of(code, self.trade_date)
+        if out.get("name") == "" and not out.get("error"):
+            try:
+                from .context import _name_of  # type: ignore
+                out["name"] = _name_of(code)
+            except Exception:
+                pass
+        return out
+
     def get_candidates(self, top: int = 10) -> dict:
         src = str(getattr(self, "scoring", "scorecard") or "scorecard")
         if self.trade_date:
@@ -379,9 +402,28 @@ TOOL_SPECS = [
         "description": "获取当前 A 股市场环境（牛/熊/震荡、系统性风险、建议策略）与三大指数涨跌。"}},
     {"type": "function", "function": {
         "name": "get_candidates",
-        "description": "获取多因子评分候选股 Top N 与事件驱动池（热点板块）。",
+        "description": ("获取系统按配置口径（评分卡/因子组合）算好的候选股。"
+                        "注意：若你的档案是「自主选股」模式，这里会返回空，请改用 screen_stocks 自行检索。"),
         "parameters": {"type": "object", "properties": {
             "top": {"type": "integer", "description": "条数，默认10"}}}}},
+    {"type": "function", "function": {
+        "name": "screen_stocks",
+        "description": ("**自主选股主力工具**：按条件筛选全市场并按某维度排序，返回前 N 只及其全部指标。"
+                        "可用维度：close 收盘价(元)、circ_mv 流通市值(亿元，=成交量÷换手率×收盘价)、"
+                        "amount_ma20 20日均额(亿)、turnover_ma5 5日均换手(%)、ret20/ret60/ret250 涨跌幅(%)、"
+                        "amp 20日平均振幅(%)、vol20 年化波动(%)、pos60 60日区间位置(0~1)、amount_ratio 量比。"
+                        "条件写法：<维度>_min / <维度>_max（如 circ_mv_max=50、ret60_min=0），"
+                        "另支持 exclude_st（默认 true，剔除 ST 代理）。"),
+        "parameters": {"type": "object", "properties": {
+            "filters": {"type": "object", "description": "筛选条件，如 circ_mv_max=50 与 ret60_min=0（写成对象）"},
+            "sort_by": {"type": "string", "description": "排序维度，默认 circ_mv"},
+            "ascending": {"type": "boolean", "description": "true=升序（如按市值最小排）"},
+            "limit": {"type": "integer", "description": "返回条数，默认 20，最多 100"}}}}},
+    {"type": "function", "function": {
+        "name": "get_stock_factors",
+        "description": "单只股票的全部可用指标（流通市值/各周期涨跌幅/换手/振幅/波动/60日位置/ST代理），用于验证候选。",
+        "parameters": {"type": "object", "properties": {
+            "code": {"type": "string", "description": "股票代码"}}, "required": ["code"]}}},
     {"type": "function", "function": {
         "name": "preview_order",
         "description": ("下单前让交易系统预检一笔委托能否被接受（只读，不成交），返回结果与原因。"),

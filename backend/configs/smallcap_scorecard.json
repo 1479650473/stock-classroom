@@ -1,0 +1,114 @@
+{
+  "name": "小盘动量评分卡（规模×历史涨跌幅）",
+  "version": "smallcap-1.0",
+  "description": "由规模因子(SMB)回测得出的口径：真实流通市值(成交额/换手率反推)偏小盘 + 历史涨跌幅偏动量 + 流动性与风险过滤。2026-09 回测：最小 5 只+ret60 动量，2016-2025 月度再平衡年化 +33%（未计冲击成本）。",
+  "data_window": 260,
+  "groups": [
+    {
+      "id": "size",
+      "name": "规模（流通市值）",
+      "weight": 30,
+      "max_score": 30,
+      "min_score": -15,
+      "indicators": [
+        {
+          "id": "circ_mv",
+          "name": "流通市值分档",
+          "conditions": [
+            {"type": "lt", "args": ["CIRC_MV", 15], "score": 18, "max": 18, "reason": "微盘(<15亿)"},
+            {"type": "between", "args": ["CIRC_MV", 15, 30], "score": 14, "max": 14, "reason": "小盘(15-30亿)"},
+            {"type": "between", "args": ["CIRC_MV", 30, 60], "score": 8, "max": 8, "reason": "中小盘(30-60亿)"},
+            {"type": "gte", "args": ["CIRC_MV", 200], "score": -12, "max": 0, "reason": "大盘(>200亿)扣分"}
+          ]
+        },
+        {
+          "id": "liquidity",
+          "name": "流动性",
+          "conditions": [
+            {"type": "gte", "args": ["AMOUNT_MA20", 0.4], "score": 6, "max": 6, "reason": "20日均额>4千万"},
+            {"type": "between", "args": ["TURNOVER_MA5", 1, 12], "score": 6, "max": 6, "reason": "换手活跃(1%-12%)"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "momentum",
+      "name": "历史涨跌幅",
+      "weight": 25,
+      "max_score": 25,
+      "min_score": -15,
+      "indicators": [
+        {
+          "id": "mom60",
+          "name": "60 日涨跌幅",
+          "conditions": [
+            {"type": "between", "args": ["PRICE_CHANGE_60D", 5, 45], "score": 12, "max": 12, "reason": "60日温和上涨(5%-45%)"},
+            {"type": "gt", "args": ["PRICE_CHANGE_60D", 0], "score": 6, "max": 6, "reason": "60日为上涨"},
+            {"type": "lt", "args": ["PRICE_CHANGE_60D", -30], "score": -10, "max": 0, "reason": "60日深跌扣分"}
+          ]
+        },
+        {
+          "id": "mom250",
+          "name": "250 日涨跌幅与反转",
+          "conditions": [
+            {"type": "gt", "args": ["PRICE_CHANGE_250D", 0], "score": 4, "max": 4, "reason": "年内为正"},
+            {"type": "between", "args": ["PRICE_CHANGE_10D", -12, 0], "score": 3, "max": 3, "reason": "短期回调到位(-12%~0)"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "trend",
+      "name": "趋势结构",
+      "weight": 20,
+      "max_score": 20,
+      "min_score": -10,
+      "indicators": [
+        {
+          "id": "ma",
+          "name": "均线位置",
+          "conditions": [
+            {"type": "gt", "args": ["CLOSE", "MA20"], "score": 8, "max": 8, "reason": "站上20日线"},
+            {"type": "gt", "args": ["CLOSE", "MA60"], "score": 6, "max": 6, "reason": "站上60日线"},
+            {"type": "gt", "args": ["MA20", "MA60"], "score": 6, "max": 6, "reason": "20日线在60日线上"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "shape",
+      "name": "价格形态",
+      "weight": 15,
+      "max_score": 15,
+      "min_score": -10,
+      "indicators": [
+        {
+          "id": "pos",
+          "name": "位置与跌幅",
+          "conditions": [
+            {"type": "between", "args": ["PRICE_POS_60", 0.35, 0.95], "score": 9, "max": 9, "reason": "60日区间中上位置"},
+            {"type": "gte", "args": ["CLOSE", 2], "score": 6, "max": 6, "reason": "价格>2元(面值安全)"},
+            {"type": "lt", "args": ["CLOSE", 2], "score": -10, "max": 0, "reason": "低于2元(退市风险)"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "risk",
+      "name": "风险控制",
+      "weight": 10,
+      "max_score": 10,
+      "min_score": -10,
+      "indicators": [
+        {
+          "id": "vol",
+          "name": "波动与连跌",
+          "conditions": [
+            {"type": "lt", "args": ["AMP", 12], "score": 6, "max": 6, "reason": "当日振幅<12%"},
+            {"type": "lt", "args": ["CONSECUTIVE_DOWN", 3], "score": 4, "max": 4, "reason": "连跌未超3天"}
+          ]
+        }
+      ]
+    }
+  ]
+}

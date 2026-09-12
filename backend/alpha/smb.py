@@ -58,7 +58,7 @@ def load_monthly(codes: List[str], start: str, end: str) -> Dict[str, object]:
     con = sqlite3.connect(KLINE_DB)
     try:
         rows = con.execute(
-            "SELECT code, date, close, volume, amount, turnover FROM kline_daily "
+            "SELECT code, date, high, low, close, volume, amount, turnover FROM kline_daily "
             "WHERE date>=? AND date<=? AND code IN (%s) ORDER BY date" %
             ",".join("?" for _ in codes),
             [start.replace("-", ""), end.replace("-", "")] + list(codes)).fetchall()
@@ -69,15 +69,21 @@ def load_monthly(codes: List[str], start: str, end: str) -> Dict[str, object]:
     ci = {c: i for i, c in enumerate(codes)}
     N, T = len(codes), len(dates)
     close = np.zeros((N, T), dtype=np.float64)
+    high = np.zeros((N, T), dtype=np.float64)
+    low = np.zeros((N, T), dtype=np.float64)
     amount = np.zeros((N, T), dtype=np.float64)
     shares = np.zeros((N, T), dtype=np.float64)
+    turn = np.zeros((N, T), dtype=np.float64)
     ret = np.zeros((N, T), dtype=np.float64)
-    for code, d, c, vol, amt, to in rows:
+    for code, d, h, lo, c, vol, amt, to in rows:
         i, j = ci.get(str(code)), di.get(str(d))
         if i is None or j is None:
             continue
         close[i, j] = float(c or 0)
+        high[i, j] = float(h or 0)
+        low[i, j] = float(lo or 0)
         amount[i, j] = float(amt or 0)
+        turn[i, j] = float(to or 0)
         if to and float(to) > 0 and vol:
             shares[i, j] = float(vol) / (float(to) / 100.0)
     # 日涨跌幅
@@ -90,22 +96,26 @@ def load_monthly(codes: List[str], start: str, end: str) -> Dict[str, object]:
     for j, d in enumerate(dates):
         if j + 1 == T or dates[j + 1][:6] != d[:6]:
             month_end.append(j)
-    return {"codes": codes, "dates": dates, "close": close, "amount": amount,
-            "shares": shares, "ret": ret, "month_end": month_end}
+    return {"codes": codes, "dates": dates, "close": close, "high": high, "low": low,
+            "amount": amount, "shares": shares, "turn": turn, "ret": ret, "month_end": month_end}
 
 
 def monthly_features(pan: Dict[str, object]) -> Dict[str, np.ndarray]:
     """月末快照特征：[N, M]（M=月份数）。"""
     close = pan["close"]  # type: ignore[assignment]
+    high = pan["high"]  # type: ignore[assignment]
+    low = pan["low"]  # type: ignore[assignment]
     amount = pan["amount"]  # type: ignore[assignment]
     shares = pan["shares"]  # type: ignore[assignment]
+    turn = pan["turn"]  # type: ignore[assignment]
     ret = pan["ret"]  # type: ignore[assignment]
     me: List[int] = pan["month_end"]  # type: ignore[assignment]
     N = close.shape[0]
     M = len(me)
     out = {k: np.zeros((N, M), dtype=np.float64) for k in
            ("close", "circ_mv", "amt20", "ret20", "ret60", "ret250", "st_like",
-            "next_ret", "delisted_next", "next_ret_d1")}
+            "next_ret", "delisted_next", "next_ret_d1",
+            "to5", "amp20", "vol20", "pos60")}
     for m, j in enumerate(me):
         out["close"][:, m] = close[:, j]
         lo = max(0, j - 59)
@@ -119,6 +129,18 @@ def monthly_features(pan: Dict[str, object]) -> Dict[str, np.ndarray]:
                                       close[:, j] / np.where(base > 0, base, np.nan) - 1.0, 0.0)
         win = ret[:, max(0, j - 59):j + 1]
         out["st_like"][:, m] = (np.abs(win) >= 0.055).sum(axis=1) == 0        # 60 日无 ±5% 以上波动
+        # 第三维度候选：5 日换手率、20 日振幅、年化波动、60 日区间位置
+        w5 = slice(max(0, j - 4), j + 1)
+        to_vals = turn[:, w5]
+        out["to5"][:, m] = np.where(to_vals > 0, to_vals, np.nan).mean(axis=1)
+        w20 = slice(max(0, j - 19), j + 1)
+        rng = (high[:, w20] - low[:, w20]) / np.where(close[:, w20] > 0, close[:, w20], np.nan)
+        out["amp20"][:, m] = np.nanmean(rng, axis=1) * 100.0
+        rr = ret[:, w20]
+        out["vol20"][:, m] = np.nanstd(rr, axis=1) * np.sqrt(244) * 100.0
+        hi60 = np.nanmax(high[:, max(0, j - 59):j + 1], axis=1)
+        lo60 = np.nanmin(low[:, max(0, j - 59):j + 1], axis=1)
+        out["pos60"][:, m] = np.where(hi60 > lo60, (close[:, j] - lo60) / (hi60 - lo60), 0.5)
         if m + 1 < M:
             # 可实现收益：优先用下月最后交易日收盘；若该日停牌/退市，用下月内**最后可得**收盘价；
             # 完全无数据（当月退市）按 -50% 折扣 —— 不能因为"下月没有价格"就把股票剔出候选
@@ -160,10 +182,28 @@ def tradable_mask(f: Dict[str, np.ndarray], min_price: float = 2.0,
 
 # ───────────────────────── 回测 ─────────────────────────
 
+def _rank01(x: np.ndarray) -> np.ndarray:
+    """截面 rank 归一化到 [0,1]（NaN 视为中位）。"""
+    v = np.where(np.isfinite(x), x, np.nan)
+    if not np.isfinite(v).any():
+        return np.zeros_like(x)
+    order = np.argsort(np.argsort(np.nan_to_num(v, nan=float(np.nanmedian(v)))))
+    return order / max(1, len(v) - 1)
+
+
 def backtest(f: Dict[str, np.ndarray], mask: np.ndarray, top: int = 5,
              mom_weight: float = 0.0, mom_key: str = "ret60",
-             cost_one_way: float = 0.0, ret_key: str = "next_ret") -> Dict[str, object]:
-    """每月选股 → 持有一个月。mom_weight<0 表示偏好"跌得多"（反转），>0 偏好涨得多。"""
+             cost_one_way: float = 0.0, ret_key: str = "next_ret",
+             tilts: Optional[List[Tuple[str, float]]] = None) -> Dict[str, object]:
+    """每月选股 → 持有一个月。
+
+    打分 = −rank(流通市值) + Σ w·rank(维度)（rank 归一化到 0~1，便于多维度叠加）。
+    tilts 例：[("ret60", 0.3), ("to5", -0.15)]（权重为正 = 偏好该维度值大）。
+    mom_weight/mom_key 是 tilts 的简写形式（向后兼容）。
+    """
+    tilt_list: List[Tuple[str, float]] = list(tilts or [])
+    if mom_weight:
+        tilt_list.append((mom_key, float(mom_weight)))
     N, M = f["circ_mv"].shape
     size = np.log(np.where(f["circ_mv"] > 0, f["circ_mv"], np.nan))
     picks: List[Dict] = []
@@ -172,10 +212,12 @@ def backtest(f: Dict[str, np.ndarray], mask: np.ndarray, top: int = 5,
         m_ok = mask[:, m]
         if m_ok.sum() < max(20, top):
             continue
-        score = -size[:, m]                                   # 越小市值 → 分越高
-        if mom_weight:
-            mom = f[mom_key][:, m]
-            score = score + mom_weight * mom                  # mom_weight<0 → 偏好下跌
+        score = -1.0 * _rank01(size[:, m])                    # 越小市值 → 分越高
+        for field, w in tilt_list:
+            arr = f.get(field)
+            if arr is None:
+                continue
+            score = score + float(w) * _rank01(arr[:, m])
         score = np.where(m_ok, score, -np.inf)
         order = np.argsort(-score)[:top]
         r = f[ret_key][order, m]
@@ -199,7 +241,9 @@ def backtest(f: Dict[str, np.ndarray], mask: np.ndarray, top: int = 5,
     sharpe = float(daily.mean() / (daily.std() + 1e-12) * np.sqrt(12))
     peak = np.maximum.accumulate(eq)
     maxdd = float(np.max(1 - eq / (peak + 1e-12)))
-    return {"months": int(daily.size), "equity": [round(float(x), 4) for x in eq],
+    t_stat = float(daily.mean() / (daily.std() / np.sqrt(daily.size) + 1e-12))
+    return {"months": int(daily.size), "t_stat": t_stat,
+            "equity": [round(float(x), 4) for x in eq],
             "monthly": [round(float(x), 4) for x in daily], "total": float(eq[-1] - 1),
             "ann": ann, "vol": vol, "sharpe": sharpe, "maxdd": maxdd,
             "month_win": float((daily > 0).mean()), "picks": picks,
@@ -249,6 +293,7 @@ def run(start: str = "2016-01-01", end: str = "2025-12-31", top: int = 5,
         mom_weight: float = 0.0, mom_key: str = "ret60", smb_group: int = 100,
         min_amount: float = 5e7, min_price: float = 2.0,
         cost_one_way: float = 0.0,
+        tilts: Optional[List[Tuple[str, float]]] = None,
         save: Optional[str] = None) -> Dict[str, object]:
     t0 = time.time()
     con = sqlite3.connect(KLINE_DB)
@@ -264,21 +309,23 @@ def run(start: str = "2016-01-01", end: str = "2025-12-31", top: int = 5,
     f["month_labels"] = [dates[j][:6] for j in me]
     mask = tradable_mask(f, min_price=min_price, min_amount=min_amount)
     res = backtest(f, mask, top=top, mom_weight=mom_weight, mom_key=mom_key,
-                   cost_one_way=cost_one_way)
+                   cost_one_way=cost_one_way, tilts=tilts)
     # 宽度对照 + 成本敏感性（把"最小 5 只"的效应宽度与成本承受力一并给出）
     variants = []
     for n in (5, 10, 20, 50):
-        v = backtest(f, mask, top=n, mom_weight=mom_weight, mom_key=mom_key, cost_one_way=cost_one_way)
+        v = backtest(f, mask, top=n, mom_weight=mom_weight, mom_key=mom_key,
+                     cost_one_way=cost_one_way, tilts=tilts)
         variants.append({"top": n, "ann": v.get("ann"), "sharpe": v.get("sharpe"),
                          "maxdd": v.get("maxdd"), "month_win": v.get("month_win")})
     cost_curve = []
     for c in (0.0, 0.001, 0.003, 0.005, 0.01):
-        v = backtest(f, mask, top=top, mom_weight=mom_weight, mom_key=mom_key, cost_one_way=c)
+        v = backtest(f, mask, top=top, mom_weight=mom_weight, mom_key=mom_key,
+                     cost_one_way=c, tilts=tilts)
         cost_curve.append({"cost_one_way": c, "ann": v.get("ann"), "sharpe": v.get("sharpe"),
                            "maxdd": v.get("maxdd")})
     # 延后一天成交（买下月第一个交易日收盘、卖下下月第一个交易日收盘）—— 检验"月末收盘价成交"的假设
     delay = backtest(f, mask, top=top, mom_weight=mom_weight, mom_key=mom_key,
-                     cost_one_way=cost_one_way, ret_key="next_ret_d1")
+                     cost_one_way=cost_one_way, ret_key="next_ret_d1", tilts=tilts)
     smb = smb_series(f, mask, n_group=smb_group)
     # 对照：可选标的的全市场等权（月末等权持有 1 个月）
     all_rets = []
@@ -291,6 +338,7 @@ def run(start: str = "2016-01-01", end: str = "2025-12-31", top: int = 5,
     out = {"meta": {"start": dates[0], "end": dates[-1], "months": len(me) - 1,
                     "universe_codes": len(codes), "top": top, "mom_weight": mom_weight,
                     "mom_key": mom_key, "min_amount": min_amount, "min_price": min_price,
+                    "tilts": [f"{k}:{v}" for k, v in (tilts or [])],
                     "smb_group": smb_group, "elapsed_sec": round(time.time() - t0, 1),
                     "rule": "流通市值=volume/(turnover/100)×close；剔除 ST代理(60日无±5.5%波动)/"
                             "价格<2元/20日均额<5千万/250日跌幅<-60%/当月停牌"},
@@ -323,11 +371,54 @@ def main() -> None:
     ap.add_argument("--min-amount", type=float, default=5e7)
     ap.add_argument("--min-price", type=float, default=2.0)
     ap.add_argument("--cost", type=float, default=0.0, help="单边成本（如 0.003 = 千三），月度换仓按双边计")
+    ap.add_argument("--compare-tilts", action="store_true",
+                    help="额外对比若干多维度组合（动量/换手/波动/位置），结果存进报告")
+    ap.add_argument("--tilt", action="append", default=[],
+                    help='多维度打分，可重复：--tilt "ret60:0.3" --tilt "to5:-0.15"（正=偏好该维度值大）')
     ap.add_argument("--out", default=os.path.join(str(DATA_DIR), "smb_result.json"))
     args = ap.parse_args()
+    tilts = []
+    for t in (args.tilt or []):
+        if ":" in t:
+            k, _, v = t.partition(":")
+            try:
+                tilts.append((k.strip(), float(v)))
+            except ValueError:
+                pass
     res = run(args.start, args.end, args.top, args.mom_weight, args.mom_key,
               args.smb_group, args.min_amount, args.min_price, cost_one_way=args.cost,
-              save=args.out)
+              tilts=tilts, save=args.out)
+    if args.compare_tilts:
+        # 多维度组合对比（同一份数据、同一成本口径）：回答"再加维度能不能提升"
+        con = sqlite3.connect(KLINE_DB)
+        codes2 = _codes(con)
+        names2 = {str(c): str(n or "") for c, n in con.execute("SELECT code, name FROM stock_list")}
+        con.close()
+        pan2 = load_monthly(codes2, args.start, args.end)
+        f2 = monthly_features(pan2)
+        me2: List[int] = pan2["month_end"]  # type: ignore[assignment]
+        dt2: List[str] = pan2["dates"]  # type: ignore[assignment]
+        f2["codes"] = pan2["codes"]  # type: ignore[assignment]
+        f2["names"] = names2  # type: ignore[assignment]
+        f2["month_labels"] = [dt2[j][:6] for j in me2]
+        mask2 = tradable_mask(f2, min_price=args.min_price, min_amount=args.min_amount)
+        combos = [("纯小市值", []), ("+60日动量0.3", [("ret60", 0.3)]),
+                  ("+动量-高换手", [("ret60", 0.3), ("to5", -0.15)]),
+                  ("+动量-高波动", [("ret60", 0.3), ("vol20", -0.15)]),
+                  ("+动量-高位", [("ret60", 0.3), ("pos60", -0.15)]),
+                  ("+动量+低振幅", [("ret60", 0.3), ("amp20", -0.15)])]
+        cmp_rows = []
+        for nm, tl in combos:
+            v = backtest(f2, mask2, top=args.top, cost_one_way=args.cost, tilts=tl)
+            cmp_rows.append({"name": nm, "ann": v.get("ann"), "sharpe": v.get("sharpe"),
+                             "maxdd": v.get("maxdd"), "month_win": v.get("month_win"),
+                             "t_stat": v.get("t_stat")})
+            print(f"  {nm:<14} 年化 {(v.get('ann') or 0) * 100:+7.1f}% | 夏普 {v.get('sharpe') or 0:5.2f} | "
+                  f"回撤 {(v.get('maxdd') or 0) * 100:5.1f}% | 月均 t={v.get('t_stat') or 0:+.2f}")
+        res["tilt_compare"] = cmp_rows
+        if args.out:
+            with open(args.out, "w", encoding="utf-8") as fh:
+                json.dump(res, fh, ensure_ascii=False, indent=1)
     s = res["strategy"]  # type: ignore[index]
     m = res["meta"]  # type: ignore[index]
     print(f"规模因子回测：{m['start']}~{m['end']}（{m['months']} 个月，"

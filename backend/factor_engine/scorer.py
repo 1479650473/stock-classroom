@@ -137,7 +137,7 @@ class FactorScorer:
                 bc = codes[batch_start:batch_start + bs]
                 ph = ",".join("?" for _ in bc)
                 # 加 date <= target_date 条件实现时间回溯
-                sql = ("SELECT code, date, open, high, low, close, volume, amount "
+                sql = ("SELECT code, date, open, high, low, close, volume, amount, turnover "
                        "FROM kline_daily WHERE code IN (%s) AND date >= ? AND date <= ? "
                        "ORDER BY code, date" % ph)
                 conn.row_factory = sqlite3.Row
@@ -146,6 +146,7 @@ class FactorScorer:
                     c = str(row["code"])
                     result[c].append({
                         "date": row["date"],
+                        "turnover": float(row["turnover"] or 0),
                         "open": float(row["open"]),
                         "high": float(row["high"]),
                         "low": float(row["low"]),

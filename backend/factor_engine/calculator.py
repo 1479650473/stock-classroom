@@ -432,9 +432,13 @@ class FactorCalculator:
         self._intermediates: dict = {}  # 中间计算结果缓存
         self.values: dict[str, float] = {}  # 最终因子值
 
+    def _turnover_list(self):
+        return [float(r.get("turnover") or 0) for r in self._raw]
+
     def compute_all(self) -> dict[str, float]:
         """计算所有注册因子，返回 {factor_id: value}"""
         self._precompute_intermediates()
+        self._intermediates.setdefault("turnover", self._turnover_list())
         for fid, (min_k, func) in _FACTORY.items():
             if len(self._raw) < min_k:
                 self.values[fid] = None
@@ -527,3 +531,58 @@ def compute_factors(klines: list[dict]) -> dict[str, float]:
     """快捷函数：计算并返回所有因子值"""
     calc = FactorCalculator(klines)
     return calc.compute_all()
+
+
+@register_factor("CIRC_MV")
+def _f_circ_mv(closes, highs, lows, volumes, amounts, inter):
+    """流通市值（亿元）≈ 成交量 ÷ 换手率 × 收盘价（换手率缺失时返回 None）。"""
+    to = inter.get("turnover") or []
+    if not closes or not volumes or not to:
+        return None
+    t = to[-1]
+    v = volumes[-1]
+    if not t or t <= 0 or not v:
+        return None
+    shares = v / (t / 100.0)                    # 流通股本（股）
+    return shares * closes[-1] / 1e8            # 亿元
+
+
+@register_factor("LOG_CIRC_MV")
+def _f_log_circ_mv(closes, highs, lows, volumes, amounts, inter):
+    mv = _f_circ_mv(closes, highs, lows, volumes, amounts, inter)
+    import math
+    return math.log(mv) if mv and mv > 0 else None
+
+
+@register_factor("AMOUNT_MA20")
+def _f_amount_ma20(closes, highs, lows, volumes, amounts, inter):
+    """20 日均成交额（亿元）——流动性。"""
+    if len(amounts) < 5:
+        return None
+    n = min(20, len(amounts))
+    return sum(amounts[-n:]) / n / 1e8
+
+
+@register_factor("TURNOVER_MA5")
+def _f_turnover_ma5(closes, highs, lows, volumes, amounts, inter):
+    """5 日均换手率（%）。"""
+    to = inter.get("turnover") or []
+    if len(to) < 2:
+        return None
+    n = min(5, len(to))
+    vals = [x for x in to[-n:] if x]
+    return (sum(vals) / len(vals)) if vals else None
+
+
+@register_factor("PRICE_CHANGE_60D", min_klines=61)
+def _f_change_60d(closes, highs, lows, volumes, amounts, inter):
+    if len(closes) < 61 or not closes[-61]:
+        return None
+    return (closes[-1] - closes[-61]) / closes[-61] * 100
+
+
+@register_factor("PRICE_CHANGE_250D", min_klines=251)
+def _f_change_250d(closes, highs, lows, volumes, amounts, inter):
+    if len(closes) < 251 or not closes[-251]:
+        return None
+    return (closes[-1] - closes[-251]) / closes[-251] * 100

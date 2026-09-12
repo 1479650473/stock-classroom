@@ -13,8 +13,19 @@ _DEFAULT_CONFIG_PATH = os.path.join(
 )
 
 
-def load_config(path: str = None) -> ScorecardConfig:
-    """加载 JSON 评分配置文件"""
+#: 可命名的评分卡（selection 的 source 参数用）
+SCORECARDS = {
+    "default": "default_scorecard.json",
+    "smallcap": "smallcap_scorecard.json",     # 小盘动量（规模×历史涨跌幅）
+}
+
+
+def load_config(path: str = None, name: str = None) -> ScorecardConfig:
+    """加载 JSON 评分配置文件（name 可用 SCORECARDS 里的别名）。"""
+    if name and not path:
+        fname = SCORECARDS.get(str(name))
+        if fname:
+            path = os.path.join(os.path.dirname(_DEFAULT_CONFIG_PATH), fname)
     if path is None:
         path = _DEFAULT_CONFIG_PATH
     if not os.path.exists(path):

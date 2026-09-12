@@ -174,6 +174,14 @@ def build_market_block() -> dict:
     return out
 
 
+def _screen_dimensions() -> dict:
+    try:
+        from .screen import DIMENSIONS
+        return DIMENSIONS
+    except Exception:
+        return {}
+
+
 def build_candidates_block(top_n: int = 12, weights=None, source: str = "scorecard") -> dict:
     """候选池（实时）：多因子评分 Top N + 事件驱动池 + 完整选股链路口径。
 
@@ -271,9 +279,22 @@ def build_daily_context(profile: dict, with_candidates: bool = True,
     weights = (profile.get("meta") or {}).get("weights")
     acct = build_account_block(account_id)
     market = build_market_block()
-    scoring = str((profile or {}).get("meta", {}).get("scoring") or "scorecard")         if isinstance(profile, dict) else "scorecard"
-    cands = (build_candidates_block(weights=weights, source=scoring)
-             if with_candidates else {"picks": [], "events": []})
+    meta = (profile or {}).get("meta", {}) if isinstance(profile, dict) else {}
+    selection = str(meta.get("selection") or "self")          # self=模型自己选股（默认）
+    scoring = str(meta.get("scoring") or "scorecard")
+    if with_candidates and selection == "self":
+        # 自主选股模式：不预先给候选池，避免"在别人选好的股里挑"；只给检索工具说明与市场概览。
+        cands = {"picks": [], "events": [], "source": "self", "mode": "self",
+                 "chain": "自主选股：模型用 screen_stocks / get_stock_factors 自行检索市场",
+                 "scope_note": {
+                     "口径": "自主选股（无预置候选池）",
+                     "可用维度": {k: f"{v[0]}（{v[1]}）" for k, v in _screen_dimensions().items()},
+                     "说明": "先想清楚你的选股标准，再用 screen_stocks 按维度筛选与排序；"
+                             "对候选再用 get_stock_factors / get_stock_price / K线 验证后下单。",
+                 }}
+    else:
+        cands = (build_candidates_block(weights=weights, source=scoring)
+                 if with_candidates else {"picks": [], "events": []})
     news_block = (build_news_block(acct["positions"], cands.get("picks", []))
                   if with_news else {"market": [], "stocks": []})
     memory = build_memory_block(int(profile["id"]), acct["positions"],

@@ -152,6 +152,29 @@ def factor_analysis():
     return ok(res)
 
 
+@bp.route("/smb", methods=["GET"])
+def smb():
+    """规模因子（SMB）月度策略结果：主策略指标、成本曲线、多维度对比、最近持仓。"""
+    import json as _json
+    import os as _os
+    from ..paths import DATA_DIR
+    path = _os.path.join(str(DATA_DIR), "smb_result.json")
+    if not _os.path.exists(path):
+        return ok({"hint": "尚未生成（先运行 python -m backend.alpha.smb）"})
+    with open(path, encoding="utf-8") as f:
+        d = _json.load(f)
+    st = d.get("strategy") or {}
+    keep = {"meta": d.get("meta"), "smb": d.get("smb"), "cost_curve": d.get("cost_curve"),
+            "variants": d.get("variants"), "tilt_compare": d.get("tilt_compare"),
+            "benchmark": d.get("benchmark_equal_weight"),
+            "summary": {"ann": st.get("ann"), "sharpe": st.get("sharpe"), "maxdd": st.get("maxdd"),
+                        "month_win": st.get("month_win"), "t_stat": st.get("t_stat"),
+                        "total": st.get("total"), "months": st.get("months")},
+            "recent_picks": (st.get("picks") or [])[-12:],
+            "years": st.get("years")}
+    return ok(keep)
+
+
 @bp.route("/runs", methods=["GET"])
 def runs():
     from backend.alpha import store

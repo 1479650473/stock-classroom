@@ -230,6 +230,16 @@ def build_replay_context(profile: dict, as_of: str) -> dict:
     account_id = int(profile["account_id"])
     weights = (profile.get("meta") or {}).get("weights")
     acct = _account_block(account_id, as_of)
+    sel = str((profile.get("meta") or {}).get("selection") or "self")
+    if sel == "self":
+        from .context import _screen_dimensions
+        cands = {"picks": [], "events": [], "mode": "self", "source": "self",
+                 "chain": "自主选股：用 screen_stocks / get_stock_factors 自行检索市场（as-of 截断）",
+                 "scope_note": {"口径": "自主选股（无预置候选池）",
+                                "可用维度": {k: f"{v[0]}（{v[1]}）" for k, v in _screen_dimensions().items()},
+                                "说明": "screen_stocks 已按当天 as-of 截断，不会用到未来数据。"}}
+    else:
+        cands = _candidates_block(as_of, weights=weights, source=sel)
     return {
         "generated_at": as_of,
         "mode": "replay",
@@ -238,7 +248,7 @@ def build_replay_context(profile: dict, as_of: str) -> dict:
         "pending_orders": acct["pending_orders"],
         "nav_history": acct["nav_history"],
         "market": {"regime": _regime_asof(as_of), "hs300": _hs300_trend_asof(as_of)},
-        "candidates": _candidates_block(as_of, weights=weights),
+        "candidates": cands,
         "news": {"market": [], "stocks": [],
                  "note": "回放模式：历史新闻不可回溯，本日无新闻输入，仅凭行情/候选/宏观决策。"},
         "memory": _memory_block(int(profile["id"]), acct["positions"],

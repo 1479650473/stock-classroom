@@ -120,6 +120,16 @@ async function toggleMem(m: TraderMemory) {
 // ── 展示辅助 ──
 const latest = computed(() => state.value?.today_decision || state.value?.latest_decision || null)
 
+// 选股方式：AI 操盘手默认自主选股（模型自己检索市场），也可配置为固定口径
+const selectionMode = computed(() => {
+  const meta = ((state.value?.profile || {}) as { meta?: Record<string, unknown> }).meta || {}
+  const sel = String(meta.selection || 'self')
+  if (sel === 'composite') return '因子组合口径（-1日反转/-5日反转/-远离60日高点/-小市值）'
+  if (sel === 'smallcap') return '小盘动量评分卡（规模×历史涨跌幅）'
+  if (sel === 'scorecard') return '评分卡口径（五组加权）'
+  return '自主选股（模型自己检索市场）'
+})
+
 function fmtMoney(v?: number | null) {
   if (v == null) return '—'
   const abs = Math.abs(v)
@@ -229,6 +239,17 @@ function toolLine(t: { tool: string; args?: Record<string, unknown>; error?: str
       </div>
 
       <!-- 自我风格 -->
+      <SectionCard title="选股方式" desc="AI 操盘手与回测/选股程序是分开的：默认由模型自己检索市场">
+        <div class="kv">
+          <span class="kv__k">当前模式</span><span class="kv__v">{{ selectionMode }}</span>
+        </div>
+        <p class="muted" style="margin-top:8px;font-size:var(--fs-xs);line-height:1.7">
+          自主选股模式下，系统**不再**预置候选池；模型用 screen_stocks 按市值/涨跌幅/换手/振幅/波动/位置等维度
+          自行筛选排序，再用 get_stock_factors 验证后下单，筛选条件与顺序会写进当日思考（可审计）。
+          可在档案 meta.selection 里改为 scorecard / composite / smallcap 使用固定口径。
+        </p>
+      </SectionCard>
+
       <SectionCard title="AI 自我风格" desc="由操盘手在长期决策中自行形成与修正">
         <p v-if="styleMem" class="prose">{{ styleMem.content }}</p>
         <p v-else class="prose prose--sub">
@@ -414,6 +435,9 @@ function toolLine(t: { tool: string; args?: Record<string, unknown>; error?: str
 </template>
 
 <style scoped>
+.kv { display: flex; gap: 10px; font-size: var(--fs-sm); }
+.kv__k { color: var(--text-faint); }
+.kv__v { font-weight: 600; }
 .trader { display: flex; flex-direction: column; gap: var(--sp-4); }
 .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--sp-3); }
 

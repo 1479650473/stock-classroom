@@ -15,10 +15,10 @@ import Icon from '@/components/Icon.vue'
 import { useJobsStore } from '@/stores/jobs'
 import { useToastStore } from '@/stores/toast'
 import {
-  getAlphaCompositeReport, getAlphaMeta, getAlphaRun, getAlphaRuns, getAlphaZoo,
+  getAlphaCompositeReport, getAlphaMeta, getAlphaRun, getAlphaRuns, getAlphaSmb, getAlphaZoo,
   startAlphaMine, startAlphaWalkforward,
 } from '@/api'
-import type { AlphaCompositeReport, AlphaFormula, AlphaRun, AlphaZooRow } from '@/api'
+import type { AlphaCompositeReport, AlphaFormula, AlphaRun, AlphaSmbResult, AlphaZooRow } from '@/api'
 
 const jobs = useJobsStore()
 const toast = useToastStore()
@@ -30,7 +30,8 @@ const current = ref<AlphaRun | null>(null)
 const openForm = ref(false)
 const meta = ref<{ defaults: Record<string, number | string>; features: string[]; operators: string[] } | null>(null)
 // 因子体检榜 + 组合验证（借鉴 Qbot 的因子体系，服务我们自己的体检台）
-const tab = ref<'mine' | 'zoo' | 'composite'>('mine')
+const tab = ref<'mine' | 'zoo' | 'composite' | 'smb'>('mine')
+const smb = ref<AlphaSmbResult | null>(null)
 const zooSort = ref('ic')
 const zoo = ref<AlphaZooRow[]>([])
 const zooMeta = ref<Record<string, unknown>>({})
@@ -181,9 +182,17 @@ async function loadComposite() {
   }
 }
 
+async function loadSmb() {
+  try {
+    smb.value = await getAlphaSmb()
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : String(e))
+  }
+}
+
 watch(zooSort, loadZoo)
 
-onMounted(async () => { await Promise.all([load(), loadMeta(), loadZoo(), loadComposite()]) })
+onMounted(async () => { await Promise.all([load(), loadMeta(), loadZoo(), loadComposite(), loadSmb()]) })
 </script>
 
 <template>
@@ -236,6 +245,7 @@ onMounted(async () => { await Promise.all([load(), loadMeta(), loadZoo(), loadCo
         <button class="subtab" :class="{ 'subtab--on': tab === 'mine' }" @click="tab = 'mine'">挖掘 / 滚动验证</button>
         <button class="subtab" :class="{ 'subtab--on': tab === 'zoo' }" @click="tab = 'zoo'">因子体检榜</button>
         <button class="subtab" :class="{ 'subtab--on': tab === 'composite' }" @click="tab = 'composite'">组合验证（已验证有效）</button>
+        <button class="subtab" :class="{ 'subtab--on': tab === 'smb' }" @click="tab = 'smb'">规模因子 SMB（微盘）</button>
       </div>
 
       <!-- 因子体检榜 -->
@@ -320,6 +330,49 @@ onMounted(async () => { await Promise.all([load(), loadMeta(), loadZoo(), loadCo
         </template>
         <EmptyGuide v-else title="还没有组合验证报告"
           desc="运行 python -m backend.alpha.composite_test 生成（约 40 秒，纯本地计算）" />
+      </div>
+
+      <!-- 规模因子 SMB -->
+      <div v-else-if="tab === 'smb'" class="comp">
+        <template v-if="smb?.summary">
+          <div class="zoo__bar">
+            <span>每月末选流通市值最小的 5 只、等权持有一个月（已剔除 ST/退市代理，单边成本 0.3%）</span>
+            <a class="chip" :href="reportUrl('smb')" target="_blank" rel="noopener">打开报告</a>
+          </div>
+          <div class="sum">
+            <div class="sum__cell"><span class="k">年化</span><span class="v up">{{ fmt(smb.summary.ann) }}</span></div>
+            <div class="sum__cell"><span class="k">累计</span><span class="v up">{{ fmt(smb.summary.total) }}</span></div>
+            <div class="sum__cell"><span class="k">夏普</span><span class="v">{{ num(smb.summary.sharpe) }}</span></div>
+            <div class="sum__cell"><span class="k">最大回撤</span><span class="v down">{{ fmt(-Math.abs(Number(smb.summary.maxdd) || 0)) }}</span></div>
+            <div class="sum__cell"><span class="k">月胜率</span><span class="v">{{ num(smb.summary.month_win) }}</span></div>
+            <div class="sum__cell"><span class="k">月均 t 值</span><span class="v">{{ num(smb.summary.t_stat) }}</span></div>
+            <div class="sum__cell"><span class="k">对照：等权全市场</span><span class="v">{{ fmt(smb.benchmark?.ann) }}</span></div>
+            <div class="sum__cell"><span class="k">SMB（小100−大100）年化</span><span class="v">{{ fmt(smb.smb?.ann) }}（t={{ num(smb.smb?.t_stat) }}）</span></div>
+          </div>
+          <div class="combo">
+            <div class="combo__title">成本敏感性（单边成本 → 年化）——微盘策略的生死线</div>
+            <div class="combo__row">
+              <span v-for="c in smb.cost_curve || []" :key="c.cost_one_way">
+                {{ (c.cost_one_way * 100).toFixed(1) }}% → <b :class="c.ann >= 0 ? 'up' : 'down'">{{ fmt(c.ann) }}</b>
+              </span>
+            </div>
+          </div>
+          <div class="combo">
+            <div class="combo__title">再加一个维度能不能提升？（同成本口径，rank 加权）</div>
+            <div class="combo__row">
+              <span v-for="c in smb.tilt_compare || []" :key="c.name">
+                {{ c.name }} <b :class="c.ann >= 0 ? 'up' : 'down'">{{ fmt(c.ann) }}</b>（t={{ num(c.t_stat) }}）
+              </span>
+            </div>
+          </div>
+          <p class="hint">
+            结论：这个因子本质是**微盘效应**——宽口径的 SMB（小100−大100）不显著（t≈0.3），
+            收益全在“最小的 5 只”；叠加动量/波动/位置等第二维度**没有稳定改善**（唯一持平的是再剔除高换手）。
+            平均持仓流通市值仅 2.4 亿元，实盘冲击成本若达 1% 年化就只剩 +0.7%，因此把它当“可研究、慎实盘”的因子看待。
+          </p>
+        </template>
+        <EmptyGuide v-else title="还没有规模因子回测结果"
+          desc="运行 python -m backend.alpha.smb --top 5 --cost 0.003 --compare-tilts 生成" />
       </div>
 
       <LoadingBlock v-else-if="loading && !runs.length" />
