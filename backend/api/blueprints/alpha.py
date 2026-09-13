@@ -175,6 +175,26 @@ def smb():
     return ok(keep)
 
 
+@bp.route("/allocation", methods=["GET"])
+def allocation():
+    """通用组合构建：多条腿（策略/ETF）→ 相关性、固定配比、自动最优配比。
+
+    参数：legs=smb,etf:511010,etf:511260（逗号分隔）；grid=两腿网格步长。
+    """
+    from backend.alpha import allocation as AL
+    legs = str(request.args.get("legs") or "smb,etf:511010")
+    specs = [s.strip() for s in legs.split(",") if s.strip()]
+    grid = float(request.args.get("grid") or 0.05)
+    try:
+        res = AL.build(specs, grid=grid)
+    except SystemExit as e:
+        return err(400, "bad_legs", str(e), retriable=False)
+    except Exception as e:
+        return err(500, "allocation_failed", str(e)[:200], retriable=False)
+    res["available"] = AL.available_legs()
+    return ok(res)
+
+
 @bp.route("/runs", methods=["GET"])
 def runs():
     from backend.alpha import store

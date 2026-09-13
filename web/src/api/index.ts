@@ -632,3 +632,20 @@ export interface AlphaSmbResult {
   hint?: string
 }
 export const getAlphaSmb = () => api.get<AlphaSmbResult>('/api/alpha/smb')
+
+export interface AlphaAllocationLeg { spec: string; label: string; ann?: number; vol?: number; sharpe?: number; maxdd?: number; month_win?: number; months?: number }
+export interface AlphaAllocationMix { name?: string; weights: number[]; ann?: number; vol?: number; sharpe?: number; maxdd?: number; month_win?: number }
+export interface AlphaAllocation {
+  legs: AlphaAllocationLeg[]
+  months: string[]
+  corr: number[][]
+  weights?: Record<string, number[]>
+  mixes: AlphaAllocationMix[]
+  best?: AlphaAllocationMix
+  best_equity?: number[]
+  leg_equity?: Record<string, number[]>
+  available?: { spec: string; label: string }[]
+  meta: { start: string; end: string; n_months: number }
+}
+export const getAlphaAllocation = (legs: string, grid = 0.05) =>
+  api.get<AlphaAllocation>('/api/alpha/allocation', { legs, grid })

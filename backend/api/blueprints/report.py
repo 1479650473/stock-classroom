@@ -194,6 +194,53 @@ def smb_report():
     return _html(body, "smb_report.html")
 
 
+@bp.route("/allocation", methods=["GET"])
+def allocation_report():
+    """组合构建报告：单腿统计 + 相关矩阵 + 配比表 + 最优组合净值。"""
+    from backend.alpha import allocation as AL
+    from backend.strategy.report import build_report
+    legs = str(request.args.get("legs") or "smb,etf:511010")
+    specs = [x.strip() for x in legs.split(",") if x.strip()]
+    try:
+        res = AL.build(specs)
+    except Exception as e:
+        return err(400, "bad_legs", str(e)[:200], retriable=False)
+    legs_html = "".join(
+        f"<tr><td>{l.get('spec')}</td><td>{l.get('label')}</td>"
+        f"<td>{float(l.get('ann') or 0) * 100:+.1f}%</td><td>{float(l.get('vol') or 0) * 100:.1f}%</td>"
+        f"<td>{float(l.get('sharpe') or 0):.2f}</td><td>{float(l.get('maxdd') or 0) * 100:.1f}%</td>"
+        f"<td>{float(l.get('month_win') or 0) * 100:.1f}%</td></tr>" for l in res["legs"])
+    mixes_html = "".join(
+        f"<tr><td>{m.get('name') or '网格'}</td>"
+        f"<td>{'/'.join(f'{x:.2f}' for x in (m.get('weights') or []))}</td>"
+        f"<td>{float(m.get('ann') or 0) * 100:+.1f}%</td><td>{float(m.get('vol') or 0) * 100:.1f}%</td>"
+        f"<td>{float(m.get('sharpe') or 0):.2f}</td><td>{float(m.get('maxdd') or 0) * 100:.1f}%</td>"
+        f"<td>{float(m.get('month_win') or 0) * 100:.1f}%</td></tr>" for m in res["mixes"][-14:])
+    best = res.get("best") or {}
+    notes = ("<b>腿</b>：每条腿都是月末取值、每月再平衡；<br><b>相关矩阵</b>："
+             + "；".join(f"{specs[i]}–{specs[j]} {res['corr'][i][j]:+.2f}"
+                         for i in range(len(specs)) for j in range(i + 1, len(specs)))
+             + f"<br><b>最优（按夏普）</b>：{'/'.join(f'{x:.2f}' for x in (best.get('weights') or []))} → "
+               f"年化 {float(best.get('ann') or 0) * 100:+.1f}%、夏普 {float(best.get('sharpe') or 0):.2f}、"
+               f"回撤 {float(best.get('maxdd') or 0) * 100:.1f}%"
+             + "<br>注意：最优权重是**样本内**结果，按历史表现反推，实盘会衰减；"
+               "逆波动/最小方差（不用预期收益）比最大夏普稳健。")
+    body = build_report(
+        title="组合构建报告", subtitle=f"{' + '.join(specs)}｜重合 {res['meta']['n_months']} 个月"
+                                       f"（{res['meta']['start']}~{res['meta']['end']}）",
+        series=[1.0] + list(res.get("best_equity") or [1.0]),
+        metrics={}, notes=notes)
+    body = body.replace('<h2>净值曲线</h2>', '<h2>最优组合净值（样本内）</h2>')
+    body = body.replace('<h2>月度收益</h2>', '<h2>单腿统计</h2>'
+                        '<table class="grid"><thead><tr><th>腿</th><th>说明</th><th>年化</th><th>波动</th>'
+                        '<th>夏普</th><th>回撤</th><th>月胜率</th></tr></thead><tbody>'
+                        + legs_html + '</tbody></table><h2>配比对比</h2>'
+                        '<table class="grid"><thead><tr><th>方案</th><th>权重</th><th>年化</th><th>波动</th>'
+                        '<th>夏普</th><th>回撤</th><th>月胜率</th></tr></thead><tbody>'
+                        + mixes_html + '</tbody></table>')
+    return _html(body, "allocation_report.html")
+
+
 @bp.route("/backtest", methods=["POST"])
 def backtest_report():
     """通用报告：前端把回测结果 POST 上来，直接返回可打开的 HTML。"""
