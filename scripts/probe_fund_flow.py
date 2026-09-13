@@ -34,10 +34,10 @@ def main():
         print(msg, flush=True)
         logging.info(msg)
 
-    # 探测恢复
+    # 探测恢复(10分钟一次, 避免探测请求本身延长封锁)
     probe = ["600036", "000858", "002594", "601318", "000333"]
     pi = 0
-    log("探测中(每60s一只, 直到接口恢复)...")
+    log("探测中(每600s一只, 直到接口恢复)...")
     while True:
         c = probe[pi % len(probe)]
         rows = ak_fetch_fund_flow(c)
@@ -45,7 +45,7 @@ def main():
             log(f"恢复! {c} -> {len(rows)} 条 (最早 {rows[0][1]} ~ 最新 {rows[-1][1]})")
             break
         pi += 1
-        time.sleep(60)
+        time.sleep(600)
 
     # 测安全速率(失败则降速重测, 直到稳定)
     test = ["600036", "000001", "600519", "000858", "601318", "002594", "300750", "000333",
