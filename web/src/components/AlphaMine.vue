@@ -37,6 +37,7 @@ const allocLegs = ref<string[]>(['smb', 'etf:511010', 'etf:511260'])
 const alloc = ref<AlphaAllocation | null>(null)
 const allocLoading = ref(false)
 const allocAvailable = ref<{ spec: string; label: string }[]>([])
+const allocRolling = ref(true)
 const zooSort = ref('ic')
 const zoo = ref<AlphaZooRow[]>([])
 const zooMeta = ref<Record<string, unknown>>({})
@@ -203,7 +204,7 @@ async function loadAlloc(legs = allocLegs.value) {
   if (!legs.length) return
   allocLoading.value = true
   try {
-    const r = await getAlphaAllocation(legs.join(','))
+    const r = await getAlphaAllocation(legs.join(','), 0.05, allocRolling.value, 36)
     alloc.value = r
     if (r.available?.length) allocAvailable.value = r.available
   } catch (e) {
@@ -212,6 +213,23 @@ async function loadAlloc(legs = allocLegs.value) {
     allocLoading.value = false
   }
 }
+
+function toggleRolling() {
+  allocRolling.value = !allocRolling.value
+  loadAlloc()
+}
+
+const rollingRows = computed(() => {
+  const m = alloc.value?.rolling_os?.methods || {}
+  return Object.entries(m).map(([name, st]) => ({ name, ...st })) as Record<string, unknown>[]
+})
+const rollingBench = computed(() => {
+  const b = (alloc.value?.rolling_os?.bench || {}) as Record<string, unknown>
+  return Object.entries(b)
+    .filter(([k]) => k.startsWith('leg_'))
+    .map(([k, v]) => `${allocLegs.value[Number(k.slice(4))] || k} 夏普 ${num((v as { sharpe?: number }).sharpe)}`)
+    .join(' · ')
+})
 
 function toggleLeg(spec: string) {
   const i = allocLegs.value.indexOf(spec)
@@ -412,6 +430,7 @@ onMounted(async () => { await Promise.all([load(), loadMeta(), loadZoo(), loadCo
           <span>选腿（可多选，每月再平衡）：</span>
           <button v-for="l in allocAvailable" :key="l.spec" class="chip"
             :class="{ 'chip--on': allocLegs.includes(l.spec) }" @click="toggleLeg(l.spec)">{{ l.label }}</button>
+          <button class="chip" :class="{ 'chip--on': allocRolling }" @click="toggleRolling()">滚动样本外（36 月窗口）</button>
           <a class="chip" :href="reportUrl('allocation') + '?legs=' + allocLegs.join(',')" target="_blank" rel="noopener">打开报告</a>
         </div>
         <LoadingBlock v-if="allocLoading && !alloc" />
@@ -442,9 +461,34 @@ onMounted(async () => { await Promise.all([load(), loadMeta(), loadZoo(), loadCo
             <template #cell-month_win="{ row }">{{ fmt(row.month_win) }}</template>
           </DataTable>
           <p class="hint">
-            口径：每条腿月末取值、每月再平衡；<b>逆波动 / 最小方差</b>只用风险信息（更稳），
-            <b>最大夏普</b>用到了历史收益（样本内，实盘会衰减）。相关矩阵见报告。
+            口径：每条腿月末取值、每月再平衡；上表为<b>样本内</b>配比（用全样本估计，实盘拿不到）。
           </p>
+          <template v-if="rollingRows.length">
+            <div class="combo__title">
+              滚动样本外（每月只用过去 {{ alloc?.rolling_os?.window }} 个月估权重）—— 这才是能拿到的结果
+            </div>
+            <DataTable :rows="rollingRows" :columns="[
+              { key: 'name', title: '方法' },
+              { key: 'weights_last', title: '最新权重' },
+              { key: 'ann', title: '年化', align: 'right' },
+              { key: 'vol', title: '波动', align: 'right' },
+              { key: 'sharpe', title: '夏普', align: 'right' },
+              { key: 'maxdd', title: '回撤', align: 'right' },
+              { key: 'month_win', title: '月胜率', align: 'right' },
+            ]">
+              <template #cell-weights_last="{ row }">{{ weightText(row) }}</template>
+              <template #cell-ann="{ row }"><span :class="Number(row.ann) >= 0 ? 'up' : 'down'">{{ fmt(row.ann) }}</span></template>
+              <template #cell-vol="{ row }">{{ fmt(row.vol) }}</template>
+              <template #cell-sharpe="{ row }">{{ num(row.sharpe) }}</template>
+              <template #cell-maxdd="{ row }">{{ fmt(-Math.abs(Number(row.maxdd) || 0)) }}</template>
+              <template #cell-month_win="{ row }">{{ fmt(row.month_win) }}</template>
+            </DataTable>
+            <p class="hint">
+              同期单腿对照：{{ rollingBench }}（区间比全样本短且更靠后）。
+              结论：<b>逆波动/最小方差</b>这类"不用预期收益"的配比在样本外几乎不衰减，
+              而<b>最大夏普</b>会明显回落 —— 配比别用样本内最优。
+            </p>
+          </template>
         </template>
       </div>
 

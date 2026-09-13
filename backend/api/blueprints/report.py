@@ -201,8 +201,10 @@ def allocation_report():
     from backend.strategy.report import build_report
     legs = str(request.args.get("legs") or "smb,etf:511010")
     specs = [x.strip() for x in legs.split(",") if x.strip()]
+    window = int_arg(request.args.get("window"), 36, 12, 120)
+    rolling = str(request.args.get("rolling") or "1") not in ("0", "false", "no")
     try:
-        res = AL.build(specs)
+        res = AL.build(specs, rolling=rolling, window=window)
     except Exception as e:
         return err(400, "bad_legs", str(e)[:200], retriable=False)
     legs_html = "".join(
@@ -217,6 +219,23 @@ def allocation_report():
         f"<td>{float(m.get('sharpe') or 0):.2f}</td><td>{float(m.get('maxdd') or 0) * 100:.1f}%</td>"
         f"<td>{float(m.get('month_win') or 0) * 100:.1f}%</td></tr>" for m in res["mixes"][-14:])
     best = res.get("best") or {}
+    ros = res.get("rolling_os") or {}
+    ros_html = ""
+    if ros.get("methods"):
+        rows = "".join(
+            f"<tr><td>{m}</td><td>{'/'.join(f'{x:.2f}' for x in (st.get('weights_last') or []))}</td>"
+            f"<td>{float(st.get('ann') or 0) * 100:+.1f}%</td><td>{float(st.get('vol') or 0) * 100:.1f}%</td>"
+            f"<td>{float(st.get('sharpe') or 0):.2f}</td><td>{float(st.get('maxdd') or 0) * 100:.1f}%</td>"
+            f"<td>{float(st.get('month_win') or 0) * 100:.1f}%</td></tr>"
+            for m, st in ros["methods"].items())
+        bench = ros.get("bench") or {}
+        bleg = "；".join(f"{specs[int(k[4:])]} 夏普 {float(v.get('sharpe') or 0):.2f}"
+                         for k, v in bench.items() if k.startswith("leg_"))
+        ros_html = ("<h2>滚动样本外（每月只用过去 " + str(ros.get("window")) + " 个月估权重）</h2>"
+                    "<table class='grid'><thead><tr><th>方法</th><th>最新权重</th><th>年化</th><th>波动</th>"
+                    "<th>夏普</th><th>回撤</th><th>月胜率</th></tr></thead><tbody>" + rows + "</tbody></table>"
+                    f"<p style='color:#a9aeb6;font-size:12px'>同期单腿对照：{bleg}"
+                    f"（区间 {bench.get('from')}~{bench.get('to')}，比全样本短且更靠后）</p>")
     notes = ("<b>腿</b>：每条腿都是月末取值、每月再平衡；<br><b>相关矩阵</b>："
              + "；".join(f"{specs[i]}–{specs[j]} {res['corr'][i][j]:+.2f}"
                          for i in range(len(specs)) for j in range(i + 1, len(specs)))
@@ -229,15 +248,16 @@ def allocation_report():
         title="组合构建报告", subtitle=f"{' + '.join(specs)}｜重合 {res['meta']['n_months']} 个月"
                                        f"（{res['meta']['start']}~{res['meta']['end']}）",
         series=[1.0] + list(res.get("best_equity") or [1.0]),
+        dates=res.get("months"),          # 传月份标签：模板里的替换锚点才会存在
         metrics={}, notes=notes)
     body = body.replace('<h2>净值曲线</h2>', '<h2>最优组合净值（样本内）</h2>')
     body = body.replace('<h2>月度收益</h2>', '<h2>单腿统计</h2>'
                         '<table class="grid"><thead><tr><th>腿</th><th>说明</th><th>年化</th><th>波动</th>'
                         '<th>夏普</th><th>回撤</th><th>月胜率</th></tr></thead><tbody>'
-                        + legs_html + '</tbody></table><h2>配比对比</h2>'
+                        + legs_html + '</tbody></table><h2>配比对比（样本内）</h2>'
                         '<table class="grid"><thead><tr><th>方案</th><th>权重</th><th>年化</th><th>波动</th>'
                         '<th>夏普</th><th>回撤</th><th>月胜率</th></tr></thead><tbody>'
-                        + mixes_html + '</tbody></table>')
+                        + mixes_html + '</tbody></table>' + ros_html)
     return _html(body, "allocation_report.html")
 
 

@@ -157,7 +157,57 @@ def optimize_weights(X: np.ndarray, n_random: int = 4000, seed: int = 7
     return out
 
 
-def build(leg_specs: List[str], cost_one_way: float = 0.0, grid: float = 0.05) -> Dict:
+def weights_for(X: np.ndarray, method: str, n_random: int = 600, seed: int = 7) -> Optional[np.ndarray]:
+    """按指定方法估一组权重（只用传入的数据，便于滚动使用）。"""
+    w = optimize_weights(X, n_random=n_random, seed=seed)
+    key = method
+    if key not in w:
+        return None
+    v = np.array(w[key], dtype=float)
+    return v if abs(v.sum() - 1.0) < 1e-6 else v / max(1e-12, v.sum())
+
+
+def rolling_oos(X: np.ndarray, months: List[str], window: int = 36, min_obs: int = 24,
+                methods: Optional[List[str]] = None, n_random: int = 600) -> Dict:
+    """滚动样本外：每月 t 只用 [t-window, t) 估权重，再把这组权重用在 t 月收益上。
+
+    这是"组合权重"这类决策唯一诚实的评估方式 —— 样本内最优权重（用全样本估）在实盘里
+    根本拿不到，必须先看滚动样本外的表现。
+    """
+    methods = methods or ["equal", "inv_vol", "min_var", "max_sharpe"]
+    T = X.shape[0]
+    out: Dict[str, Dict] = {}
+    equity: Dict[str, List[float]] = {}
+    for m in methods:
+        rets: List[float] = []
+        ws: List[List[float]] = []
+        idx: List[str] = []
+        for t in range(max(min_obs, 12), T):
+            lo = max(0, t - window)
+            w = weights_for(X[lo:t], m, n_random=n_random, seed=1000 + t)
+            if w is None:
+                continue
+            rets.append(float(X[t] @ w))
+            ws.append([round(float(x), 3) for x in w])
+            idx.append(months[t])
+        if len(rets) >= 12:
+            st = stats(rets)
+            out[m] = {**st, "start": idx[0], "end": idx[-1], "weights_last": ws[-1] if ws else [],
+                      "months": idx}
+            equity[m] = [round(float(x), 4) for x in np.cumprod(1 + np.array(rets))]
+    # 同一区间的单腿表现（做公平对照：滚动样本外的月份比全样本短且更靠后）
+    bench = {}
+    if out:
+        first = min(st["start"] for st in out.values())
+        ti = months.index(first)
+        bench = {"from": first, "to": months[-1]}
+        for i in range(X.shape[1]):
+            bench[f"leg_{i}"] = stats(X[ti:, i])
+    return {"window": window, "methods": out, "equity": equity, "bench": bench}
+
+
+def build(leg_specs: List[str], cost_one_way: float = 0.0, grid: float = 0.05,
+          rolling: bool = False, window: int = 36) -> Dict:
     legs: List[Dict] = []
     series: Dict[str, Dict[str, float]] = {}
     for spec in leg_specs:
@@ -185,11 +235,13 @@ def build(leg_specs: List[str], cost_one_way: float = 0.0, grid: float = 0.05) -
                       **stats(X @ wv)})
     best = max((m for m in mixes if m.get("sharpe") is not None),
                key=lambda m: m.get("sharpe", -9), default=None)
+    rolling_res = rolling_oos(X, common, window=window) if rolling else None
     best_eq = None
     if best is not None:
         wv = np.array(best["weights"], dtype=float)
         best_eq = list(np.cumprod(1 + X @ wv))
     return {"legs": leg_stats, "months": common, "corr": corr.tolist(),
+            "rolling_os": rolling_res,
             "weights": {k: [round(float(x), 4) for x in v] for k, v in weights.items()},
             "mixes": mixes, "best": best,
             "best_equity": [round(float(x), 4) for x in best_eq] if best_eq else [],
@@ -236,10 +288,12 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--legs", default="smb,etf:511010", help="逗号分隔：smb / equal / etf:511010 / file:path")
     ap.add_argument("--grid", type=float, default=0.05, help="两腿时的权重网格步长")
+    ap.add_argument("--rolling", action="store_true", help="额外做滚动样本外权重评估")
+    ap.add_argument("--window", type=int, default=36, help="滚动估权重的回看月数")
     ap.add_argument("--out", default="", help="把完整结果写成 JSON（供 API/前端）")
     args = ap.parse_args()
     specs = [s.strip() for s in args.legs.split(",") if s.strip()]
-    res = build(specs, grid=args.grid)
+    res = build(specs, grid=args.grid, rolling=args.rolling, window=args.window)
     res["available"] = available_legs()
     print(f"组合构建：{len(specs)} 条腿｜重合 {res['meta']['n_months']} 个月"
           f"（{res['meta']['start']}~{res['meta']['end']}）")
@@ -259,7 +313,16 @@ def main() -> None:
         print(f"  {tag:<18}" + "/".join(f"{x:.2f}" for x in w) + f"  {_fmt(m)}")
     best = res.get("best")
     if best:
-        print(f"\n最优（按夏普）：{'/'.join(f'{x:.2f}' for x in best['weights'])} → {_fmt(best)}")
+        print(f"\n样本内最优（按夏普，仅供参考）：{'/'.join(f'{x:.2f}' for x in best['weights'])} → {_fmt(best)}")
+    ros = res.get("rolling_os")
+    if ros:
+        print(f"\n滚动样本外（每月只用过去 {ros['window']} 个月估权重，杆继样本内偏差）：")
+        for nm, st in ros["methods"].items():
+            print(f"  {nm:<12} {_fmt(st)}（最新权重 {'/'.join(f'{x:.2f}' for x in (st.get('weights_last') or []))}）")
+        b = ros.get("bench") or {}
+        if b:
+            print(f"  同期各腿对照（{b.get('from')}~{b.get('to')}）：" + " | ".join(
+                f"{specs[int(k[4:])]} {_fmt(v)}" for k, v in b.items() if k.startswith("leg_")))
     if args.out:
         os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
         with open(args.out, "w", encoding="utf-8") as f:

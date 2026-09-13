@@ -185,8 +185,10 @@ def allocation():
     legs = str(request.args.get("legs") or "smb,etf:511010")
     specs = [s.strip() for s in legs.split(",") if s.strip()]
     grid = float(request.args.get("grid") or 0.05)
+    rolling = str(request.args.get("rolling") or "") in ("1", "true", "yes")
+    window = int_arg(request.args.get("window"), 36, 12, 120)
     try:
-        res = AL.build(specs, grid=grid)
+        res = AL.build(specs, grid=grid, rolling=rolling, window=window)
     except SystemExit as e:
         return err(400, "bad_legs", str(e), retriable=False)
     except Exception as e:

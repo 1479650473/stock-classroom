@@ -645,7 +645,13 @@ export interface AlphaAllocation {
   best_equity?: number[]
   leg_equity?: Record<string, number[]>
   available?: { spec: string; label: string }[]
+  rolling_os?: AlphaRollingOs | null
   meta: { start: string; end: string; n_months: number }
 }
-export const getAlphaAllocation = (legs: string, grid = 0.05) =>
-  api.get<AlphaAllocation>('/api/alpha/allocation', { legs, grid })
+export interface AlphaRollingOs {
+  window: number
+  methods: Record<string, { ann?: number; vol?: number; sharpe?: number; maxdd?: number; month_win?: number; start?: string; end?: string; weights_last?: number[] }>
+  bench?: Record<string, { ann?: number; vol?: number; sharpe?: number; maxdd?: number } | string>
+}
+export const getAlphaAllocation = (legs: string, grid = 0.05, rolling = true, window = 36) =>
+  api.get<AlphaAllocation>('/api/alpha/allocation', { legs, grid, rolling: rolling ? 1 : 0, window })
