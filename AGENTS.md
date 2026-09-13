@@ -145,6 +145,8 @@ Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
 | Backend | `backend/resilience.py` | akshare_wait 改随机分散(2026-09-11 修复 RateLimiter 无锁齐射致 py_mini_racer/V8 并发崩溃 = update_daily 多次3秒静默死亡根因) |
 | Backend | `backend/api/blueprints/etf.py` | **ETF**: `/api/etf/{list,kline,compare}` 全市场ETF列表/单只K线/多只归一化对比; 数据在 kline.db `etf_list`+`etf_daily` 独立表(新浪qfq主源, 股/元口径) |
 | Backend | `scripts/rebuild_etf.py` | ETF 全量历史首拉(多进程, 1606只/144万行, 幂等可续跑); update_daily ⑫步每日增量 |
+| Backend | `backend/api/blueprints/fund_flow.py` | **资金流**: `/api/fund-flow/kline` 个股日频资金流历史; kline.db `fund_flow_daily`(主力/超大/大/中/小单 额+占比, 东财daykline全历史) |
+| Scripts | `scripts/rebuild_fund_flow.py` | 资金流全量首拉(多进程幂等); `probe_fund_flow.py` 东财反爬探测+速率测试; update_daily ⑬步每日增量 |
 
 ## Navigation (v6)
 `web/src/lib/nav.ts` = [工作台, 行情, 策略, 交易, AI, 数据]；设置入口在顶栏右侧。旧页面 (Research/Optimize/Replay/Agent/AgentOps/Pipeline/DataCenter/Trainer) 仍被新页面内嵌复用，保留。

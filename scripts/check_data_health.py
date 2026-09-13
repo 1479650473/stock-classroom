@@ -71,6 +71,16 @@ def main():
             print(f"    {r[0]} {r[1]}: {r[2]} 行")
     except Exception as e:
         print(f"  ETF 检查失败: {e}")
+
+    print("\n-- 个股资金流(日频) --")
+    try:
+        n_code = con.execute("SELECT COUNT(DISTINCT code) FROM fund_flow_daily").fetchone()[0]
+        n_row = con.execute("SELECT COUNT(*) FROM fund_flow_daily").fetchone()[0]
+        mn = con.execute("SELECT MIN(date) FROM fund_flow_daily").fetchone()[0]
+        mx = con.execute("SELECT MAX(date) FROM fund_flow_daily").fetchone()[0]
+        print(f"  fund_flow_daily: {n_code} 只 / {n_row:,} 行 / {mn} ~ {mx}")
+    except Exception as e:
+        print(f"  资金流检查失败: {e}")
     con.close()
 
     print("\n" + "=" * 60)
