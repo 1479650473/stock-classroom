@@ -84,9 +84,11 @@ Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
 | `factor_analysis.py` | Alphalens 风格：分位组合/多空净值/单调性/IC 衰减/成本敏感性 |
 | `validate_known.py` / `diagnose_null.py` | 流程自检（已知因子方向）与零信号基准 |
 | `pipeline.py` / `store.py` / `import_reports.py` | API 与 CLI 共用的 mine/walk_forward 主流程 + `data/alpha.db`（alpha_run/alpha_formula）落库 |
+| `smb.py` | 规模因子（SMB 小−大）+ 月度「最小市值 N 只」策略；市值口径 = **成交额 ÷ 换手率**（免疫复权）；剔除规则全 as-of；`--include-bj` 把北交所纳入股票池（默认不含，含时自动跑一遍不含的对照组） |
+| `allocation.py` | **通用多腿组合构建器**：腿 = `smb` / `equal` / `etf:<code>` / `file:<path>`；输出相关矩阵、固定配比网格、自动配比（等权/逆波动/最小方差/最大夏普）；**滚动样本外**（`--rolling --window 36`）每月只用过去 N 月估权重 |
 
-**API**：`/api/alpha/{meta,mine,walkforward,runs,run/<id>,composite,zoo,composite_report,factor-analysis}`、
-`/api/trader/selection?source=scorecard|composite`、`/api/report/{composite,factor-zoo,factor-analysis,backtest}`、
+**API**：`/api/alpha/{meta,mine,walkforward,runs,run/<id>,composite,zoo,composite_report,factor-analysis,smb,allocation}`（`allocation` 支持 `rolling=1&window=36`）、
+`/api/trader/selection?source=scorecard|composite|smallcap`、`/api/report/{composite,factor-zoo,factor-analysis,backtest,smb,allocation}`、
 `/api/notify/{list,summary,read,clear,settings,test}`、`/metrics`（Prometheus 文本）。
 
 **已证实 / 已否定**（300 只流动股 × 2016-2025，数据见 `data/factor_*.json`、`data/alpha_*.json`）：
@@ -95,10 +97,19 @@ Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
 - **低波动类因子在本土是反向的**（高波动占优）：-ATR14/-AMP 多空价差 -28%/-45%，“超额为正”是风格 beta。
 - **机器学习（HGB）的极端分位含真实信息**：多空价差均值 **+32.2%、9/10 折为正**（截尾 ±11% 复算仍成立），但整体 IC ≈ 0。
 - **IC 口径陷阱**：计算 IC 时**不能叠加“次日涨停不可买”过滤**（信号恰好集中在这些样本，会把 IC 抹到 0）；可买性只约束组合构建。
+- **微盘效应集中在北交所**（2026-09-14 补齐北交所数据后）：全市场流通市值最小的 15 只里 14 只是北交所（920xxx）——原先“最小 5 只”永远落在沪深小票，**与外部实证不是同一个股票池**，这是此前结论不一致的主因。同门槛同成本对照：2016-2025 含北交所 **+13.0%**（t=1.51）vs 不含 +9.3%；北交所成立后（2021-11 起）**+19.5%** vs +9.9%。但**成本是生死线**（单边 0.5% 时 +13.0% → +0.2%）、回撤 55~63%、持仓市值 3 亿级 → 只能小仓位卫星，不能当主力。
+- **组合配比不能用样本内最优**（`allocation.py` 滚动样本外）：逆波动 1.38→1.32（几乎不衰减）、最小方差 1.43→1.25、最大夏普 1.45→**1.16**（衰减最狠）。只用风险信息的配比才稳。
 
-**数据可靠性**（实测教训）：`py_mini_racer`(新浪 V8) 在 **20 并发下会崩进程**，补数据并发 ≤12-16；
+**数据可靠性**（实测教训）：`py_mini_racer`(新浪 V8) 并发下会崩进程 —— `update_daily` 等长跑路径 **≤12-16 并发**；
+**批量补数据一律走多进程**（`ProcessPoolExecutor`，每进程独立 V8 上下文）：实测线程 6 并发即崩，
+`scripts/rebuild_bj.py` 用 4 进程 4.4 分钟补完 343 只北交所、0 失败（崩溃自动降并发重试）；
 `update_daily` 的全市场增量已改为固定回看 10 个交易日（原全局缺口判断会漏“某天只有部分股票更新”）；
 `scripts/backfill_missing_day.py` 用于逐股票补齐残缺交易日（分块落库、可续跑）。
+
+**股票池覆盖**：`kline.db` 现有 5,554 只 active（沪深 5,211 + **北交所 343**）。北交所 2026-09-14 前完全缺失，
+由 `scripts/rebuild_bj.py` 补齐（`ak.stock_info_bj_name_code()` 名单 + 新浪 `stock_zh_a_daily(bjXXXXXX, qfq)`，
+2010-12 起 28.9 万行）；`codec.is_bj_code/ak_symbol` 已识别 43/83/87/88/920 段 → `bj` 前缀，
+`update_daily` 的全市场增量自动带上北交所，无需手动维护。
 
 ## 回测报告 / 可观测性 / 通知 / MCP
 | 模块 | 说明 |
@@ -144,6 +155,7 @@ Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
 | Scripts | `scripts/rebuild_kline_unified.py` | 新浪qfq多进程全库重拉(统一qfq基准=最新 + volume=股/amount=元, 2026-09-11 修复2022/2023边界断层24%与2023缺2600只); `backfill_gaps.py --year/--days/--codes` 补缺; `check_data_health.py` 健康报告 |
 | Backend | `backend/resilience.py` | akshare_wait 改随机分散(2026-09-11 修复 RateLimiter 无锁齐射致 py_mini_racer/V8 并发崩溃 = update_daily 多次3秒静默死亡根因) |
 | Backend | `backend/api/blueprints/etf.py` | **ETF**: `/api/etf/{list,kline,compare}` 全市场ETF列表/单只K线/多只归一化对比; 数据在 kline.db `etf_list`+`etf_daily` 独立表(新浪qfq主源, 股/元口径) |
+| Scripts | `scripts/rebuild_bj.py` | **北交所全历史首拉**（343 只/28.9 万行，多进程幂等可续跑，2026-09-14）；新浪 `stock_zh_a_daily(bjXXXXXX, qfq)` 主源，东财兜底；之后由 update_daily 自动增量 |
 | Backend | `scripts/rebuild_etf.py` | ETF 全量历史首拉(多进程, 1606只/144万行, 幂等可续跑); update_daily ⑫步每日增量 |
 | Backend | `backend/api/blueprints/fund_flow.py` | **资金流**: `/api/fund-flow/kline` 个股日频资金流历史; kline.db `fund_flow_daily`(主力/超大/大/中/小单 额+占比, 东财daykline全历史) |
 | Scripts | `scripts/rebuild_fund_flow.py` | 资金流全量首拉(多进程幂等); `probe_fund_flow.py` 东财反爬探测+速率测试; update_daily ⑬步每日增量 |
