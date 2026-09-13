@@ -163,6 +163,25 @@ export const getEtfKline = (code: string, days = 250) =>
 export const getEtfCompare = (codes: string[], days = 250) =>
   api.get<EtfCompare>('/api/etf/compare', { codes: codes.join(','), days })
 
+// ---- fund flow ----
+export interface FundFlowBar {
+  date: string
+  close: number
+  change_pct: number
+  main_net: number
+  main_ratio: number
+  super_net: number
+  super_ratio: number
+  large_net: number
+  large_ratio: number
+  medium_net: number
+  medium_ratio: number
+  small_net: number
+  small_ratio: number
+}
+export const getFundFlow = (code: string, days = 250) =>
+  api.get<FundFlowBar[]>('/api/fund-flow/kline', { code, days })
+
 // ---- trade ----
 export const listAccounts = () => api.get<AccountSummary[]>('/api/trade/accounts')
 export const createAccount = (name: string, initial_capital: number) => api.post('/api/trade/accounts', { name, initial_capital })

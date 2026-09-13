@@ -1047,6 +1047,90 @@ def _bulk_insert_etf(conn, rows):
     return len(clean), skipped
 
 
+# ════════════════════════════════════════════════════════
+#  个股资金流日频 (fund_flow_daily, 东财 daykline 全历史)
+# ════════════════════════════════════════════════════════
+def init_fund_flow_tables():
+    conn = get_kline_db()
+    conn.execute("""CREATE TABLE IF NOT EXISTS fund_flow_daily (
+        code TEXT, date TEXT, close REAL, change_pct REAL,
+        main_net REAL, main_ratio REAL,
+        super_net REAL, super_ratio REAL,
+        large_net REAL, large_ratio REAL,
+        medium_net REAL, medium_ratio REAL,
+        small_net REAL, small_ratio REAL,
+        PRIMARY KEY (code, date))""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ffd_code ON fund_flow_daily(code, date)")
+    conn.commit()
+    conn.close()
+
+
+def get_fund_flow(code: str, days: int = 250) -> List[Dict]:
+    """单只股票资金流历史(升序). 返回含 date/main_net/main_ratio 等字段."""
+    conn = get_kline_db()
+    rows = conn.execute(
+        "SELECT date, close, change_pct, main_net, main_ratio, super_net, super_ratio, "
+        "large_net, large_ratio, medium_net, medium_ratio, small_net, small_ratio "
+        "FROM fund_flow_daily WHERE code=? ORDER BY date DESC LIMIT ?", (code, days)).fetchall()
+    conn.close()
+    out = [dict(r) for r in reversed(rows)]
+    return out
+
+
+def update_fund_flow(codes=None, workers: int = 10, progress=None) -> dict:
+    """个股资金流全历史增量(东财 daykline, 幂等 INSERT OR REPLACE).
+
+    全量拉取(接口无日期窗口), 已最新的股票数据量小但请求照发 — 东财恢复后
+    首拉 ~5200 只; 每日增量同样全量重拉(每只 1 请求, 10 线程 ~15-25 分钟).
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from akshare_source import ak_fetch_fund_flow
+    if codes is None:
+        conn = get_kline_db()
+        codes = [str(r[0]) for r in conn.execute(
+            "SELECT code FROM stock_list WHERE status='active' AND code[:2] IN ('00','30','60','68') "
+            "ORDER BY code").fetchall()]
+        conn.close()
+    total = len(codes)
+    updated = errors = rows_added = 0
+    batch = []
+    t0 = time.time()
+
+    def _fetch(c):
+        return ak_fetch_fund_flow(c), c
+
+    done = 0
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futs = {pool.submit(_fetch, c): c for c in codes}
+        for f in as_completed(futs):
+            c = futs[f]
+            done += 1
+            try:
+                rows, _ = f.result(timeout=70)
+            except Exception:
+                rows = []
+            if rows:
+                updated += 1
+                batch.extend(rows)
+                rows_added += len(rows)
+            else:
+                errors += 1
+            if progress and (done % 100 == 0 or done == total):
+                progress(f"[{done}/{total}] +{rows_added} 行", None)
+    if batch:
+        conn = get_kline_db()
+        conn.executemany(
+            "INSERT OR REPLACE INTO fund_flow_daily "
+            "(code,date,close,change_pct,main_net,main_ratio,super_net,super_ratio,"
+            "large_net,large_ratio,medium_net,medium_ratio,small_net,small_ratio) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", batch)
+        conn.commit()
+        conn.close()
+        rows_added = len(batch)
+    return {"updated": updated, "errors": errors, "rows_added": rows_added,
+            "total": total, "elapsed": round(time.time() - t0, 1)}
+
+
 def cache_sector_board_from_akshare():
     """写入 sector_board 快照表(991行: 行业/概念板块涨跌榜, 含 leader).
 

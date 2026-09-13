@@ -32,6 +32,13 @@ export interface LwcSpan {
   color?: string
 }
 
+/** 资金流副图数据(主力净流入, 与 K线时间对齐) */
+export interface LwcFundFlow {
+  time: string
+  mainNet: number
+  mainRatio?: number
+}
+
 const props = withDefaults(
   defineProps<{
     bars: LwcBar[]
@@ -48,6 +55,8 @@ const props = withDefaults(
     height?: number
     /** 权益曲线（独立 pane） */
     equity?: { time: string; value: number }[]
+    /** 资金流副图（主力净流入柱状, 独立 pane） */
+    fundFlow?: LwcFundFlow[]
   }>(),
   {
     mas: () => [5, 20],
@@ -58,6 +67,7 @@ const props = withDefaults(
     showVolume: true,
     height: 420,
     equity: () => [],
+    fundFlow: () => [],
   },
 )
 
@@ -67,6 +77,7 @@ const chart = shallowRef<IChartApi | null>(null)
 const candleSeries = shallowRef<ISeriesApi<'Candlestick'> | null>(null)
 const volumeSeries = shallowRef<ISeriesApi<'Histogram'> | null>(null)
 const equitySeries = shallowRef<ISeriesApi<'Line'> | null>(null)
+const fundFlowSeries = shallowRef<ISeriesApi<'Histogram'> | null>(null)
 const maSeries: ISeriesApi<'Line'>[] = []
 let priceLine: IPriceLine | null = null
 let markersPlugin: ISeriesMarkersPluginApi<Time> | null = null
@@ -144,6 +155,14 @@ function init() {
     )
   }
 
+  if (props.fundFlow.length) {
+    fundFlowSeries.value = chart.value.addSeries(
+      HistogramSeries,
+      { priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false },
+      3,
+    )
+  }
+
   ro = new ResizeObserver(() => {
     if (chart.value && el.value) {
       chart.value.applyOptions({ width: el.value.clientWidth })
@@ -194,6 +213,16 @@ function apply() {
 
   if (equitySeries.value && props.equity.length) {
     equitySeries.value.setData(props.equity.map((e) => ({ time: e.time as Time, value: e.value })))
+  }
+
+  if (fundFlowSeries.value && props.fundFlow.length) {
+    fundFlowSeries.value.setData(
+      props.fundFlow.map((f) => ({
+        time: f.time as Time,
+        value: f.mainNet,
+        color: (f.mainNet >= 0 ? upColor() : downColor()) + '90',
+      })),
+    )
   }
 
   const markerData = props.markers.map((m) => ({
@@ -261,6 +290,7 @@ watch(() => props.bars, () => apply())
 watch(() => props.markers, () => apply())
 watch(() => props.playheadTime, () => schedulePlayhead())
 watch(() => props.height, (h) => chart.value?.applyOptions({ height: h }))
+watch(() => props.fundFlow, () => apply())
 
 onMounted(init)
 onBeforeUnmount(() => {

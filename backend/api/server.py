@@ -83,6 +83,9 @@ def create_app():
     # ETF (全市场列表/单只K线/多只归一化对比)
     from .blueprints import etf
     app.register_blueprint(etf.bp)
+    # 个股资金流日频 (历史查询)
+    from .blueprints import fund_flow
+    app.register_blueprint(fund_flow.bp)
     # Agent Gateway v1 (/api/agent/v1) — 能力分级 R/W/B/T + 审计/幂等/限流，供外部 agent/MCP 调用
     from backend.agent.routes import register as register_agent_gateway
     register_agent_gateway(app)

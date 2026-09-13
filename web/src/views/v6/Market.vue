@@ -13,8 +13,8 @@ import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import KlineChart from '@/components/charts/KlineChart.vue'
 import EtfPanel from '@/components/EtfPanel.vue'
 import Icon from '@/components/Icon.vue'
-import { getIndices, getSectors, getNorthFlow, getKline, searchStock } from '@/api'
-import type { IndexQuote, KlineBar, StockRef } from '@/api'
+import { getIndices, getSectors, getNorthFlow, getKline, searchStock, getFundFlow } from '@/api'
+import type { IndexQuote, KlineBar, StockRef, FundFlowBar } from '@/api'
 import { usePersistedRef } from '@/composables/usePersistedRef'
 
 type Tab = 'market' | 'stock' | 'etf'
@@ -43,8 +43,18 @@ const marketError = ref('')
 const kline = ref<KlineBar[]>([])
 const klineLoading = ref(false)
 const klineError = ref('')
+const fundFlow = ref<FundFlowBar[]>([])
 
 const lastBar = computed(() => kline.value[kline.value.length - 1] ?? null)
+
+/** 资金流副图数据(主力净流入, 与K线时间对齐) */
+const lwcFundFlow = computed(() =>
+  fundFlow.value.map((f) => ({
+    time: lwcTime(f.date),
+    mainNet: f.main_net,
+    mainRatio: f.main_ratio,
+  })),
+)
 
 /** YYYYMMDD -> YYYY-MM-DD (lightweight-charts 要求) */
 function lwcTime(d: string): string {
@@ -93,7 +103,12 @@ async function loadKline() {
   klineLoading.value = true
   klineError.value = ''
   try {
-    kline.value = await getKline(code.value, Number(days.value))
+    const [bars, ff] = await Promise.all([
+      getKline(code.value, Number(days.value)),
+      getFundFlow(code.value, Number(days.value)).catch(() => [] as FundFlowBar[]),
+    ])
+    kline.value = bars
+    fundFlow.value = ff
   } catch (e) {
     klineError.value = e instanceof Error ? e.message : 'K线加载失败'
     kline.value = []
@@ -291,7 +306,7 @@ onMounted(() => {
               <span class="num" :class="changePct >= 0 ? 'up' : 'down'">{{ fmtPct(changePct) }}</span>
             </div>
           </div>
-          <KlineChart :bars="lwcBars" :height="460" />
+          <KlineChart :bars="lwcBars" :height="460" :fund-flow="lwcFundFlow" />
           <div class="detail-table">
             <h3 class="sub-title">历史数据（近 {{ Math.min(kline.length, 60) }} 条）</h3>
             <DataTable

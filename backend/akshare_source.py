@@ -597,6 +597,76 @@ def ak_get_high_low() -> List[Dict]:
         return []
 
 
+def ak_fetch_fund_flow(code: str, timeout: float = 25.0) -> List[tuple]:
+    """个股日频资金流全历史(东财 daykline, 起点约2010年).
+
+    直接请求 push2his.eastmoney.com 资金流 daykline 接口(lmt=0 全历史), 自带 UA/Referer/
+    重试+退避/硬超时, 并接入坏源健康缓存(连续异常暂停300s — 东财反爬时快速降级).
+    返回: [(code, date_yyyymmdd, close, change_pct,
+            main_net, main_ratio, super_net, super_ratio, large_net, large_ratio,
+            medium_net, medium_ratio, small_net, small_ratio)]
+    """
+    import requests as _rq
+    secid_market = "1" if str(code).startswith(("6", "5", "9")) else "0"
+    url = "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://data.eastmoney.com/",
+        "Accept": "*/*",
+    }
+    params = {
+        "lmt": "0", "klt": "101", "secid": f"{secid_market}.{code}",
+        "fields1": "f1,f2,f3,f7",
+        "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65",
+        "ut": "b2884a393a59ad64002292a3e90d46a5",
+    }
+
+    def _fetch():
+        return _rq.get(url, params=params, headers=headers, timeout=timeout)
+
+    resp = None
+    for attempt in range(3):
+        if _src_bad("em"):
+            return []
+        try:
+            resp = _run_with_timeout(_fetch, timeout + 5)
+        except Exception as e:
+            log.warning("ak_fetch_fund_flow %s 异常: %s", code, str(e)[:50])
+            _src_note_fail("em")
+            time.sleep(1.5 * (attempt + 1))
+            continue
+        if resp is not None and resp.status_code == 200:
+            _src_note_ok("em")
+            break
+        _src_note_fail("em")
+        time.sleep(1.5 * (attempt + 1))
+    if resp is None or resp.status_code != 200:
+        return []
+
+    rows = []
+    try:
+        data = resp.json().get("data") or {}
+        klines = data.get("klines") or []
+        for item in klines:
+            p = item.split(",")
+            # 0日期 1主力净 2小单净 3中单净 4大单净 5超大单净 6主力占比 7小单占比 8中单占比 9大单占比 10超大单占比 11收盘 12涨跌幅
+            try:
+                rows.append((code, p[0].replace("-", ""),
+                             float(p[11]), float(p[12]),
+                             float(p[1]), float(p[6]),
+                             float(p[5]), float(p[10]),
+                             float(p[4]), float(p[9]),
+                             float(p[3]), float(p[8]),
+                             float(p[2]), float(p[7])))
+            except (ValueError, IndexError):
+                continue
+    except Exception as e:
+        log.warning("ak_fetch_fund_flow %s 解析失败: %s", code, str(e)[:60])
+        return []
+    return rows
+
+
 def ak_get_etf_list() -> List[Dict]:
     """ETF实时行情"""
     try:

@@ -440,6 +440,16 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
         except Exception as e:
             out['steps']['etf'] = str(e)[:120]
             lg.warning('  ETF 数据失败: %s', str(e)[:80])
+        # ⑬ 个股资金流(日频, 东财 daykline 全历史幂等重拉, ~5200 只)
+        try:
+            from data_manager import init_fund_flow_tables, update_fund_flow
+            init_fund_flow_tables()
+            _fk = update_fund_flow(workers=10, progress=lambda m, p=None: lg.info('  资金流 ' + str(m)))
+            out['steps']['fund_flow'] = {k: _fk.get(k) for k in ('updated', 'errors', 'rows_added', 'total', 'elapsed')}
+            lg.info('  资金流: 更新%s 新增%d行 失败%d', _fk.get('updated'), _fk.get('rows_added'), _fk.get('errors'))
+        except Exception as e:
+            out['steps']['fund_flow'] = str(e)[:120]
+            lg.warning('  资金流失败: %s', str(e)[:80])
 
     out['finished'] = datetime.now().isoformat(timespec='seconds')
     out['elapsed'] = round(time.time() - t0, 1)
