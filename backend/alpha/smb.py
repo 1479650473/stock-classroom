@@ -74,6 +74,7 @@ def load_monthly(codes: List[str], start: str, end: str) -> Dict[str, object]:
     amount = np.zeros((N, T), dtype=np.float64)
     shares = np.zeros((N, T), dtype=np.float64)
     turn = np.zeros((N, T), dtype=np.float64)
+    mv = np.zeros((N, T), dtype=np.float64)      # 流通市值（亿元）= 成交额 ÷ 换手率
     ret = np.zeros((N, T), dtype=np.float64)
     for code, d, h, lo, c, vol, amt, to in rows:
         i, j = ci.get(str(code)), di.get(str(d))
@@ -84,8 +85,12 @@ def load_monthly(codes: List[str], start: str, end: str) -> Dict[str, object]:
         low[i, j] = float(lo or 0)
         amount[i, j] = float(amt or 0)
         turn[i, j] = float(to or 0)
-        if to and float(to) > 0 and vol:
-            shares[i, j] = float(vol) / (float(to) / 100.0)
+        if to and float(to) > 0:
+            shares[i, j] = float(vol) / (float(to) / 100.0) if vol else 0.0
+            # 用「成交额 ÷ 换手率」= 当日成交均价 × 流通股本 —— 复权价会低估历史市值
+            # （实测招商银行 2016 年 qfq 价 11.16 vs 实际成交均价 17.42，低估 36%），
+            # 成交额与换手率都不受复权影响，因此这个口径是干净的。
+            mv[i, j] = float(amt or 0) / (float(to) / 100.0) / 1e8
     # 日涨跌幅
     prev = np.zeros_like(close)
     prev[:, 1:] = close[:, :-1]
@@ -97,7 +102,8 @@ def load_monthly(codes: List[str], start: str, end: str) -> Dict[str, object]:
         if j + 1 == T or dates[j + 1][:6] != d[:6]:
             month_end.append(j)
     return {"codes": codes, "dates": dates, "close": close, "high": high, "low": low,
-            "amount": amount, "shares": shares, "turn": turn, "ret": ret, "month_end": month_end}
+            "amount": amount, "shares": shares, "turn": turn, "mv": mv, "ret": ret,
+            "month_end": month_end}
 
 
 def monthly_features(pan: Dict[str, object]) -> Dict[str, np.ndarray]:
@@ -108,6 +114,7 @@ def monthly_features(pan: Dict[str, object]) -> Dict[str, np.ndarray]:
     amount = pan["amount"]  # type: ignore[assignment]
     shares = pan["shares"]  # type: ignore[assignment]
     turn = pan["turn"]  # type: ignore[assignment]
+    mv = pan["mv"]  # type: ignore[assignment]
     ret = pan["ret"]  # type: ignore[assignment]
     me: List[int] = pan["month_end"]  # type: ignore[assignment]
     N = close.shape[0]
@@ -118,9 +125,11 @@ def monthly_features(pan: Dict[str, object]) -> Dict[str, np.ndarray]:
             "to5", "amp20", "vol20", "pos60")}
     for m, j in enumerate(me):
         out["close"][:, m] = close[:, j]
-        lo = max(0, j - 59)
-        sh = np.median(np.where(shares[:, lo:j + 1] > 0, shares[:, lo:j + 1], np.nan), axis=1)
-        out["circ_mv"][:, m] = np.nan_to_num(sh) * close[:, j]
+        # 流通市值：取近 20 个交易日的「成交额÷换手率」中位数（平滑单日异常）
+        w20m = slice(max(0, j - 19), j + 1)
+        mvw = mv[:, w20m]
+        out["circ_mv"][:, m] = np.nan_to_num(
+            np.median(np.where(mvw > 0, mvw, np.nan), axis=1))
         out["amt20"][:, m] = amount[:, max(0, j - 19):j + 1].mean(axis=1)
         for h, key in ((20, "ret20"), (60, "ret60"), (250, "ret250")):
             lo2 = max(0, j - h)
@@ -230,7 +239,7 @@ def backtest(f: Dict[str, np.ndarray], mask: np.ndarray, top: int = 5,
                       "names": [f["names"].get(str(f["codes"][i]), "") for i in order],
                       "mv_yi": [round(float(f["circ_mv"][i, m]) / 1e8, 1) for i in order],
                       "next_ret": round(float(np.mean(r)) - 2.0 * cost_one_way, 4),
-                      "avg_mv_yi": round(float(np.mean(f["circ_mv"][order, m])) / 1e8, 1)})
+                      "avg_mv_yi": round(float(np.mean(f["circ_mv"][order, m])), 1)})
     daily = np.array(rets, dtype=float)
     if daily.size == 0:
         return {"error": "没有可回测的月份"}

@@ -535,16 +535,18 @@ def compute_factors(klines: list[dict]) -> dict[str, float]:
 
 @register_factor("CIRC_MV")
 def _f_circ_mv(closes, highs, lows, volumes, amounts, inter):
-    """流通市值（亿元）≈ 成交量 ÷ 换手率 × 收盘价（换手率缺失时返回 None）。"""
+    """流通市值（亿元）= 成交额 ÷ 换手率（= 真实成交均价 × 流通股本）。
+
+    不用"复权收盘价 × 流通股本"：本库是前复权价，历史市值会被系统性低估
+    （实测招商银行 2016 年低估 36%、工商银行 43%、双汇发展 47%）。
+    """
     to = inter.get("turnover") or []
-    if not closes or not volumes or not to:
+    if not amounts or not to:
         return None
     t = to[-1]
-    v = volumes[-1]
-    if not t or t <= 0 or not v:
+    if not t or t <= 0:
         return None
-    shares = v / (t / 100.0)                    # 流通股本（股）
-    return shares * closes[-1] / 1e8            # 亿元
+    return amounts[-1] / (t / 100.0) / 1e8       # 亿元
 
 
 @register_factor("LOG_CIRC_MV")

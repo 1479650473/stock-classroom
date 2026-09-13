@@ -23,7 +23,8 @@ from ..api.paths import KLINE_DB
 
 #: 可用筛选/排序维度：名字 → (说明, 单位)
 DIMENSIONS: Dict[str, Tuple[str, str]] = {
-    "close": ("最新收盘价", "元"),
+    "close": ("最新收盘价（前复权）", "元"),
+    "px_vwap": ("当日成交均价（未复权）", "元"),
     "circ_mv": ("流通市值（成交量÷换手率×收盘价）", "亿元"),
     "amount_ma20": ("20 日均成交额", "亿元"),
     "turnover_ma5": ("5 日均换手率", "%"),
@@ -105,11 +106,14 @@ def _metrics(rec: Dict[str, list], dates: List[str]) -> Dict[str, float]:
         return {}
     i = int(np.where(ok)[0][-1])                     # 最后一个有行情的交易日
     out: Dict[str, float] = {"close": float(cl[i])}
-    # 流通市值：成交量 ÷ 换手率 × 收盘价（换手率缺失时用最近有效值）
+    # 流通市值 = 成交额 ÷ 换手率（= 真实成交均价 × 流通股本）
+    # 不用"复权收盘价 × 流通股本"：我们的库是前复权价，历史市值会被系统性低估
+    # （实测招商银行 2016 年低估 36%、双汇发展 47%），越早/分红越多越离谱。
     t_valid = tur[:i + 1][tur[:i + 1] > 0]
     t_last = float(t_valid[-1]) if t_valid.size else 0.0
-    shares = (vol[i] / (t_last / 100.0)) if (t_last > 0 and vol[i] > 0) else 0.0
-    out["circ_mv"] = shares * cl[i] / 1e8 if shares else 0.0
+    amt_last = float(amt[i]) if i < amt.size else 0.0
+    out["circ_mv"] = (amt_last / (t_last / 100.0) / 1e8) if t_last > 0 else 0.0
+    out["px_vwap"] = (amt_last / vol[i]) if vol[i] > 0 else 0.0
     n20 = min(20, i + 1)
     out["amount_ma20"] = float(amt[i - n20 + 1:i + 1].mean()) / 1e8
     a5 = float(amt[i - min(5, i + 1) + 1:i + 1].mean())
