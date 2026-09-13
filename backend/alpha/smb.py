@@ -13,7 +13,9 @@
       ② 面值退市风险：收盘价 < 2 元；
       ③ 流动性：20 日均成交额 < 5000 万（僵尸股/停牌边缘）；
       ④ 深度下跌：250 日涨跌幅 < -60%；
-      ⑤ 主板/创业/科创以外（北交所）不参与；当月停牌（无月末收盘价）跳过。
+      ⑤ 默认只做沪深主板/创业板/科创板；`--include-bj` 把北交所（43/83/87/88/92）纳入
+         （北交所涨跌幅 ±30%，流动性结构性更低，需用更低的成交额门槛）；
+      ⑥ 当月停牌（无月末收盘价）跳过。
 
 策略
     每月最后一个交易日：按流通市值升序（可选叠加历史涨跌幅打分）取最小的 N 只，
@@ -37,17 +39,19 @@ import numpy as np
 
 from ..api.paths import DATA_DIR, KLINE_DB
 
-BOARDS = ("60", "00", "30", "68")
+BOARDS = ("60", "00", "30", "68")                 # 沪深主板/创业板/科创板
+BJ_BOARDS = ("43", "83", "87", "88", "92")        # 北交所（含原新三板精选层代码段）
 
 
 # ───────────────────────── 数据 ─────────────────────────
 
-def _codes(con: sqlite3.Connection) -> List[str]:
+def _codes(con: sqlite3.Connection, include_bj: bool = False) -> List[str]:
     rows = con.execute("SELECT code, name, status FROM stock_list").fetchall()
+    prefixes = BOARDS + BJ_BOARDS if include_bj else BOARDS
     out = []
     for code, name, status in rows:
         c = str(code)
-        if c[:2] not in BOARDS:
+        if c[:2] not in prefixes:
             continue
         out.append(c)
     return out
@@ -301,12 +305,12 @@ def smb_series(f: Dict[str, np.ndarray], mask: np.ndarray, n_group: int = 100) -
 def run(start: str = "2016-01-01", end: str = "2025-12-31", top: int = 5,
         mom_weight: float = 0.0, mom_key: str = "ret60", smb_group: int = 100,
         min_amount: float = 5e7, min_price: float = 2.0,
-        cost_one_way: float = 0.0,
+        cost_one_way: float = 0.0, include_bj: bool = False,
         tilts: Optional[List[Tuple[str, float]]] = None,
         save: Optional[str] = None) -> Dict[str, object]:
     t0 = time.time()
     con = sqlite3.connect(KLINE_DB)
-    codes = _codes(con)
+    codes = _codes(con, include_bj=include_bj)
     names = {str(c): str(n or "") for c, n in con.execute("SELECT code, name FROM stock_list")}
     con.close()
     pan = load_monthly(codes, start, end)
@@ -349,6 +353,8 @@ def run(start: str = "2016-01-01", end: str = "2025-12-31", top: int = 5,
                     "mom_key": mom_key, "min_amount": min_amount, "min_price": min_price,
                     "tilts": [f"{k}:{v}" for k, v in (tilts or [])],
                     "smb_group": smb_group, "elapsed_sec": round(time.time() - t0, 1),
+                    "include_bj": include_bj,
+                    "universe_rule": ("沪深主板/创业/科创" if not include_bj else "沪深主板/创业/科创 + 北交所"),
                     "rule": "流通市值=volume/(turnover/100)×close；剔除 ST代理(60日无±5.5%波动)/"
                             "价格<2元/20日均额<5千万/250日跌幅<-60%/当月停牌"},
            "strategy": res, "smb": smb,
@@ -380,6 +386,8 @@ def main() -> None:
     ap.add_argument("--min-amount", type=float, default=5e7)
     ap.add_argument("--min-price", type=float, default=2.0)
     ap.add_argument("--cost", type=float, default=0.0, help="单边成本（如 0.003 = 千三），月度换仓按双边计")
+    ap.add_argument("--include-bj", action="store_true", help="把北交所（43/83/87/88/92）纳入股票池")
+    ap.add_argument("--no-compare", action="store_true", help="--include-bj 时不做「不含北交所」对照")
     ap.add_argument("--compare-tilts", action="store_true",
                     help="额外对比若干多维度组合（动量/换手/波动/位置），结果存进报告")
     ap.add_argument("--tilt", action="append", default=[],
@@ -396,11 +404,33 @@ def main() -> None:
                 pass
     res = run(args.start, args.end, args.top, args.mom_weight, args.mom_key,
               args.smb_group, args.min_amount, args.min_price, cost_one_way=args.cost,
-              tilts=tilts, save=args.out)
+              tilts=tilts, save=args.out, include_bj=args.include_bj)
+    if args.include_bj and not args.no_compare:
+        # 同门槛、同成本的「不含北交所」对照 —— 回答"北交所到底带了多少"
+        print("\n[对照] 同门槛重跑「不含北交所」…", flush=True)
+        base = run(args.start, args.end, args.top, args.mom_weight, args.mom_key,
+                   args.smb_group, args.min_amount, args.min_price, cost_one_way=args.cost,
+                   tilts=tilts, include_bj=False)
+        b = base["strategy"]; a = res["strategy"]
+        cc = {round(c["cost_one_way"], 4): c["ann"] for c in base["cost_curve"]}
+        ac = {round(c["cost_one_way"], 4): c["ann"] for c in res["cost_curve"]}
+        res["comparison_no_bj"] = {
+            "strategy": b, "smb": base["smb"],
+            "benchmark_equal_weight": base["benchmark_equal_weight"],
+            "variants": base["variants"], "cost_curve": base["cost_curve"],
+            "delta": {"ann": (a.get("ann") or 0) - (b.get("ann") or 0),
+                      "sharpe": (a.get("sharpe") or 0) - (b.get("sharpe") or 0),
+                      "ann_at_cost_0_3pct": (ac.get(0.003) or 0) - (cc.get(0.003) or 0)},
+        }
+        print(f"  含北交所 年化 {(a.get('ann') or 0)*100:+.1f}% vs 不含 {(b.get('ann') or 0)*100:+.1f}%"
+              f"（成本 0.3% 后 {(ac.get(0.003) or 0)*100:+.1f}% vs {(cc.get(0.003) or 0)*100:+.1f}%）", flush=True)
+        if args.out:
+            with open(args.out, "w", encoding="utf-8") as f:
+                json.dump(res, f, ensure_ascii=False)
     if args.compare_tilts:
         # 多维度组合对比（同一份数据、同一成本口径）：回答"再加维度能不能提升"
         con = sqlite3.connect(KLINE_DB)
-        codes2 = _codes(con)
+        codes2 = _codes(con, include_bj=args.include_bj)
         names2 = {str(c): str(n or "") for c, n in con.execute("SELECT code, name FROM stock_list")}
         con.close()
         pan2 = load_monthly(codes2, args.start, args.end)

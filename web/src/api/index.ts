@@ -629,6 +629,13 @@ export interface AlphaSmbResult {
   benchmark?: { ann?: number }
   recent_picks?: { month: string; codes: string[]; names: string[]; mv_yi: number[]; avg_mv_yi: number; next_ret: number }[]
   years?: { year: string; ret: number; months: number }[]
+  comparison_no_bj?: {
+    strategy?: { ann?: number; sharpe?: number; maxdd?: number; month_win?: number; t_stat?: number }
+    smb?: { ann?: number; t_stat?: number }
+    cost_curve?: { cost_one_way: number; ann: number }[]
+    variants?: { top: number; ann: number; sharpe: number; maxdd: number; month_win: number }[]
+    delta?: { ann?: number; sharpe?: number; ann_at_cost_0_3pct?: number }
+  }
   hint?: string
 }
 export const getAlphaSmb = () => api.get<AlphaSmbResult>('/api/alpha/smb')

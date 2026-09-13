@@ -208,7 +208,7 @@ def _fetch_kline_with_fallback(symbol: str, days: int, timeout: float):
         from datetime import datetime, timedelta
         start = (datetime.now() - timedelta(days=days * 2 + 30)).strftime("%Y%m%d")
         end = datetime.now().strftime("%Y%m%d")
-        df = ak.stock_zh_a_hist(symbol=symbol.replace("sh", "").replace("sz", ""),
+        df = ak.stock_zh_a_hist(symbol=symbol.replace("sh", "").replace("sz", "").replace("bj", ""),
                                 period="daily", start_date=start, end_date=end, adjust="qfq")
         return df
 

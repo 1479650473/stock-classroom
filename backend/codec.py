@@ -38,6 +38,16 @@ def strip_suffix(code: str) -> tuple[str, str]:
     return s, ""
 
 
+# 北交所代码段：43/83/87/88（原新三板精选层）+ 920（2024 起新代码）
+BJ_PREFIXES = ("43", "83", "87", "88", "920")
+
+
+def is_bj_code(code: str) -> bool:
+    """是否为北交所代码（43/83/87/88/920 段）。"""
+    c = str(code or "").strip()
+    return any(c.startswith(p) for p in BJ_PREFIXES)
+
+
 def normalize_a_code(code: str, kind: str = KIND_AUTO) -> str:
     """规范化代码为规范存储码。kind: stock | index | hk | auto。"""
     s = str(code or "").strip()
@@ -79,6 +89,8 @@ def ak_symbol(code: str, kind: str = KIND_STOCK) -> str:
         c = normalize_a_code(code, KIND_AUTO)
         if c[:2] in ("sh", "sz", "bj"):
             return c
+        if is_bj_code(c):                      # 北交所（含原新三板精选层段）→ bj 前缀
+            return "bj" + c
         # 低位数股票规则与现有 ak_fetch_kline 保持一致: 6/9 开头 → 沪
         return ("sh" if c.startswith(("6", "9")) else "sz") + c
     if kind == KIND_INDEX:

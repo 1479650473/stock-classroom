@@ -171,7 +171,8 @@ def smb():
                         "month_win": st.get("month_win"), "t_stat": st.get("t_stat"),
                         "total": st.get("total"), "months": st.get("months")},
             "recent_picks": (st.get("picks") or [])[-12:],
-            "years": st.get("years")}
+            "years": st.get("years"),
+            "comparison_no_bj": d.get("comparison_no_bj")}
     return ok(keep)
 
 

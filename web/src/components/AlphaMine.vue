@@ -398,6 +398,17 @@ onMounted(async () => { await Promise.all([load(), loadMeta(), loadZoo(), loadCo
             <div class="sum__cell"><span class="k">对照：等权全市场</span><span class="v">{{ fmt(smb.benchmark?.ann) }}</span></div>
             <div class="sum__cell"><span class="k">SMB（小100−大100）年化</span><span class="v">{{ fmt(smb.smb?.ann) }}（t={{ num(smb.smb?.t_stat) }}）</span></div>
           </div>
+          <div v-if="smb.comparison_no_bj" class="combo">
+            <div class="combo__title">北交所（43/83/87/88/92）纳入与否 —— 同门槛、同成本对照</div>
+            <div class="combo__row">
+              <span>含北交所 <b :class="(smb.summary?.ann || 0) >= 0 ? 'up' : 'down'">{{ fmt(smb.summary?.ann) }}</b>
+                （t={{ num(smb.summary?.t_stat) }}）</span>
+              <span>不含北交所 <b :class="(smb.comparison_no_bj.strategy?.ann || 0) >= 0 ? 'up' : 'down'">{{ fmt(smb.comparison_no_bj.strategy?.ann) }}</b>
+                （t={{ num(smb.comparison_no_bj.strategy?.t_stat) }}）</span>
+              <span>差额 <b class="up">{{ fmt(smb.comparison_no_bj.delta?.ann) }}</b>
+                （成本 0.3% 后 {{ fmt(smb.comparison_no_bj.delta?.ann_at_cost_0_3pct) }}）</span>
+            </div>
+          </div>
           <div class="combo">
             <div class="combo__title">成本敏感性（单边成本 → 年化）——微盘策略的生死线</div>
             <div class="combo__row">
@@ -415,9 +426,11 @@ onMounted(async () => { await Promise.all([load(), loadMeta(), loadZoo(), loadCo
             </div>
           </div>
           <p class="hint">
-            结论：这个因子本质是**微盘效应**——宽口径的 SMB（小100−大100）不显著（t≈0.3），
-            收益全在“最小的 5 只”；叠加动量/波动/位置等第二维度**没有稳定改善**（唯一持平的是再剔除高换手）。
-            平均持仓流通市值仅 2.4 亿元，实盘冲击成本若达 1% 年化就只剩 +0.7%，因此把它当“可研究、慎实盘”的因子看待。
+            结论：收益几乎全部来自<b>北交所</b>——同门槛下含北交所 {{ fmt(smb.summary?.ann) }}、不含 {{ fmt(smb.comparison_no_bj?.strategy?.ann) }}；
+            北交所正式成立后（2021-11 起）含 +19.5% / 不含 +9.9%。但两条硬约束：① <b>成本</b>——单边 0.5% 时收益基本被吃光；
+            ② <b>回撤</b> 55~63%，且持仓流通市值仅 3 亿元级别、流动性薄。
+            叠加动量/波动/位置等第二维度没有稳定改善。结论：<b>微盘效应真实存在但集中在北交所、且是"高风险+高成本敏感"的收益</b>，
+            只能小仓位参与，不能当主力。
           </p>
         </template>
         <EmptyGuide v-else title="还没有规模因子回测结果"
