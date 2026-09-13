@@ -56,17 +56,58 @@ def _proc_worker(codes: list) -> dict:
     return {"ok": ok, "fail": fail, "rows": rows, "failed": failed}
 
 
+def _proc_worker_slow(codes: list, interval: float) -> dict:
+    """低频单进程拉取(适配东财反爬): 每只间隔 interval 秒, 失败重试 2 次."""
+    from akshare_source import ak_fetch_fund_flow
+    import sqlite3
+
+    ok = fail = rows = 0
+    failed = []
+    for i, code in enumerate(codes):
+        data = []
+        for attempt in range(2):
+            data = ak_fetch_fund_flow(code)
+            if data:
+                break
+            time.sleep(interval * 2)
+        if not data:
+            failed.append(code)
+            fail += 1
+            continue
+        try:
+            con = sqlite3.connect(DB, timeout=60)
+            con.executemany(
+                "INSERT OR REPLACE INTO fund_flow_daily "
+                "(code,date,close,change_pct,main_net,main_ratio,super_net,super_ratio,"
+                "large_net,large_ratio,medium_net,medium_ratio,small_net,small_ratio) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", data)
+            con.commit()
+            con.close()
+            ok += 1
+            rows += len(data)
+        except Exception:
+            failed.append(code)
+            fail += 1
+        time.sleep(interval)
+        if (i + 1) % 100 == 0 or i + 1 == len(codes):
+            print(f"    [slow] {i+1}/{len(codes)} ok={ok} fail={fail} rows={rows}", flush=True)
+    return {"ok": ok, "fail": fail, "rows": rows, "failed": failed}
+
+
 def main():
     from data_manager import init_fund_flow_tables
 
     args = sys.argv[1:]
     limit = None
     codes_arg = None
+    interval = 0.0
     for i, a in enumerate(args):
         if a == "--limit" and i + 1 < len(args):
             limit = int(args[i + 1])
         if a == "--codes" and i + 1 < len(args):
             codes_arg = [c.strip() for c in args[i + 1].split(",") if c.strip()]
+        if a == "--interval" and i + 1 < len(args):
+            interval = float(args[i + 1])
 
     init_fund_flow_tables()
     if codes_arg:
@@ -79,19 +120,26 @@ def main():
         con.close()
     if limit:
         codes = codes[:limit]
-    print(f"=== 资金流全历史拉取: {len(codes)} 只 | PROCS={PROCS} ===", flush=True)
 
     t0 = time.time()
-    ok = fail = rows = 0
-    failed_all = []
-    chunks = [codes[i::PROCS] for i in range(PROCS)]
-    chunks = [c for c in chunks if c]
-    with mp.Pool(len(chunks)) as pool:
-        for res in pool.imap_unordered(_proc_worker, chunks):
-            ok += res["ok"]
-            fail += res["fail"]
-            rows += res["rows"]
-            failed_all.extend(res["failed"])
+    if interval > 0:
+        # 低频单进程模式(适配东财反爬): 每只间隔 interval 秒
+        print(f"=== 资金流低频拉取: {len(codes)} 只 | 间隔 {interval}s ===", flush=True)
+        res = _proc_worker_slow(codes, interval)
+        ok, fail, rows = res["ok"], res["fail"], res["rows"]
+        failed_all = res["failed"]
+    else:
+        print(f"=== 资金流全历史拉取: {len(codes)} 只 | PROCS={PROCS} ===", flush=True)
+        ok = fail = rows = 0
+        failed_all = []
+        chunks = [codes[i::PROCS] for i in range(PROCS)]
+        chunks = [c for c in chunks if c]
+        with mp.Pool(len(chunks)) as pool:
+            for res in pool.imap_unordered(_proc_worker, chunks):
+                ok += res["ok"]
+                fail += res["fail"]
+                rows += res["rows"]
+                failed_all.extend(res["failed"])
     print(f"=== 完成: ok={ok} fail={fail} rows={rows} 耗时 {time.time()-t0:.0f}s ===", flush=True)
     if failed_all:
         print("失败:", ",".join(failed_all[:80]), flush=True)

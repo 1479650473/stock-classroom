@@ -47,23 +47,44 @@ def main():
         pi += 1
         time.sleep(60)
 
-    # 测安全速率
+    # 测安全速率(失败则降速重测, 直到稳定)
     test = ["600036", "000001", "600519", "000858", "601318", "002594", "300750", "000333",
             "600900", "601899", "000725", "600030", "002415", "688981", "300059", "600276",
             "000651", "600887", "601012", "600009"]
-    ok = fail = 0
-    for c in test[:batch]:
-        t0 = time.time()
-        rows = ak_fetch_fund_flow(c)
-        dt = time.time() - t0
-        if rows:
-            ok += 1
-        else:
-            fail += 1
-            log(f"  FAIL {c}")
-        time.sleep(max(0, interval - dt))
-    log(f"速率测试: {ok}/{len(test[:batch])} 成功, 失败 {fail} @ 间隔 {interval}s")
-    log("结论: " + ("可全量拉取" if fail == 0 else "需降速或分批"))
+    safe_interval = None
+    for cand in (3.0, 6.0, 10.0):
+        ok = fail = 0
+        for c in test[:batch]:
+            t0 = time.time()
+            rows = ak_fetch_fund_flow(c)
+            dt = time.time() - t0
+            if rows:
+                ok += 1
+            else:
+                fail += 1
+                log(f"  FAIL {c}")
+            time.sleep(max(0, cand - dt))
+        log(f"速率测试 @{cand}s: {ok}/{len(test[:batch])} 成功, 失败 {fail}")
+        if fail == 0:
+            safe_interval = cand
+            break
+    if safe_interval is None:
+        log("所有间隔均失败 — 放弃本次, 20 分钟后重新探测")
+        time.sleep(1200)
+        return False
+    log(f"安全间隔 {safe_interval}s → 启动全量低频拉取")
+    import subprocess
+    subprocess.Popen(
+        [sys.executable, os.path.join(ROOT, "scripts", "rebuild_fund_flow.py"),
+         "--interval", str(safe_interval)],
+        cwd=ROOT, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    return True
+
+
+if __name__ == "__main__":
+    # 主循环: 探测 → 测速 → 全量; 失败则重试
+    while not main():
+        time.sleep(60)
 
 
 if __name__ == "__main__":
