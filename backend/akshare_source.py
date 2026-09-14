@@ -598,69 +598,85 @@ def ak_get_high_low() -> List[Dict]:
 
 
 def ak_fetch_fund_flow(code: str, timeout: float = 25.0) -> List[tuple]:
-    """个股日频资金流全历史(东财 daykline, 起点约2010年).
+    """个股日频资金流全历史. code 为裸 6 位 A股代码.
 
-    直接请求 push2his.eastmoney.com 资金流 daykline 接口(lmt=0 全历史), 自带 UA/Referer/
-    重试+退避/硬超时, 并接入坏源健康缓存(连续异常暂停300s — 东财反爬时快速降级).
+    主源新浪 MoneyFlow.ssl_qsfx_zjlrqs(1 请求全历史, 2010-03 起, 主力+超大单字段);
+    回退东财 push2his daykline(lmt=5000 全历史, 主力/超大/大/中/小单 额+占比).
+    复用坏源健康缓存(连续异常暂停).
     返回: [(code, date_yyyymmdd, close, change_pct,
             main_net, main_ratio, super_net, super_ratio, large_net, large_ratio,
             medium_net, medium_ratio, small_net, small_ratio)]
     """
     import requests as _rq
-    secid_market = "1" if str(code).startswith(("6", "5", "9")) else "0"
-    url = "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": "https://data.eastmoney.com/",
-        "Accept": "*/*",
-    }
-    params = {
-        "lmt": "0", "klt": "101", "secid": f"{secid_market}.{code}",
-        "fields1": "f1,f2,f3,f7",
-        "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65",
-        "ut": "b2884a393a59ad64002292a3e90d46a5",
-    }
+    import json as _json
+    symbol = ("sh" if str(code).startswith(("6", "9")) else "sz") + str(code)
+    _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-    def _fetch():
-        return _rq.get(url, params=params, headers=headers, timeout=timeout)
+    def _sina():
+        akshare_wait()
+        url = ("https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/"
+               "MoneyFlow.ssl_qsfx_zjlrqs")
+        params = {"page": 1, "num": 5000, "sort": "opendate", "asc": 1, "daima": symbol}
+        r = _rq.get(url, params=params, headers={"User-Agent": _UA,
+                     "Referer": "https://vip.stock.finance.sina.com.cn/"}, timeout=timeout)
+        return _json.loads(r.text)
 
-    resp = None
-    for attempt in range(3):
-        if _src_bad("em"):
-            return []
-        try:
-            resp = _run_with_timeout(_fetch, timeout + 5)
-        except Exception as e:
-            log.warning("ak_fetch_fund_flow %s 异常: %s", code, str(e)[:50])
-            _src_note_fail("em")
-            time.sleep(1.5 * (attempt + 1))
+    def _em():
+        akshare_wait()
+        url = "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get"
+        params = {"lmt": "5000", "klt": "101",
+                  "secid": ("1" if str(code).startswith(("6", "5", "9")) else "0") + "." + str(code),
+                  "fields1": "f1,f2,f3,f7",
+                  "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65",
+                  "ut": "b2884a393a59ad64002292a3e90d46a5"}
+        r = _rq.get(url, params=params, headers={"User-Agent": _UA,
+                     "Referer": "https://data.eastmoney.com/"}, timeout=timeout)
+        return r.json()
+
+    result = None
+    for name, fn, parser in (("sina", _sina, "sina"), ("em", _em, "em")):
+        if _src_bad(name):
             continue
-        if resp is not None and resp.status_code == 200:
-            _src_note_ok("em")
+        try:
+            result = _run_with_timeout(fn, timeout + 5)
+        except Exception as e:
+            log.warning("ak_fetch_fund_flow[%s] %s 异常: %s", name, code, str(e)[:50])
+            _src_note_fail(name)
+            continue
+        if result:
+            _src_note_ok(name)
             break
-        _src_note_fail("em")
-        time.sleep(1.5 * (attempt + 1))
-    if resp is None or resp.status_code != 200:
+        _src_note_fail(name)
+    if not result:
         return []
 
     rows = []
     try:
-        data = resp.json().get("data") or {}
-        klines = data.get("klines") or []
-        for item in klines:
-            p = item.split(",")
-            # 0日期 1主力净 2小单净 3中单净 4大单净 5超大单净 6主力占比 7小单占比 8中单占比 9大单占比 10超大单占比 11收盘 12涨跌幅
-            try:
-                rows.append((code, p[0].replace("-", ""),
-                             float(p[11]), float(p[12]),
-                             float(p[1]), float(p[6]),
-                             float(p[5]), float(p[10]),
-                             float(p[4]), float(p[9]),
-                             float(p[3]), float(p[8]),
-                             float(p[2]), float(p[7])))
-            except (ValueError, IndexError):
-                continue
+        if parser == "sina":
+            # [{opendate, trade, changeratio, netamount, ratioamount, r0_net, r0_ratio}, ...]
+            for d in result:
+                try:
+                    rows.append((code, str(d["opendate"]).replace("-", ""),
+                                 float(d["trade"]), float(d["changeratio"]) * 100,
+                                 float(d["netamount"]), float(d["ratioamount"]) * 100,
+                                 float(d.get("r0_net") or 0), float(d.get("r0_ratio") or 0) * 100,
+                                 0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+                except (ValueError, KeyError, TypeError):
+                    continue
+        else:
+            # 东财 daykline: 0日期 1主力净 2小单净 3中单净 4大单净 5超大单净 6主力占比 7小单占比 8中单占比 9大单占比 10超大单占比 11收盘 12涨跌幅
+            for item in result.get("data", {}).get("klines") or []:
+                p = item.split(",")
+                try:
+                    rows.append((code, p[0].replace("-", ""),
+                                 float(p[11]), float(p[12]),
+                                 float(p[1]), float(p[6]),
+                                 float(p[5]), float(p[10]),
+                                 float(p[4]), float(p[9]),
+                                 float(p[3]), float(p[8]),
+                                 float(p[2]), float(p[7])))
+                except (ValueError, IndexError):
+                    continue
     except Exception as e:
         log.warning("ak_fetch_fund_flow %s 解析失败: %s", code, str(e)[:60])
         return []
