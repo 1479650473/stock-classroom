@@ -57,8 +57,9 @@ def _proc_worker(codes: list) -> dict:
 
 
 def _proc_worker_slow(codes: list, interval: float) -> dict:
-    """低频单进程拉取(适配东财反爬): 每只间隔 interval 秒, 失败重试 2 次."""
-    from akshare_source import ak_fetch_fund_flow
+    """低频单进程拉取(适配反爬): 每只间隔 interval 秒, 失败重试 2 次.
+    每次尝试前重置坏源缓存(间歇性限流不应触发 300s 暂停)."""
+    from akshare_source import ak_fetch_fund_flow, _SRC_HEALTH
     import sqlite3
 
     ok = fail = rows = 0
@@ -66,10 +67,12 @@ def _proc_worker_slow(codes: list, interval: float) -> dict:
     for i, code in enumerate(codes):
         data = []
         for attempt in range(2):
+            _SRC_HEALTH.pop("sina", None)
+            _SRC_HEALTH.pop("em", None)
             data = ak_fetch_fund_flow(code)
             if data:
                 break
-            time.sleep(interval * 2)
+            time.sleep(60)   # 新浪周期性限流窗口(数分钟), 等窗口过再重试
         if not data:
             failed.append(code)
             fail += 1
