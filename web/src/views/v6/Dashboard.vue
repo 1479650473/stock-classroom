@@ -7,6 +7,8 @@ import StatTile from '@/components/ui/StatTile.vue'
 import EmptyGuide from '@/components/ui/EmptyGuide.vue'
 import LoadingBlock from '@/components/ui/LoadingBlock.vue'
 import Icon from '@/components/Icon.vue'
+import Drawer from '@/components/ui/Drawer.vue'
+import { usePersistedRef } from '@/composables/usePersistedRef'
 import { getBootstrap, getOverview, getPicks } from '@/api'
 import type { Bootstrap, OverviewData, PickItem } from '@/api'
 import { useJobsStore } from '@/stores/jobs'
@@ -80,6 +82,23 @@ function fmtMoney(v: number) {
 }
 function fmtPct(v: number) { return (v >= 0 ? '+' : '') + v.toFixed(2) + '%' }
 
+/** 工作台模块可见性：可配置 + 本地记忆 */
+const modsOpen = ref(false)
+const MODULE_DEFS = [
+  { key: 'metrics', label: '账户概览', desc: '总资产 / 盈亏 / 持仓 / 可用余额' },
+  { key: 'picks', label: '今日关注', desc: '多因子评分 Top 5' },
+  { key: 'market', label: '市场速览', desc: '主要指数涨跌' },
+  { key: 'fresh', label: '数据状态', desc: '行情新鲜度与更新入口' },
+  { key: 'quick', label: '快捷流程', desc: '常用操作一键直达' },
+] as const
+type ModuleKey = (typeof MODULE_DEFS)[number]['key']
+const mods = usePersistedRef<Record<ModuleKey, boolean>>('dashboard.modules', {
+  metrics: true, picks: true, market: true, fresh: true, quick: true,
+})
+function resetMods() {
+  mods.value = { metrics: true, picks: true, market: true, fresh: true, quick: true }
+}
+
 const QUICK = [
   { icon: 'refresh', label: '更新数据', desc: '拉取最新 K 线与基本面', to: '/data' },
   { icon: 'picks', label: '运行选股', desc: '多因子评分生成候选', to: '/trade?tab=picks' },
@@ -91,6 +110,9 @@ const QUICK = [
 <template>
   <AppPage title="工作台" subtitle="账户、关注与快捷操作，一眼掌握">
     <template #actions>
+      <button class="ui-btn" title="自定义工作台模块" @click="modsOpen = true">
+        <Icon name="settings" :size="14" /><span>自定义</span>
+      </button>
       <button class="ui-btn" @click="load"><Icon name="refresh" :size="14" /><span>刷新</span></button>
       <button class="ui-btn ui-btn--primary" @click="go('/trade?tab=picks')">
         <Icon name="picks" :size="14" /><span>去选股</span>
@@ -105,7 +127,7 @@ const QUICK = [
 
     <template v-else-if="data">
       <!-- 账户概览 -->
-      <div class="metrics">
+      <div v-if="mods.metrics" class="metrics">
         <StatTile
           label="总资产"
           :value="fmtMoney(totalAssets)"
@@ -137,9 +159,9 @@ const QUICK = [
         />
       </div>
 
-      <div class="cols">
+      <div v-if="mods.picks || mods.market" class="cols" :class="{ 'cols--even': !(mods.picks && mods.market) }">
         <!-- 今日关注 -->
-        <SectionCard title="今日关注" desc="多因子评分 Top 5">
+        <SectionCard v-if="mods.picks" title="今日关注" desc="多因子评分 Top 5">
           <template #actions>
             <button class="ui-btn ui-btn--sm ui-btn--ghost" @click="go('/trade?tab=picks')">
               全部<Icon name="chevron-right" :size="13" />
@@ -172,7 +194,7 @@ const QUICK = [
         </SectionCard>
 
         <!-- 市场速览 -->
-        <SectionCard title="市场速览" desc="主要指数">
+        <SectionCard v-if="mods.market" title="市场速览" desc="主要指数">
           <template #actions>
             <button class="ui-btn ui-btn--sm ui-btn--ghost" @click="go('/market')">
               行情<Icon name="chevron-right" :size="13" />
@@ -190,7 +212,7 @@ const QUICK = [
       </div>
 
       <!-- 数据新鲜度 -->
-      <SectionCard v-if="fresh" title="数据状态" desc="行情数据更新时间与新鲜度，过期会影响选股与回测">
+      <SectionCard v-if="mods.fresh && fresh" title="数据状态" desc="行情数据更新时间与新鲜度，过期会影响选股与回测">
         <template #actions>
           <button class="ui-btn ui-btn--sm" :disabled="updating" @click="goUpdate">
             <Icon :name="updating ? 'refresh' : 'pipeline'" :size="13" :class="{ spin: updating }" />
@@ -217,7 +239,7 @@ const QUICK = [
       </SectionCard>
 
       <!-- 快捷流程 -->
-      <SectionCard title="快捷流程" desc="常用操作一键直达">
+      <SectionCard v-if="mods.quick" title="快捷流程" desc="常用操作一键直达">
         <div class="quick-grid">
           <button v-for="q in QUICK" :key="q.label" class="quick-item" @click="go(q.to)">
             <span class="quick-item__icon"><Icon :name="q.icon" :size="18" /></span>
@@ -232,6 +254,23 @@ const QUICK = [
 
       <p class="as-of faint">数据时间：{{ data.as_of }}</p>
     </template>
+
+    <!-- 工作台自定义：显示/隐藏模块（本地记忆） -->
+    <Drawer v-model:open="modsOpen" title="自定义工作台" desc="选择要显示的模块，设置会被记住" :width="360">
+      <div class="mods">
+        <label v-for="m in MODULE_DEFS" :key="m.key" class="mods__item">
+          <span class="mods__text">
+            <span class="mods__label">{{ m.label }}</span>
+            <span class="mods__desc">{{ m.desc }}</span>
+          </span>
+          <input v-model="mods[m.key]" type="checkbox" class="mods__switch" />
+        </label>
+      </div>
+      <template #footer>
+        <button class="ui-btn ui-btn--sm" @click="resetMods">全部显示</button>
+        <button class="ui-btn ui-btn--primary ui-btn--sm" @click="modsOpen = false">完成</button>
+      </template>
+    </Drawer>
   </AppPage>
 </template>
 
@@ -263,6 +302,49 @@ const QUICK = [
 .watch-item { transition: background var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease); }
 .watch-item:hover { transform: translateX(2px); }
 /* .metrics / .cols 已收敛到全局样式（styles/base.css） */
+
+/* 自定义抽屉：模块开关 */
+.mods { display: flex; flex-direction: column; gap: 2px; }
+.mods__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding: var(--sp-3) var(--sp-2);
+  border-bottom: 1px solid var(--border-soft);
+  cursor: pointer;
+}
+.mods__item:last-child { border-bottom: none; }
+.mods__item:hover { background: var(--bg-hover); border-radius: var(--radius-md); }
+.mods__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mods__label { font-size: var(--fs-md); color: var(--text); }
+.mods__desc { font-size: var(--fs-xs); color: var(--text-faint); }
+.mods__switch {
+  flex: none;
+  width: 34px;
+  height: 20px;
+  appearance: none;
+  border-radius: var(--radius-pill);
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  position: relative;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.mods__switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform var(--dur) var(--ease-out), background var(--dur-fast) var(--ease);
+}
+.mods__switch:checked { background: var(--gold-dim); border-color: var(--gold); }
+.mods__switch:checked::after { transform: translateX(14px); background: var(--gold); }
 
 .watchlist { display: flex; flex-direction: column; }
 .watch-item {
