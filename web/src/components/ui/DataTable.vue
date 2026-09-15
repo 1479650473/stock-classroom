@@ -177,6 +177,12 @@ function keyOf(row: Record<string, unknown>, i: number): string | number {
   font-size: var(--fs-md);
 }
 .data-table__table th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--glass);
+  backdrop-filter: blur(10px) saturate(1.15);
+  -webkit-backdrop-filter: blur(10px) saturate(1.15);
   padding: 0 var(--sp-4);
   height: 40px;
   font-size: var(--fs-sm);
@@ -199,8 +205,19 @@ function keyOf(row: Record<string, unknown>, i: number): string | number {
   font-variant-numeric: tabular-nums;
 }
 .data-table__table.is-compact td { height: 36px; }
-.data-table__table tbody tr { transition: background var(--dur-fast) var(--ease); }
+.data-table__table tbody tr { position: relative; transition: background var(--dur-fast) var(--ease); }
+.data-table__table tbody tr:nth-child(even) { background: var(--row-alt); }
 .data-table__table tbody tr:hover { background: var(--bg-hover); }
+/* 悬停时左侧 2px 金色强调条（渐变淡入淡出） */
+.data-table__table tbody tr:hover::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: linear-gradient(180deg, transparent, var(--gold) 45%, transparent);
+}
 .data-table__op-col { width: 1%; }
 .data-table__op-inner { display: flex; align-items: center; gap: 6px; justify-content: flex-end; }
 .data-table__table.has-hover-actions .data-table__op-inner { opacity: 0; transition: opacity var(--dur-fast); }
@@ -225,6 +242,11 @@ function keyOf(row: Record<string, unknown>, i: number): string | number {
   font-size: var(--fs-sm);
   cursor: pointer;
 }
-.data-table__pg:hover:not(:disabled) { border-color: var(--gold); color: var(--gold); }
+.data-table__pg:hover:not(:disabled) {
+  border-color: var(--gold);
+  color: var(--gold);
+  background: var(--gold-dim);
+}
+.data-table__pg:active:not(:disabled) { transform: scale(0.98); }
 .data-table__pg:disabled { opacity: 0.4; cursor: not-allowed; }
 </style>

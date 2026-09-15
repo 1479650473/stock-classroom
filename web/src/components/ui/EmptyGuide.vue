@@ -35,14 +35,19 @@ withDefaults(
   gap: var(--sp-2);
   padding: var(--sp-10) var(--sp-5);
   text-align: center;
+  border-radius: var(--radius-lg);
+  background-image: radial-gradient(var(--grid-line) 1px, transparent 1px);
+  background-size: var(--grid-size) var(--grid-size);
 }
 .empty-guide__icon {
   display: grid;
   place-items: center;
-  width: 44px;
-  height: 44px;
+  width: 46px;
+  height: 46px;
   border-radius: var(--radius-pill);
-  background: var(--bg-overlay);
+  background: radial-gradient(circle at 50% 30%, var(--bg-overlay), var(--bg-raised));
+  border: 1px solid var(--border-soft);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
   color: var(--text-faint);
   margin-bottom: var(--sp-1);
 }

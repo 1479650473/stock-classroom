@@ -51,7 +51,30 @@ button { font-family: inherit; }
   box-shadow: var(--shadow-card);
   transition: border-color var(--dur-fast) var(--ease);
 }
-.card.hoverable:hover { border-color: var(--card-hover); }
+.card.hoverable:hover {
+  border-color: var(--card-hover);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lift);
+}
+.card.hoverable { transition: border-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease); }
+
+/* 顶部发丝高光（渐变边框技法：mask-composite 只留 1px 亮边） */
+.hairline-top { position: relative; }
+.hairline-top::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--gold) 55%, transparent) 50%, transparent);
+  pointer-events: none;
+}
+/* 毛玻璃面（顶栏/抽屉/浮层） */
+.glass {
+  background: var(--glass);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  border-bottom: 1px solid var(--glass-border);
+}
 
 /* muted text */
 .muted { color: var(--text-sub); }
@@ -70,11 +93,28 @@ button { font-family: inherit; }
 .tbl td {
   font-variant-numeric: tabular-nums;
 }
+.tbl thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--glass);
+  backdrop-filter: blur(10px) saturate(1.15);
+  -webkit-backdrop-filter: blur(10px) saturate(1.15);
+}
 .tbl tbody tr {
+  position: relative;
   transition: background var(--dur-fast) var(--ease);
 }
-.tbl tbody tr:hover {
-  background: var(--bg-hover);
+.tbl tbody tr:nth-child(even) { background: var(--row-alt); }
+.tbl tbody tr:hover { background: var(--bg-hover); }
+.tbl tbody tr:hover::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: linear-gradient(180deg, transparent, var(--gold) 45%, transparent);
 }
 
 /* focus ring */
@@ -108,7 +148,15 @@ button { font-family: inherit; }
 }
 .ui-textarea { height: auto; padding: 8px 10px; line-height: 1.6; resize: vertical; }
 .ui-input:hover, .ui-select:hover, .ui-textarea:hover { border-color: var(--border-strong); }
-.ui-input:focus, .ui-select:focus, .ui-textarea:focus { border-color: var(--gold); outline: none; }
+.ui-input, .ui-select, .ui-textarea {
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+.ui-input:focus, .ui-select:focus, .ui-textarea:focus {
+  border-color: var(--gold);
+  outline: none;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08), 0 0 0 3px var(--ring-gold);
+}
+::placeholder { color: var(--text-faint); opacity: 1; }
 .ui-input:disabled, .ui-select:disabled, .ui-textarea:disabled { opacity: 0.5; cursor: not-allowed; }
 .ui-input.num, .ui-select.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
 .ui-input--sm, .ui-select--sm { height: var(--control-h-sm); font-size: var(--fs-sm); }
@@ -131,15 +179,27 @@ button { font-family: inherit; }
   cursor: pointer;
   transition: all var(--dur-fast) var(--ease);
 }
-.ui-btn:hover:not(:disabled) { border-color: var(--border-strong); background: var(--bg-hover); }
+.ui-btn:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-1);
+}
+.ui-btn:active:not(:disabled) { transform: translateY(0) scale(0.985); box-shadow: none; }
+.ui-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); }
 .ui-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .ui-btn--primary {
-  background: var(--gold);
-  border-color: var(--gold);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--gold) 88%, #fff) 0%, var(--gold) 60%, color-mix(in srgb, var(--gold) 88%, #000) 100%);
+  border-color: color-mix(in srgb, var(--gold) 70%, var(--border-strong));
   color: var(--on-gold);
   font-weight: 600;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 1px 2px rgba(0, 0, 0, 0.2);
 }
-.ui-btn--primary:hover:not(:disabled) { background: var(--gold-hover); border-color: var(--gold-hover); }
+.ui-btn--primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--gold-hover) 88%, #fff) 0%, var(--gold-hover) 60%, color-mix(in srgb, var(--gold-hover) 88%, #000) 100%);
+  border-color: var(--gold-hover);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.26), var(--glow-gold);
+}
 .ui-btn--ghost { background: transparent; border-color: transparent; color: var(--text-sub); }
 .ui-btn--ghost:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); border-color: transparent; }
 .ui-btn--danger { background: transparent; border-color: var(--up); color: var(--up); }
@@ -168,3 +228,105 @@ button { font-family: inherit; }
 
 /* 分隔线 */
 .ui-divider { height: 1px; background: var(--border-soft); border: 0; margin: var(--sp-4) 0; }
+
+/* ============================================================
+   v7 精修层（2026-09-16）：环境光 / 网格底纹 / 数字闪动 / 进度条
+   技法参考 Uiverse.io（galaxy 素材库，MIT）—— 已全部改写成主题变量。
+   ============================================================ */
+
+/* 页面环境光：顶部一层极淡的径向光，给数据面增加纵深 */
+.content-shell::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 320px;
+  background: radial-gradient(120% 100% at 50% 0%, var(--grid-line) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* 网格底纹（面板/空状态背景） */
+.bg-grid {
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: var(--grid-size) var(--grid-size);
+}
+.bg-dots {
+  background-image: radial-gradient(var(--grid-line) 1px, transparent 1px);
+  background-size: var(--grid-size) var(--grid-size);
+}
+
+/* 数据更新闪动 */
+@keyframes flash-update {
+  from { background: var(--flash); }
+  to { background: transparent; }
+}
+.flash { animation: flash-update 0.9s var(--ease-out); }
+
+/* 细进度条（任务中心/耗时操作），可带柔光 */
+.bar {
+  position: relative;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-overlay);
+  overflow: hidden;
+}
+.bar__fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--gold) 70%, transparent), var(--gold));
+  transition: width var(--dur) var(--ease-out);
+}
+.bar--glow .bar__fill { box-shadow: 0 0 12px color-mix(in srgb, var(--gold) 55%, transparent); }
+.bar--indeterminate .bar__fill {
+  width: 38%;
+  animation: bar-slide 1.5s var(--ease) infinite;
+}
+@keyframes bar-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+
+/* 骨架屏（统一入口，替代各处自制） */
+.skel {
+  border-radius: var(--radius-sm);
+  background: linear-gradient(90deg, var(--bg-overlay) 25%, var(--bg-hover) 37%, var(--bg-overlay) 63%);
+  background-size: 400% 100%;
+  animation: skel-shimmer 1.4s ease infinite;
+}
+@keyframes skel-shimmer {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skel, .bar--indeterminate .bar__fill, .flash { animation: none; }
+}
+
+/* 悬浮提示（纯 CSS，见 components/ui/Tooltip.vue） */
+.tip {
+  position: relative;
+}
+.tip::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translate(-50%, 4px);
+  padding: 5px 9px;
+  max-width: 260px;
+  width: max-content;
+  background: var(--bg-overlay);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  white-space: pre-line;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease-out);
+  z-index: 60;
+}
+.tip:hover::after, .tip:focus-visible::after { opacity: 1; transform: translate(-50%, 0); }

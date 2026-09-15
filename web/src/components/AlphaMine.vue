@@ -14,6 +14,7 @@ import EmptyGuide from '@/components/ui/EmptyGuide.vue'
 import Icon from '@/components/Icon.vue'
 import { useJobsStore } from '@/stores/jobs'
 import { useToastStore } from '@/stores/toast'
+import Tooltip from '@/components/ui/Tooltip.vue'
 import {
   getAlphaAllocation, getAlphaCompositeReport, getAlphaMeta, getAlphaRun, getAlphaRuns, getAlphaSmb, getAlphaZoo,
   startAlphaMine, startAlphaWalkforward,
@@ -394,7 +395,10 @@ onMounted(async () => { await Promise.all([load(), loadMeta(), loadZoo(), loadCo
             <div class="sum__cell"><span class="k">夏普</span><span class="v">{{ num(smb.summary.sharpe) }}</span></div>
             <div class="sum__cell"><span class="k">最大回撤</span><span class="v down">{{ fmt(-Math.abs(Number(smb.summary.maxdd) || 0)) }}</span></div>
             <div class="sum__cell"><span class="k">月胜率</span><span class="v">{{ num(smb.summary.month_win) }}</span></div>
-            <div class="sum__cell"><span class="k">月均 t 值</span><span class="v">{{ num(smb.summary.t_stat) }}</span></div>
+            <div class="sum__cell">
+              <Tooltip class="k" text="月度收益均值 ÷ 标准误。|t| &lt; 2 表示「不能排除运气」；&#10;看因子先看这个数，再看年化。">月均 t 值</Tooltip>
+              <span class="v">{{ num(smb.summary.t_stat) }}</span>
+            </div>
             <div class="sum__cell"><span class="k">对照：等权全市场</span><span class="v">{{ fmt(smb.benchmark?.ann) }}</span></div>
             <div class="sum__cell"><span class="k">SMB（小100−大100）年化</span><span class="v">{{ fmt(smb.smb?.ann) }}（t={{ num(smb.smb?.t_stat) }}）</span></div>
           </div>
@@ -410,7 +414,9 @@ onMounted(async () => { await Promise.all([load(), loadMeta(), loadZoo(), loadCo
             </div>
           </div>
           <div class="combo">
-            <div class="combo__title">成本敏感性（单边成本 → 年化）——微盘策略的生死线</div>
+            <div class="combo__title">
+              <Tooltip text="月度换仓＝每月买卖一次，双边成本直接吃收益。&#10;微盘股冲击成本更高：单边 0.3% 是乐观值，0.5% 更接近现实。">成本敏感性（单边成本 → 年化）——微盘策略的生死线</Tooltip>
+            </div>
             <div class="combo__row">
               <span v-for="c in smb.cost_curve || []" :key="c.cost_one_way">
                 {{ (c.cost_one_way * 100).toFixed(1) }}% → <b :class="c.ann >= 0 ? 'up' : 'down'">{{ fmt(c.ann) }}</b>

@@ -60,16 +60,24 @@ const route = useRoute()
   transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 .nav-item .ic { color: var(--text-faint); transition: color var(--dur-fast); }
-.nav-item:hover { background: var(--bg-raised); color: var(--text); }
+.nav-item:hover { background: var(--bg-raised); color: var(--text); transform: translateX(2px); }
+.nav-item { will-change: transform; }
 .nav-item:hover .ic { color: var(--text); }
-.nav-item.active { background: var(--gold-dim); color: var(--gold); font-weight: 600; }
+.nav-item.active {
+  background: linear-gradient(90deg, var(--gold-dim), transparent 92%);
+  color: var(--gold);
+  font-weight: 600;
+}
 .nav-item.active .ic { color: var(--gold); }
 .nav-item .bar {
   position: absolute; left: 0; top: 20%; bottom: 20%;
   width: 3px; border-radius: 2px; background: transparent;
   transition: background var(--dur-fast);
 }
-.nav-item.active .bar { background: var(--gold); }
+.nav-item.active .bar {
+  background: var(--gold);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--gold) 60%, transparent);
+}
 .nav-item .txt { flex: 1; }
 .spacer { flex: 1; }
 .foot { font-size: var(--fs-xs); text-align: center; padding: var(--sp-2); letter-spacing: 0.5px; }

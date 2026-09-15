@@ -70,8 +70,8 @@ onBeforeUnmount(() => {
 .drawer-mask {
   position: absolute;
   inset: 0;
-  background: rgba(4, 6, 9, 0.55);
-  backdrop-filter: blur(1px);
+  background: rgba(4, 6, 9, 0.5);
+  backdrop-filter: blur(3px) saturate(1.1);
 }
 .drawer {
   position: absolute;
@@ -81,10 +81,13 @@ onBeforeUnmount(() => {
   max-width: 92vw;
   display: flex;
   flex-direction: column;
-  background: var(--bg-panel);
-  border-left: 1px solid var(--border);
+  background: var(--glass);
+  backdrop-filter: blur(18px) saturate(1.2);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  border-left: 1px solid var(--glass-border);
   box-shadow: var(--shadow-3);
 }
+.drawer__head { position: relative; }
 .drawer__head {
   display: flex;
   align-items: flex-start;
@@ -104,7 +107,7 @@ onBeforeUnmount(() => {
   border-top: 1px solid var(--border-soft);
 }
 .drawer-enter-active, .drawer-leave-active { transition: opacity var(--dur) var(--ease); }
-.drawer-enter-active .drawer, .drawer-leave-active .drawer { transition: transform var(--dur) var(--ease); }
+.drawer-enter-active .drawer, .drawer-leave-active .drawer { transition: transform var(--dur-slow) var(--ease-out); }
 .drawer-enter-from, .drawer-leave-to { opacity: 0; }
 .drawer-enter-from .drawer, .drawer-leave-to .drawer { transform: translateX(100%); }
 </style>

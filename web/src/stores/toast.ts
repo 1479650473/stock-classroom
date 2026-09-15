@@ -4,6 +4,8 @@ export interface Toast {
   id: number
   kind: 'success' | 'error' | 'info'
   text: string
+  /** 自动消失时长（毫秒），前端据此画进度线 */
+  timeoutMs: number
 }
 
 let _id = 0
@@ -13,7 +15,7 @@ export const useToastStore = defineStore('toast', {
   actions: {
     push(kind: Toast['kind'], text: string, timeout = 3000) {
       const id = ++_id
-      this.toasts.push({ id, kind, text })
+      this.toasts.push({ id, kind, text, timeoutMs: timeout })
       setTimeout(() => this.dismiss(id), timeout)
     },
     success(t: string) { this.push('success', t) },

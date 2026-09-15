@@ -72,8 +72,10 @@ const inTauri = isTauri()
   align-items: center;
   gap: var(--sp-3);
   padding: 0 var(--sp-3) 0 var(--sp-4);
-  background: var(--bg-panel);
-  border-bottom: 1px solid var(--border-soft);
+  background: var(--glass);
+  backdrop-filter: blur(16px) saturate(1.25);
+  -webkit-backdrop-filter: blur(16px) saturate(1.25);
+  border-bottom: 1px solid var(--glass-border);
   flex: none;
   -webkit-app-region: drag;
 }
@@ -95,7 +97,12 @@ const inTauri = isTauri()
   transition: border-color var(--dur-fast), color var(--dur-fast);
   font-size: var(--fs-sm);
 }
-.search:hover { border-color: var(--accent); color: var(--text-sub); }
+.search { box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12); }
+.search:hover {
+  border-color: color-mix(in srgb, var(--gold) 55%, var(--border));
+  color: var(--text-sub);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08), 0 0 0 3px var(--ring-gold);
+}
 .search .ph { flex: 1; text-align: left; }
 .search kbd {
   font-family: var(--font-mono); font-size: 10px; color: var(--text-faint);

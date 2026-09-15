@@ -37,7 +37,20 @@ withDefaults(
 </template>
 
 <style scoped>
-.stat-tile { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.stat-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: var(--sp-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.stat-tile:hover {
+  border-color: var(--border-soft);
+  background: color-mix(in srgb, var(--bg-raised) 60%, transparent);
+}
 .stat-tile__label {
   display: flex;
   align-items: center;

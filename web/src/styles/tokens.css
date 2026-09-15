@@ -53,6 +53,19 @@
 
   --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px rgba(0, 0, 0, 0.28);
   --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.5);
+
+  /* ---- refinement layer (2026-09-16) ---- */
+  --ring: rgba(122, 162, 247, 0.45);        /* focus-visible 外圈 */
+  --ring-gold: rgba(212, 165, 116, 0.42);
+  --glass: rgba(20, 23, 28, 0.72);          /* 毛玻璃面（顶栏/抽屉/浮层） */
+  --glass-border: rgba(255, 255, 255, 0.07);
+  --sheen: rgba(255, 255, 255, 0.045);      /* 顶部内高光 */
+  --glow-gold: 0 0 0 1px rgba(212, 165, 116, 0.25), 0 6px 20px rgba(212, 165, 116, 0.16);
+  --glow-accent: 0 8px 24px rgba(122, 162, 247, 0.22);
+  --grid-line: rgba(255, 255, 255, 0.028);  /* 背景网格 */
+  --grid-size: 22px;
+  --flash: rgba(122, 162, 247, 0.14);       /* 数据更新闪动 */
+  --shadow-lift: 0 10px 28px rgba(0, 0, 0, 0.35);
 }
 
 :root[data-theme='obsidian'] {
@@ -102,6 +115,19 @@
 
   --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 8px 24px rgba(0, 0, 0, 0.45);
   --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.6);
+
+  /* ---- refinement layer (2026-09-16) ---- */
+  --ring: rgba(224, 160, 80, 0.5);
+  --ring-gold: rgba(224, 160, 80, 0.45);
+  --glass: rgba(14, 16, 18, 0.74);
+  --glass-border: rgba(255, 255, 255, 0.06);
+  --sheen: rgba(255, 255, 255, 0.05);
+  --glow-gold: 0 0 0 1px rgba(224, 160, 80, 0.28), 0 6px 22px rgba(224, 160, 80, 0.18);
+  --glow-accent: 0 8px 26px rgba(224, 160, 80, 0.24);
+  --grid-line: rgba(255, 255, 255, 0.03);
+  --grid-size: 24px;
+  --flash: rgba(224, 160, 80, 0.16);
+  --shadow-lift: 0 12px 32px rgba(0, 0, 0, 0.55);
 }
 
 :root[data-theme='ivory'] {
@@ -156,6 +182,19 @@
   --shadow-1: 0 1px 2px rgba(90, 60, 30, 0.06);
   --shadow-2: 0 4px 16px rgba(90, 60, 30, 0.1);
   --shadow-3: 0 16px 48px rgba(90, 60, 30, 0.16);
+
+  /* ---- refinement layer (2026-09-16) ---- */
+  --ring: rgba(142, 58, 47, 0.28);
+  --ring-gold: rgba(169, 129, 46, 0.32);
+  --glass: rgba(251, 248, 242, 0.8);
+  --glass-border: rgba(28, 25, 23, 0.07);
+  --sheen: rgba(255, 255, 255, 0.65);
+  --glow-gold: 0 0 0 1px rgba(169, 129, 46, 0.3), 0 6px 18px rgba(169, 129, 46, 0.14);
+  --glow-accent: 0 8px 22px rgba(142, 58, 47, 0.16);
+  --grid-line: rgba(28, 25, 23, 0.035);
+  --grid-size: 22px;
+  --flash: rgba(142, 58, 47, 0.1);
+  --shadow-lift: 0 10px 26px rgba(90, 60, 30, 0.14);
 }
 
 /* ---- shared scales (theme-independent) ---- */
@@ -190,8 +229,11 @@
   --titlebar-h: 40px;
 
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
   --dur-fast: 0.15s;
   --dur: 0.25s;
+  --dur-slow: 0.4s;
 
   /* ---- layout semantics (v6) ---- */
   --page-max: 1280px;
@@ -207,4 +249,13 @@
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.18);
   --shadow-2: 0 4px 16px rgba(0, 0, 0, 0.28);
   --shadow-3: 0 16px 48px rgba(0, 0, 0, 0.5);
+}
+
+/* 尊重系统「减少动态效果」：把所有过渡/动画压到最短 */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0.01ms;
+    --dur: 0.01ms;
+    --dur-slow: 0.01ms;
+  }
 }

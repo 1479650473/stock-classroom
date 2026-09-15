@@ -9,16 +9,32 @@ withDefaults(
     rows?: number
     /** 紧凑模式（行高更小） */
     compact?: boolean
+    /** 形态：rows 文本行 / cards 卡片块 / table 表格行 */
+    variant?: 'rows' | 'cards' | 'table'
   }>(),
-  { rows: 4, compact: false },
+  { rows: 4, compact: false, variant: 'rows' },
 )
 </script>
 
 <template>
-  <div class="loading-block" :class="{ 'loading-block--compact': compact }" role="status" aria-label="加载中">
-    <div v-for="i in rows" :key="i" class="loading-block__row">
-      <span class="loading-block__bar" :style="{ width: `${88 - ((i * 13) % 46)}%` }" />
-    </div>
+  <div
+    class="loading-block"
+    :class="[`loading-block--${variant}`, { 'loading-block--compact': compact }]"
+    role="status"
+    aria-label="加载中"
+  >
+    <template v-if="variant === 'cards'">
+      <div v-for="i in rows" :key="i" class="loading-block__card">
+        <span class="loading-block__bar" style="width: 38%" />
+        <span class="loading-block__bar" style="width: 72%; height: 22px" />
+        <span class="loading-block__bar" style="width: 54%" />
+      </div>
+    </template>
+    <template v-else>
+      <div v-for="i in rows" :key="i" class="loading-block__row">
+        <span class="loading-block__bar" :style="{ width: `${88 - ((i * 13) % 46)}%` }" />
+      </div>
+    </template>
   </div>
 </template>
 
@@ -38,6 +54,22 @@ withDefaults(
   0% { background-position: 100% 50%; }
   100% { background-position: 0 50%; }
 }
+/* 卡片形态：更接近真实内容骨架 */
+.loading-block--cards { flex-direction: row; flex-wrap: wrap; }
+.loading-block__card {
+  flex: 1 1 220px;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: var(--sp-4);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+  background: var(--bg-raised);
+}
+.loading-block__card .loading-block__bar { height: 14px; }
+/* 表格形态：行更密、带分隔线 */
+.loading-block--table .loading-block__row { height: 26px; border-bottom: 1px solid var(--border-soft); }
 @media (prefers-reduced-motion: reduce) {
   .loading-block__bar { animation: none; }
 }

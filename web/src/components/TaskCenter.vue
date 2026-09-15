@@ -189,7 +189,13 @@ function openDetail(rec: JobRecord) {
 .job__pct { font-size: var(--fs-xs); color: var(--gold); }
 .job__state { font-size: var(--fs-xs); font-weight: 600; }
 .bar { height: 5px; margin: var(--sp-2) 0; background: var(--bg-panel); border-radius: 3px; overflow: hidden; }
-.bar__fill { height: 100%; background: var(--gold); border-radius: 3px; transition: width 0.3s ease; }
+.bar__fill {
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--gold) 55%, transparent), var(--gold));
+  box-shadow: 0 0 10px color-mix(in srgb, var(--gold) 45%, transparent);
+  transition: width var(--dur) var(--ease-out);
+}
 .job__ft { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); margin-top: var(--sp-1); }
 .job__msg { font-size: var(--fs-xs); color: var(--text-sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .job__time { font-size: var(--fs-xs); flex: none; }

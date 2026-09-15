@@ -33,10 +33,22 @@ withDefaults(
 
 <style scoped>
 .sec-card {
-  background: var(--bg-raised);
+  position: relative;
+  background: linear-gradient(180deg, var(--bg-raised), var(--bg-panel));
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-lg);
   overflow: hidden;
+  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+.sec-card:hover { border-color: color-mix(in srgb, var(--border-strong) 80%, transparent); }
+/* 顶部发丝高光：1px 渐变亮边（mask 技法，来自 Uiverse 边框思路） */
+.sec-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--gold) 40%, transparent) 45%, transparent 75%);
+  pointer-events: none;
 }
 .sec-card__head {
   display: flex;
@@ -51,6 +63,7 @@ withDefaults(
   margin: 0;
   font-size: var(--fs-lg);
   font-weight: 600;
+  letter-spacing: 0.01em;
   color: var(--text);
 }
 .sec-card__desc {
