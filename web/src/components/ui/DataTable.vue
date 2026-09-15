@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import EmptyGuide from './EmptyGuide.vue'
 import LoadingBlock from './LoadingBlock.vue'
 import Icon from '@/components/Icon.vue'
@@ -33,6 +33,12 @@ const props = withDefaults(
     compact?: boolean
     /** 行操作列 hover 才显示（默认 true） */
     hoverActions?: boolean
+    /** 允许拖拽调整列宽（默认 true） */
+    resizable?: boolean
+    /** 允许显示/隐藏列（默认 true，列数 ≥ 4 时出现按钮） */
+    columnToggle?: boolean
+    /** 记忆键：同一张表用它持久化列宽/列显隐（不传则不持久化） */
+    storageKey?: string
   }>(),
   {
     rowKey: 'id',
@@ -41,6 +47,9 @@ const props = withDefaults(
     pageSize: 0,
     compact: false,
     hoverActions: true,
+    resizable: true,
+    columnToggle: true,
+    storageKey: '',
   },
 )
 
@@ -49,6 +58,85 @@ const emit = defineEmits<{ rowClick: [row: Record<string, unknown>] }>()
 const sortKey = ref('')
 const sortDir = ref<'asc' | 'desc'>('asc')
 const page = ref(1)
+
+/** 列宽（px）与隐藏列：按 storageKey 记忆到 localStorage */
+const widths = ref<Record<string, number>>({})
+const hidden = ref<string[]>([])
+const resizing = ref('')
+const showColPicker = ref(false)
+const LS_PREFIX = 'sc_dt_'
+
+function loadPrefs() {
+  widths.value = {}
+  hidden.value = []
+  if (!props.storageKey) return
+  try {
+    const raw = localStorage.getItem(LS_PREFIX + props.storageKey)
+    if (raw) {
+      const p = JSON.parse(raw) as { w?: Record<string, number>; h?: string[] }
+      widths.value = p.w || {}
+      hidden.value = (p.h || []).filter((k) => props.columns.some((c) => c.key === k))
+    }
+  } catch {
+    /* 数据损坏时忽略 */
+  }
+}
+
+function savePrefs() {
+  if (!props.storageKey) return
+  try {
+    localStorage.setItem(LS_PREFIX + props.storageKey, JSON.stringify({ w: widths.value, h: hidden.value }))
+  } catch {
+    /* 隐私模式等场景静默失败 */
+  }
+}
+
+const visibleColumns = computed(() => props.columns.filter((c) => !hidden.value.includes(c.key)))
+
+function colStyle(c: { key: string; width?: string; align?: string }) {
+  const w = widths.value[c.key]
+  return { width: w ? `${w}px` : c.width, textAlign: (c.align || 'left') as 'left' | 'right' | 'center' }
+}
+
+function toggleColumn(key: string) {
+  const i = hidden.value.indexOf(key)
+  if (i >= 0) hidden.value.splice(i, 1)
+  else if (visibleColumns.value.length > 1) hidden.value.push(key)
+  savePrefs()
+}
+
+/** 拖拽调列宽：mousedown 后跟随鼠标，最小 56px */
+function startResize(e: MouseEvent, key: string) {
+  if (!props.resizable) return
+  e.preventDefault()
+  e.stopPropagation()
+  const th = (e.target as HTMLElement).closest('th') as HTMLElement | null
+  const startX = e.clientX
+  const startW = th?.offsetWidth ?? 120
+  resizing.value = key
+  const move = (ev: MouseEvent) => {
+    const w = Math.max(56, Math.round(startW + (ev.clientX - startX)))
+    widths.value = { ...widths.value, [key]: w }
+  }
+  const up = () => {
+    resizing.value = ''
+    document.removeEventListener('mousemove', move)
+    document.removeEventListener('mouseup', up)
+    savePrefs()
+  }
+  document.addEventListener('mousemove', move)
+  document.addEventListener('mouseup', up)
+}
+
+function resetColumns() {
+  widths.value = {}
+  hidden.value = []
+  savePrefs()
+}
+
+watch(() => props.columns, loadPrefs)
+watch(() => props.storageKey, loadPrefs)
+onMounted(loadPrefs)
 
 function toggleSort(key: string) {
   if (sortKey.value === key) {
@@ -104,15 +192,44 @@ function keyOf(row: Record<string, unknown>, i: number): string | number {
     </EmptyGuide>
 
     <template v-else>
-      <div class="data-table__scroll">
+      <div
+        v-if="columnToggle && columns.length >= 4"
+        class="data-table__tools"
+      >
+        <div class="data-table__cols">
+          <button
+            class="data-table__tool-btn"
+            :class="{ 'is-on': showColPicker }"
+            title="显示/隐藏列"
+            @click="showColPicker = !showColPicker"
+          >
+            <Icon name="settings" :size="13" />
+            <span>列</span>
+            <span v-if="hidden.length" class="data-table__cols-badge">{{ hidden.length }}</span>
+          </button>
+          <div v-if="showColPicker" class="data-table__col-menu" @click.stop>
+            <label v-for="c in columns" :key="c.key" class="data-table__col-item">
+              <input
+                type="checkbox"
+                :checked="!hidden.includes(c.key)"
+                @change="toggleColumn(c.key)"
+              />
+              <span>{{ c.title }}</span>
+            </label>
+            <button class="data-table__col-reset" @click="resetColumns">恢复默认</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="data-table__scroll" @click="showColPicker = false">
         <table class="data-table__table" :class="{ 'is-compact': compact, 'has-hover-actions': hoverActions && !!$slots.actions }">
           <thead>
             <tr>
               <th
-                v-for="col in columns"
+                v-for="col in visibleColumns"
                 :key="col.key"
-                :style="{ width: col.width, textAlign: col.align || 'left' }"
-                :class="{ 'is-sortable': col.sortable }"
+                :style="colStyle(col)"
+                :class="{ 'is-sortable': col.sortable, 'is-resizing': resizing === col.key }"
                 @click="col.sortable && toggleSort(col.key)"
               >
                 <span class="data-table__th-inner">
@@ -123,6 +240,13 @@ function keyOf(row: Record<string, unknown>, i: number): string | number {
                     :size="12"
                   />
                 </span>
+                <span
+                  v-if="resizable"
+                  class="data-table__grip"
+                  title="拖动调整列宽"
+                  @mousedown="startResize($event, col.key)"
+                  @click.stop
+                />
               </th>
               <th v-if="$slots.actions" class="data-table__op-col" aria-label="操作" />
             </tr>
@@ -134,7 +258,7 @@ function keyOf(row: Record<string, unknown>, i: number): string | number {
               @click="emit('rowClick', row)"
             >
               <td
-                v-for="col in columns"
+                v-for="col in visibleColumns"
                 :key="col.key"
                 :style="{ textAlign: col.align || 'left' }"
                 :class="[
@@ -218,6 +342,102 @@ function keyOf(row: Record<string, unknown>, i: number): string | number {
   width: 2px;
   background: linear-gradient(180deg, transparent, var(--gold) 45%, transparent);
 }
+/* 列宽拖拽手柄（默认隐形，悬停/拖拽时出现） */
+.data-table__grip {
+  position: absolute;
+  top: 6px;
+  right: -3px;
+  width: 7px;
+  height: calc(100% - 12px);
+  cursor: col-resize;
+  border-radius: 2px;
+  transition: background var(--dur-fast) var(--ease);
+}
+.data-table__grip:hover,
+.data-table__table th.is-resizing .data-table__grip {
+  background: var(--gold);
+  opacity: 0.7;
+}
+.data-table__table th { position: sticky; }
+.data-table__table th.is-resizing { color: var(--text); }
+
+/* 表格工具条：列显隐 */
+.data-table__tools {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 var(--sp-4) var(--sp-2);
+}
+.data-table__cols { position: relative; }
+.data-table__tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: var(--control-h-sm);
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--bg);
+  color: var(--text-sub);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease);
+}
+.data-table__tool-btn:hover { border-color: var(--border-strong); color: var(--text); }
+.data-table__tool-btn.is-on { border-color: var(--gold); color: var(--gold); background: var(--gold-dim); }
+.data-table__cols-badge {
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: var(--radius-pill);
+  background: var(--gold);
+  color: var(--on-gold);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+}
+.data-table__col-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 150px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--glass);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+}
+.data-table__col-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-sm);
+  color: var(--text-sub);
+  cursor: pointer;
+}
+.data-table__col-item:hover { background: var(--bg-hover); color: var(--text); }
+.data-table__col-item input { accent-color: var(--gold); }
+.data-table__col-reset {
+  width: 100%;
+  margin-top: 4px;
+  padding: 6px 8px;
+  border: 0;
+  border-top: 1px solid var(--border-soft);
+  background: none;
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+  text-align: left;
+  cursor: pointer;
+}
+.data-table__col-reset:hover { color: var(--gold); }
+
 .data-table__op-col { width: 1%; }
 .data-table__op-inner { display: flex; align-items: center; gap: 6px; justify-content: flex-end; }
 .data-table__table.has-hover-actions .data-table__op-inner { opacity: 0; transition: opacity var(--dur-fast); }

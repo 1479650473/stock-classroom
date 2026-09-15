@@ -309,7 +309,7 @@ onMounted(async () => { await Promise.all([load(), loadMeta(), loadZoo(), loadCo
           <span class="zoo__meta">{{ zooMeta.codes }} 只 × {{ zooMeta.days }} 日 · 等权池年化
             {{ ((Number(zooMeta.pool_ann) || 0) * 100).toFixed(1) }}%</span>
         </div>
-        <DataTable :rows="zoo" :columns="[
+        <DataTable :rows="zoo" storage-key="alpha-zoo" :columns="[
           { key: 'factor', title: '因子' },
           { key: 'ic', title: 'IC', align: 'right' },
           { key: 'ic20', title: 'IC(20日)', align: 'right' },
@@ -359,7 +359,7 @@ onMounted(async () => { await Promise.all([load(), loadMeta(), loadZoo(), loadCo
             <div class="sum__cell"><span class="k">平均 Sortino</span>
               <span class="v">{{ num(compSortino) }}</span></div>
           </div>
-          <DataTable :rows="compFolds" :columns="[
+          <DataTable :rows="compFolds" storage-key="alpha-comp" :columns="[
             { key: 'fold', title: '#', width: '44px' },
             { key: 'test', title: '测试窗口' },
             { key: 'oos_ex', title: '样本外超额', align: 'right' },
@@ -462,7 +462,7 @@ onMounted(async () => { await Promise.all([load(), loadMeta(), loadZoo(), loadCo
               <span class="v small">年化 {{ fmt(l.ann) }} · 夏普 {{ num(l.sharpe) }} · 回撤 {{ fmt(-Math.abs(Number(l.maxdd) || 0)) }}</span>
             </div>
           </div>
-          <DataTable :rows="alloc.mixes.slice(-12)" :columns="[
+          <DataTable :rows="alloc.mixes.slice(-12)" storage-key="alpha-alloc" :columns="[
             { key: 'name', title: '方案' },
             { key: 'weights', title: '权重' },
             { key: 'ann', title: '年化', align: 'right' },
@@ -486,7 +486,7 @@ onMounted(async () => { await Promise.all([load(), loadMeta(), loadZoo(), loadCo
             <div class="combo__title">
               滚动样本外（每月只用过去 {{ alloc?.rolling_os?.window }} 个月估权重）—— 这才是能拿到的结果
             </div>
-            <DataTable :rows="rollingRows" :columns="[
+            <DataTable :rows="rollingRows" storage-key="alpha-alloc-os" :columns="[
               { key: 'name', title: '方法' },
               { key: 'weights_last', title: '最新权重' },
               { key: 'ann', title: '年化', align: 'right' },
@@ -554,7 +554,7 @@ onMounted(async () => { await Promise.all([load(), loadMeta(), loadZoo(), loadCo
           </template>
 
           <!-- 挖掘结果：保留的公式 -->
-          <DataTable v-if="keptFormulas.length" :rows="keptFormulas" :columns="[
+          <DataTable v-if="keptFormulas.length" :rows="keptFormulas" storage-key="alpha-folds" :columns="[
             { key: 'rank', title: '#', width: '44px' },
             { key: 'formula', title: '公式' },
             { key: 'train', title: '训练 超额年化', align: 'right' },

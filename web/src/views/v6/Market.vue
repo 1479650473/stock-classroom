@@ -261,6 +261,7 @@ onMounted(() => {
                 :columns="sectorColumns"
                 :rows="sectors.slice(0, 30)"
                 row-key="name"
+                storage-key="market-sectors"
                 compact
                 :page-size="0"
               >
@@ -277,6 +278,7 @@ onMounted(() => {
                 :columns="northColumns"
                 :rows="north.slice(0, 15)"
                 row-key="date"
+                storage-key="market-kline"
                 compact
                 :page-size="0"
               >
