@@ -278,6 +278,10 @@ def _normalize_kline_rows(stored: str, df, days: int = 10):
     for _, bar in d.tail(days).iterrows():
         try:
             close = float(bar["close"])
+            open_ = float(bar["open"])
+            # 过滤上市前占位行: 腾讯/东财对未上市期间返回 0 值(open/close=0), 入库会污染K线/因子
+            if close <= 0 or open_ <= 0:
+                continue
             vol = float(bar.get("volume", 0) or 0)
             amt = float(bar.get("amount", 0) or 0)
             if not amt and vol:
@@ -285,7 +289,7 @@ def _normalize_kline_rows(stored: str, df, days: int = 10):
             turn = float(bar.get("turnover", 0) or 0)
             if turn and turn <= 1.0:   # 换手率可能为小数, 放大到 %
                 turn = turn * 100
-            rows.append((stored, str(bar["date"]), float(bar["open"]), float(bar["high"]),
+            rows.append((stored, str(bar["date"]), open_, float(bar["high"]),
                          float(bar["low"]), close, int(vol), amt, turn))
         except Exception:
             continue

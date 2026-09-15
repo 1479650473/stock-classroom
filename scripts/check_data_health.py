@@ -78,7 +78,8 @@ def main():
         n_row = con.execute("SELECT COUNT(*) FROM fund_flow_daily").fetchone()[0]
         mn = con.execute("SELECT MIN(date) FROM fund_flow_daily").fetchone()[0]
         mx = con.execute("SELECT MAX(date) FROM fund_flow_daily").fetchone()[0]
-        print(f"  fund_flow_daily: {n_code} 只 / {n_row:,} 行 / {mn} ~ {mx}")
+        n0 = con.execute("SELECT COUNT(*) FROM fund_flow_daily WHERE close<=0 OR (main_net=0 AND main_ratio=0)").fetchone()[0]
+        print(f"  fund_flow_daily: {n_code} 只 / {n_row:,} 行 / {mn} ~ {mx} | 0值行={n0}")
     except Exception as e:
         print(f"  资金流检查失败: {e}")
     con.close()
