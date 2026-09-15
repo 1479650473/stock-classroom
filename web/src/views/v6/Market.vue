@@ -338,9 +338,17 @@ onMounted(() => {
 }
 .index-card {
   padding: var(--sp-4);
-  background: var(--bg);
+  background: linear-gradient(180deg, var(--bg-raised), var(--bg));
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-md);
+  box-shadow: inset 0 1px 0 var(--sheen);
+  transition: border-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+.index-card:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-2px);
+  box-shadow: inset 0 1px 0 var(--sheen), var(--shadow-lift);
 }
 .index-card__name { font-size: var(--fs-sm); color: var(--text-sub); }
 .index-card__price { font-size: var(--fs-xl); font-weight: 700; margin: 2px 0; }
@@ -350,7 +358,7 @@ onMounted(() => {
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: var(--sp-5);
 }
-.sub-title {
+.quoted-sub-title-disabled {
   margin: 0 0 var(--sp-2);
   font-size: var(--fs-md);
   font-weight: 600;

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import Icon from '@/components/Icon.vue'
+import AnimatedNumber from '@/components/ui/AnimatedNumber.vue'
 
 /**
  * 指标数字块：标签 + 大数字 + 单位 + 趋势副文本。
@@ -16,6 +17,10 @@ withDefaults(
     hint?: string
     hintTrend?: 'up' | 'down' | 'neutral'
     icon?: string
+    /** 传原始数值即可启用数字滚动（value 仍作为非动画回退/无障碍文本） */
+    raw?: number
+    /** 数字滚动的格式化函数 */
+    format?: (n: number) => string
   }>(),
   { trend: 'neutral', hintTrend: 'neutral' },
 )
@@ -28,7 +33,8 @@ withDefaults(
       <span>{{ label }}</span>
     </div>
     <div class="stat-tile__value num" :class="trend !== 'neutral' ? trend : ''">
-      {{ value }}<span v-if="unit" class="stat-tile__unit">{{ unit }}</span>
+      <AnimatedNumber v-if="raw !== undefined" :value="raw" :format="format" />
+      <template v-else>{{ value }}</template><span v-if="unit" class="stat-tile__unit">{{ unit }}</span>
     </div>
     <div v-if="hint" class="stat-tile__hint" :class="hintTrend !== 'neutral' ? hintTrend : ''">
       {{ hint }}
@@ -42,15 +48,8 @@ withDefaults(
   flex-direction: column;
   gap: 3px;
   min-width: 0;
-  padding: var(--sp-3);
-  border: 1px solid transparent;
-  border-radius: var(--radius-lg);
-  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
 }
-.stat-tile:hover {
-  border-color: var(--border-soft);
-  background: color-mix(in srgb, var(--bg-raised) 60%, transparent);
-}
+.stat-tile__value { letter-spacing: -0.01em; }
 .stat-tile__label {
   display: flex;
   align-items: center;

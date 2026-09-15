@@ -3,6 +3,7 @@
 // (colors are resolved from CSS vars at option-build time).
 import { onBeforeUnmount, onMounted, shallowRef, type Ref } from 'vue'
 import * as echarts from 'echarts'
+import { ensureEChartsTheme } from '@/lib/chartTheme'
 
 export function useEChart(el: Ref<HTMLElement | null>, buildOption: () => echarts.EChartsOption) {
   const chart = shallowRef<echarts.ECharts | null>(null)
@@ -15,7 +16,7 @@ export function useEChart(el: Ref<HTMLElement | null>, buildOption: () => echart
       chart.value = null
       return
     }
-    if (!chart.value) chart.value = echarts.init(el.value)
+    if (!chart.value) chart.value = echarts.init(el.value, ensureEChartsTheme())
     chart.value.setOption(buildOption(), true)
   }
 
@@ -25,7 +26,12 @@ export function useEChart(el: Ref<HTMLElement | null>, buildOption: () => echart
       ro = new ResizeObserver(() => chart.value?.resize())
       ro.observe(el.value)
     }
-    mo = new MutationObserver(() => draw())
+    // 主题切换：重建实例（ECharts 主题只能 init 时注入），再重画一次
+    mo = new MutationObserver(() => {
+      chart.value?.dispose()
+      chart.value = null
+      draw()
+    })
     mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
   })
 

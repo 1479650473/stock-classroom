@@ -7,6 +7,7 @@ import type {
   IChartApi, ISeriesApi, Time, SeriesMarker, IPriceLine, ISeriesMarkersPluginApi,
 } from 'lightweight-charts'
 import { cssVar } from '@/composables/useEChart'
+import { chartTokens, maColors } from '@/lib/chartTheme'
 
 /** 轻量专业 K 线：TradingView Lightweight Charts v5 封装 */
 export interface LwcBar {
@@ -85,14 +86,13 @@ let ro: ResizeObserver | null = null
 let mo: MutationObserver | null = null
 let rafId = 0
 
-const MA_COLORS = ['#E8B84B', '#C16BE0', '#5B8FF9', '#F97316']
-
-function isDark() { return document.documentElement.getAttribute('data-theme') !== 'ivory' }
-function textColor() { return isDark() ? '#9AA3B0' : '#666666' }
-function gridColor() { return isDark() ? '#1d222a' : '#ece5d8' }
-function borderColor() { return isDark() ? '#232830' : '#e2dbcc' }
-function upColor() { return cssVar('--up', '#E5484D') }
-function downColor() { return cssVar('--down', '#3FB950') }
+function tokens() { return chartTokens() }
+function textColor() { return tokens().textSub }
+function gridColor() { return tokens().borderSoft }
+function borderColor() { return tokens().border }
+function upColor() { return tokens().up }
+function downColor() { return tokens().down }
+function maColor(i: number) { return maColors()[i % maColors().length] }
 
 function init() {
   if (!el.value) return
@@ -109,7 +109,11 @@ function init() {
       vertLines: { color: gridColor() },
       horzLines: { color: gridColor() },
     },
-    crosshair: { mode: CrosshairMode.Normal },
+    crosshair: {
+      mode: CrosshairMode.Normal,
+      vertLine: { color: tokens().gold, width: 1, style: LineStyle.Dashed, labelBackgroundColor: tokens().panel },
+      horzLine: { color: tokens().gold, width: 1, style: LineStyle.Dashed, labelBackgroundColor: tokens().panel },
+    },
     rightPriceScale: { borderColor: borderColor() },
     timeScale: { borderColor: borderColor(), timeVisible: false, rightOffset: 2 },
   })
@@ -125,7 +129,7 @@ function init() {
 
   props.mas.forEach((_, i) => {
     const s = chart.value!.addSeries(LineSeries, {
-      color: MA_COLORS[i % MA_COLORS.length],
+      color: maColor(i),
       lineWidth: 1,
       priceLineVisible: false,
       lastValueVisible: false,
@@ -284,6 +288,27 @@ function applyTheme() {
     wickUpColor: upColor(),
     wickDownColor: downColor(),
   })
+  // 均线 / 量柱 / 资金流 / 权益线也要跟着主题重刷，否则切换后仍留旧配色
+  maSeries.forEach((s, i) => s.applyOptions({ color: maColor(i) }))
+  if (volumeSeries.value) {
+    volumeSeries.value.setData(
+      props.bars.map((b) => ({
+        time: b.time as Time,
+        value: b.volume ?? 0,
+        color: (b.close >= b.open ? upColor() : downColor()) + '80',
+      })),
+    )
+  }
+  if (fundFlowSeries.value && props.fundFlow.length) {
+    fundFlowSeries.value.setData(
+      props.fundFlow.map((f) => ({
+        time: f.time as Time,
+        value: f.mainNet,
+        color: (f.mainNet >= 0 ? upColor() : downColor()) + '90',
+      })),
+    )
+  }
+  equitySeries.value?.applyOptions({ color: cssVar('--info', '#7AA2F7') })
 }
 
 watch(() => props.bars, () => apply())

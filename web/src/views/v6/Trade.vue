@@ -374,6 +374,7 @@ watch(tab, async (v) => {
           <DataTable
             :columns="positionColumns"
             :rows="positionRows"
+            compact
             row-key="id"
             empty-title="当前空仓"
             empty-desc="到「选股」挑一只，或在「下单」里手动买入。"
@@ -438,6 +439,7 @@ watch(tab, async (v) => {
           <DataTable
             :columns="orderColumns"
             :rows="orderRows"
+            compact
             row-key="id"
             empty-title="暂无订单"
             empty-desc="下单后会在这里显示，未成交的可撤单。"
@@ -473,6 +475,7 @@ watch(tab, async (v) => {
           <DataTable
             :columns="pickColumns"
             :rows="pickRows"
+            compact
             row-key="code"
             :loading="picksRunning"
             empty-title="暂无选股结果"

@@ -106,16 +106,29 @@ const QUICK = [
     <template v-else-if="data">
       <!-- 账户概览 -->
       <div class="metrics">
-        <StatTile label="总资产" :value="fmtMoney(totalAssets)" icon="wallet" />
+        <StatTile
+          label="总资产"
+          :value="fmtMoney(totalAssets)"
+          :raw="totalAssets"
+          :format="fmtMoney"
+          icon="wallet"
+        />
         <StatTile
           label="总盈亏"
           :value="fmtMoney(totalProfit)"
+          :raw="totalProfit"
+          :format="fmtMoney"
           :trend="totalProfit >= 0 ? 'up' : 'down'"
           :hint="totalAssets ? fmtPct((totalProfit / (totalAssets - totalProfit)) * 100) : '—'"
           :hint-trend="totalProfit >= 0 ? 'up' : 'down'"
         />
-        <StatTile label="持仓" :value="totalPositions" unit="只" />
-        <StatTile label="可用余额" :value="fmtMoney(totalBalance)" />
+        <StatTile label="持仓" :value="totalPositions" unit="只" :raw="totalPositions" :format="(n: number) => String(Math.round(n))" />
+        <StatTile
+          label="可用余额"
+          :value="fmtMoney(totalBalance)"
+          :raw="totalBalance"
+          :format="fmtMoney"
+        />
         <StatTile
           v-if="data.strategy"
           label="最优策略"
@@ -132,7 +145,7 @@ const QUICK = [
               全部<Icon name="chevron-right" :size="13" />
             </button>
           </template>
-          <div v-if="picks.length" class="watchlist">
+          <div v-if="picks.length" class="watchlist stagger">
             <button
               v-for="(p, i) in picks"
               :key="p.code"
@@ -165,7 +178,7 @@ const QUICK = [
               行情<Icon name="chevron-right" :size="13" />
             </button>
           </template>
-          <div v-if="data.market?.length" class="indices">
+          <div v-if="data.market?.length" class="indices stagger">
             <div v-for="idx in data.market" :key="idx.code" class="index-item">
               <div class="index-item__name">{{ idx.name }}</div>
               <div class="index-item__price num">{{ idx.price.toLocaleString() }}</div>
@@ -223,21 +236,33 @@ const QUICK = [
 </template>
 
 <style scoped>
-.metrics {
+/* 今日关注：前三名给徽章色，行悬停轻微右移 */
+.watch-item__rank {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: var(--sp-4);
-  padding: var(--sp-5);
-  background: var(--bg-raised);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-lg);
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-overlay);
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  flex: none;
 }
-.cols {
-  display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
-  gap: var(--section-gap);
+.watch-item:nth-child(1) .watch-item__rank {
+  background: var(--gold-dim);
+  color: var(--gold);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--gold) 35%, transparent);
 }
-@media (max-width: 1024px) { .cols { grid-template-columns: 1fr; } }
+.watch-item:nth-child(2) .watch-item__rank,
+.watch-item:nth-child(3) .watch-item__rank {
+  background: color-mix(in srgb, var(--text-sub) 16%, transparent);
+  color: var(--text-sub);
+}
+.watch-item { transition: background var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease); }
+.watch-item:hover { transform: translateX(2px); }
+/* .metrics / .cols 已收敛到全局样式（styles/base.css） */
 
 .watchlist { display: flex; flex-direction: column; }
 .watch-item {

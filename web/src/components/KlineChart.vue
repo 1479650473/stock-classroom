@@ -9,6 +9,7 @@ import {
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import type { KlineBar } from '@/api'
+import { chartTokens, maColors } from '@/lib/chartTheme'
 import { cssVar } from '@/composables/useEChart'
 
 echarts.use([
@@ -30,8 +31,10 @@ function buildOption(bars: KlineBar[]): echarts.EChartsCoreOption {
   const isDark = getTheme() !== 'ivory'
   const upColor = cssVar('--up', '#E84040')
   const downColor = cssVar('--down', '#2DB757')
-  const gridText = isDark ? '#8A8F9A' : '#666'
-  const gridLine = isDark ? '#2A2D35' : '#E5E7EB'
+  const _t = chartTokens()
+  const gridText = _t.textSub
+  const gridLine = _t.borderSoft
+  const maCol = maColors()
 
   const dates = bars.map((b) => b.date)
   const ohlc = bars.map((b) => [b.open, b.close, b.low, b.high])
@@ -51,9 +54,9 @@ function buildOption(bars: KlineBar[]): echarts.EChartsCoreOption {
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'cross', lineStyle: { color: gridLine } },
-      backgroundColor: isDark ? '#1A1D23EE' : '#FFFFFFEE',
-      borderColor: isDark ? '#2A2D35' : '#E5E7EB',
-      textStyle: { color: isDark ? '#D4D7DC' : '#333', fontSize: 12 },
+      backgroundColor: _t.glass,
+      borderColor: _t.border,
+      textStyle: { color: _t.text, fontSize: 12 },
       formatter(params: unknown) {
         if (!Array.isArray(params) || !params.length) return ''
         const p = params[0] as { data: number[]; axisValue: string }
@@ -115,9 +118,9 @@ function buildOption(bars: KlineBar[]): echarts.EChartsCoreOption {
           borderColor0: downColor,
         },
       },
-      { name: 'MA5', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: ma(5), smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#E8B84B' } },
-      { name: 'MA10', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: ma(10), smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#5B8FF9' } },
-      { name: 'MA20', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: ma(20), smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#C16BE0' } },
+      { name: 'MA5', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: ma(5), smooth: true, symbol: 'none', lineStyle: { width: 1, color: maCol[0] } },
+      { name: 'MA10', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: ma(10), smooth: true, symbol: 'none', lineStyle: { width: 1, color: maCol[1] } },
+      { name: 'MA20', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: ma(20), smooth: true, symbol: 'none', lineStyle: { width: 1, color: maCol[2] } },
       {
         type: 'bar',
         xAxisIndex: 1, yAxisIndex: 1,

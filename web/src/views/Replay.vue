@@ -15,6 +15,7 @@ import EmptyState from '@/components/EmptyState.vue'
 import { searchStock, getReplayStrategies, getReplay } from '@/api'
 import type { ReplayStrategy, ReplayResult, StockRef } from '@/api'
 import { cssVar } from '@/composables/useEChart'
+import { chartTokens, maColors } from '@/lib/chartTheme'
 
 echarts.use([
   CandlestickChart, BarChart, LineChart, CustomChart,
@@ -273,8 +274,10 @@ function newRound() {
 function buildOption(): echarts.EChartsCoreOption {
   const upColor = cssVar('--up', '#E84040')
   const downColor = cssVar('--down', '#2DB757')
-  const gridText = isDark.value ? '#8A8F9A' : '#666'
-  const gridLine = isDark.value ? '#2A2D35' : '#E5E7EB'
+  const _t = chartTokens()
+  const gridText = _t.textSub
+  const gridLine = _t.borderSoft
+  const maCol = maColors()
 
   const { start, end, blanks } = getWindow()
   const bars = allBars.value.slice(start, end + 1)
@@ -298,9 +301,9 @@ function buildOption(): echarts.EChartsCoreOption {
     if (ci < start || ci > end) continue
     const local = ci - start
     if (e.kind === 'entry') {
-      markPoints.push({ coord: [local, e.price], value: 'B', symbol: 'pin', symbolSize: 24, itemStyle: { color: '#2DB757' } })
+      markPoints.push({ coord: [local, e.price], value: 'B', symbol: 'pin', symbolSize: 24, itemStyle: { color: cssVar('--up') } })
     } else {
-      markPoints.push({ coord: [local, e.price], value: 'S', symbol: 'pin', symbolSize: 24, itemStyle: { color: '#E84040' } })
+      markPoints.push({ coord: [local, e.price], value: 'S', symbol: 'pin', symbolSize: 24, itemStyle: { color: cssVar('--down') } })
     }
   }
 
@@ -333,7 +336,7 @@ function buildOption(): echarts.EChartsCoreOption {
 
   // 播放头竖线
   const markLines = [
-    { xAxis: curLocal, lineStyle: { color: '#D4A574', type: 'dashed' as const, width: 1 } },
+    { xAxis: curLocal, lineStyle: { color: cssVar('--gold'), type: 'dashed' as const, width: 1 } },
   ]
 
   // 窄模式: 只保留 K 线主图(成交量/权益子图隐藏), K 线不横向压缩
@@ -409,8 +412,8 @@ function buildOption(): echarts.EChartsCoreOption {
     },
     markLine: { silent: true, symbol: 'none', data: markLines },
   }]
-  series.push({ name: 'MA5', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: maData(5), smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#E8B84B' } })
-  series.push({ name: 'MA20', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: maData(20), smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#C16BE0' } })
+  series.push({ name: 'MA5', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: maData(5), smooth: true, symbol: 'none', lineStyle: { width: 1, color: maCol[0] } })
+  series.push({ name: 'MA20', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: maData(20), smooth: true, symbol: 'none', lineStyle: { width: 1, color: maCol[1] } })
   if (!compact) {
     series.push({
       type: 'bar',
@@ -424,7 +427,7 @@ function buildOption(): echarts.EChartsCoreOption {
       xAxisIndex: 2, yAxisIndex: 2,
       data: bars.map((_, i) => allDaily.value[start + i]?.equity ?? null),
       symbol: 'none',
-      lineStyle: { width: 1.2, color: '#5B8FF9' },
+      lineStyle: { width: 1.2, color: _t.accent },
       areaStyle: { color: 'rgba(91,143,249,0.12)' },
     })
   }
@@ -434,9 +437,9 @@ function buildOption(): echarts.EChartsCoreOption {
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'cross', lineStyle: { color: gridLine } },
-      backgroundColor: isDark.value ? '#1A1D23EE' : '#FFFFFFEE',
-      borderColor: isDark.value ? '#2A2D35' : '#E5E7EB',
-      textStyle: { color: isDark.value ? '#D4D7DC' : '#333', fontSize: 12 },
+      backgroundColor: _t.glass,
+      borderColor: _t.border,
+      textStyle: { color: _t.text, fontSize: 12 },
       formatter(params: unknown) {
         if (!Array.isArray(params) || !params.length) return ''
         const p = params[0] as { dataIndex: number; data: number[]; axisValue: string }
@@ -447,8 +450,9 @@ function buildOption(): echarts.EChartsCoreOption {
         const absIdx = start + p.dataIndex          // 图表坐标(含上下文段)
         const dispIdx = absIdx - contextLen.value   // 展示区相对
         const d = dispIdx >= 0 ? allDaily.value[dispIdx] : undefined
-        const posTag = d?.position ? '<span style="color:#2DB757">●持仓</span>' : ''
-        const sig = d?.signal_buy ? ' <b style="color:#2DB757">买入信号</b>' : d?.signal_sell ? ' <b style="color:#E84040">卖出信号</b>' : ''
+        const posTag = d?.position ? `<span style="color:${cssVar('--down')}">●持仓</span>` : ''
+        const sig = d?.signal_buy ? ` <b style="color:${cssVar('--up')}">买入信号</b>`
+          : d?.signal_sell ? ` <b style="color:${cssVar('--down')}">卖出信号</b>` : ''
         const ev = dispIdx >= 0 ? allEvents.value.find((x) => x.index === dispIdx) : undefined
         const evTag = ev ? (ev.kind === 'entry'
           ? ' <b style="color:#2DB757">▲建仓 @' + ev.price + (ev.qty ? ' ×' + ev.qty + '股' : '') + '</b>'

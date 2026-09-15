@@ -169,15 +169,7 @@ function fmtMetric(v: number): string {
 .env-hero__label { font-size: var(--fs-sm); color: var(--text-sub); }
 .env-hero__value { font-size: var(--fs-hero); font-weight: 700; line-height: 1.1; }
 .env-hero__suggest { font-size: var(--fs-md); color: var(--text-sub); }
-.metrics {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: var(--sp-4);
-  padding: var(--sp-5);
-  background: var(--bg-raised);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-lg);
-}
+/* .metrics 已收敛到全局样式（styles/base.css） */
 .gold { color: var(--gold); font-weight: 600; }
 .as-of { margin: var(--sp-4) 0 0; font-size: var(--fs-xs); }
 </style>

@@ -508,7 +508,7 @@ async function loadKline(code: string, asOf: string) {
 function markersFor(d: TraderDecision): LwcMarker[] {
   return (d.plan || []).map((o) => ({
     time: d.trade_date, position: o.side === 'buy' ? 'belowBar' : 'aboveBar',
-    color: o.side === 'buy' ? '#e5484d' : '#3fb950', shape: o.side === 'buy' ? 'arrowUp' : 'arrowDown',
+    color: o.side === 'buy' ? cssVar('--up') : cssVar('--down'), shape: o.side === 'buy' ? 'arrowUp' : 'arrowDown',
     text: `${o.side === 'buy' ? '买' : '卖'}${o.qty}`,
   })) as LwcMarker[]
 }
@@ -934,7 +934,7 @@ watch([current, navSeries], async () => { await Promise.resolve(); chart.draw() 
 .bar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
 .bar__left { display: flex; align-items: center; gap: var(--sp-3); }
 .running { font-size: var(--fs-xs); color: var(--accent); }
-.metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--sp-3); }
+/* .metrics 已收敛到全局样式（styles/base.css） */
 .actions { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
 .src { font-size: var(--fs-sm); color: var(--text-sub); margin-right: auto; }
 .chart { width: 100%; height: 300px; }

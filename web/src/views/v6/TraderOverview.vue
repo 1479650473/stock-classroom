@@ -214,7 +214,7 @@ defineExpose({ reload: load })
 
 <style scoped>
 .overview { display: flex; flex-direction: column; gap: var(--sp-4); }
-.metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--sp-3); }
+/* .metrics 已收敛到全局样式（styles/base.css） */
 .chart { width: 100%; height: 340px; }
 .pad { padding: var(--sp-4); }
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }

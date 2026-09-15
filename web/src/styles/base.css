@@ -230,6 +230,89 @@ button { font-family: inherit; }
 .ui-divider { height: 1px; background: var(--border-soft); border: 0; margin: var(--sp-4) 0; }
 
 /* ============================================================
+   页面级区块骨架（全站共用，各页不要再自己写 .metrics / .cols）
+   ============================================================ */
+
+/* 指标面板：一格一个指标，整体像"仪表盘"而不是散落的数字 */
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  background: linear-gradient(180deg, var(--bg-raised), var(--bg-panel));
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+  position: relative;
+}
+.metrics::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--gold) 32%, transparent) 45%, transparent 80%);
+  pointer-events: none;
+}
+.metrics > * {
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg) 42%, transparent);
+  border: 1px solid transparent;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.metrics > *:hover {
+  background: color-mix(in srgb, var(--bg) 68%, transparent);
+  border-color: var(--border-soft);
+}
+
+/* 两列内容区（左宽右窄），窄屏自动堆叠 */
+.cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: var(--section-gap);
+}
+.cols--even { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+@media (max-width: 1080px) {
+  .cols, .cols--even { grid-template-columns: 1fr; }
+}
+
+/* 小标题（面板内分区标题） */
+.sub-title {
+  margin: 0 0 var(--sp-3);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--text-sub);
+}
+
+/* 列表行统一悬停（工作台关注/自选、回放日列表等） */
+.row-hover {
+  transition: background var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+.row-hover:hover { background: var(--bg-hover); }
+
+/* 列表入场：给容器加 .stagger 即可，子项按顺序淡入上移（最多 10 项，避免长表拖沓） */
+@keyframes list-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.stagger > * { animation: list-in 0.34s var(--ease-out) backwards; }
+.stagger > *:nth-child(1) { animation-delay: 0ms; }
+.stagger > *:nth-child(2) { animation-delay: 30ms; }
+.stagger > *:nth-child(3) { animation-delay: 60ms; }
+.stagger > *:nth-child(4) { animation-delay: 90ms; }
+.stagger > *:nth-child(5) { animation-delay: 120ms; }
+.stagger > *:nth-child(6) { animation-delay: 150ms; }
+.stagger > *:nth-child(7) { animation-delay: 180ms; }
+.stagger > *:nth-child(8) { animation-delay: 210ms; }
+.stagger > *:nth-child(9) { animation-delay: 240ms; }
+.stagger > *:nth-child(n + 10) { animation-delay: 270ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .stagger > * { animation: none; }
+  * { scroll-behavior: auto !important; }
+}
+
+/* ============================================================
    v7 精修层（2026-09-16）：环境光 / 网格底纹 / 数字闪动 / 进度条
    技法参考 Uiverse.io（galaxy 素材库，MIT）—— 已全部改写成主题变量。
    ============================================================ */

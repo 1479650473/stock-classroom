@@ -439,7 +439,7 @@ function toolLine(t: { tool: string; args?: Record<string, unknown>; error?: str
 .kv__k { color: var(--text-faint); }
 .kv__v { font-weight: 600; }
 .trader { display: flex; flex-direction: column; gap: var(--sp-4); }
-.metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--sp-3); }
+/* .metrics 已收敛到全局样式（styles/base.css） */
 
 .bar {
   display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3);
