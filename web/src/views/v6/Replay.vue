@@ -941,13 +941,157 @@ watch([current, navSeries], async () => { await Promise.resolve(); chart.draw() 
 
 <style scoped>
 .replay { display: flex; flex-direction: column; gap: var(--sp-4); }
-.bar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  /* 吸顶：决策流很长时也能随时切换/继续回放 */
+  position: sticky;
+  top: calc(var(--sp-5) * -1);
+  z-index: 30;
+  margin: calc(var(--sp-5) * -1) calc(var(--sp-5) * -1) 0;
+  padding: var(--sp-3) var(--sp-5);
+  background: var(--glass);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  border-bottom: 1px solid var(--glass-border);
+}
 .bar__left { display: flex; align-items: center; gap: var(--sp-3); }
 .running { font-size: var(--fs-xs); color: var(--accent); }
 /* .metrics 已收敛到全局样式（styles/base.css） */
 .actions { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
 .src { font-size: var(--fs-sm); color: var(--text-sub); margin-right: auto; }
 .chart { width: 100%; height: 300px; }
+/* 折叠树：月份/日期/内容三层，用左侧导轨表达层级，行高收紧 */
+.tnode { position: relative; }
+.tbody { position: relative; margin-left: var(--sp-4); }
+.tbody::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 4px;
+  width: 1px;
+  background: linear-gradient(180deg, var(--border), transparent 92%);
+  pointer-events: none;
+}
+.thead--m {
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+}
+.thead--m:hover { background: var(--bg-hover); }
+.thead--d {
+  padding: 7px var(--sp-3);
+  border-radius: var(--radius-sm);
+}
+.thead--d:hover { background: var(--bg-hover); }
+.tlabel { font-variant-numeric: tabular-nums; }
+.tlabel--m { font-size: var(--fs-md); letter-spacing: 0.02em; }
+.tmeta { font-size: var(--fs-xs); color: var(--text-faint); }
+.tmeta--dim { opacity: 0.7; }
+.tmeta--r { margin-left: auto; }
+.tstate {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-overlay);
+  color: var(--text-faint);
+}
+.tstate.running { background: var(--gold-dim); color: var(--gold); }
+.tstate.done { background: color-mix(in srgb, var(--down) 14%, transparent); color: var(--down); }
+.tbody--d { padding: var(--sp-1) 0 var(--sp-3); }
+.sec { padding: var(--sp-2) 0; }
+.sec__label,
+.block__title {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  text-transform: none;
+  margin-bottom: 4px;
+}
+.sec__text {
+  margin: 0;
+  font-size: var(--fs-md);
+  line-height: 1.7;
+  color: var(--text-sub);
+  white-space: pre-wrap;
+}
+.dec {
+  margin: var(--sp-2) 0;
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--border-soft);
+  border-left: 2px solid var(--gold);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-raised) 70%, transparent);
+}
+.dec__head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--gold);
+  margin-bottom: 5px;
+}
+.dec__text { margin: 0; font-size: var(--fs-md); line-height: 1.65; }
+.dec__sub { margin: 6px 0 0; font-size: var(--fs-sm); color: var(--text-sub); }
+.settle {
+  margin-top: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+}
+.settle__grid,
+.perf {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+.cell {
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg) 45%, transparent);
+}
+.cell__k { font-size: 10px; color: var(--text-faint); display: block; }
+.cell__v { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: var(--fs-md); }
+.order,
+.rejrow {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-sm);
+}
+.order:nth-child(odd),
+.rejrow:nth-child(odd) { background: color-mix(in srgb, var(--bg) 35%, transparent); }
+.order__name,
+.rejrow__code { font-weight: 500; }
+.order__qty { color: var(--text-sub); }
+.order__res { margin-left: auto; color: var(--text-faint); }
+.order__res.ok { color: var(--down); }
+.order__res.bad { color: var(--up); }
+.orders--forced {
+  border-left: 2px solid var(--up);
+  padding-left: var(--sp-2);
+  margin-top: 4px;
+}
+.pos__list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.pos__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-overlay);
+  font-size: var(--fs-xs);
+  font-family: var(--font-num);
+}
 .days { display: flex; flex-direction: column; }
 .day { border-bottom: 1px solid var(--border); }
 .day:last-child { border-bottom: none; }
