@@ -413,3 +413,36 @@ button { font-family: inherit; }
   z-index: 60;
 }
 .tip:hover::after, .tip:focus-visible::after { opacity: 1; transform: translate(-50%, 0); }
+
+/* ============================================================
+   行内图标操作（表格行操作、卡片角标操作）
+   用法：<button class="icon-action tip" data-tip="卖出"><Icon name="close" /></button>
+   ============================================================ */
+.icon-action {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+.icon-action:hover {
+  background: var(--bg-overlay);
+  border-color: var(--border-soft);
+  color: var(--text);
+  transform: translateY(-1px);
+}
+.icon-action:active { transform: translateY(0) scale(0.96); }
+.icon-action:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+.icon-action--up:hover { color: var(--up); border-color: color-mix(in srgb, var(--up) 40%, transparent); }
+.icon-action--down:hover { color: var(--down); border-color: color-mix(in srgb, var(--down) 40%, transparent); }
+.icon-action--gold:hover { color: var(--gold); border-color: color-mix(in srgb, var(--gold) 40%, transparent); }
+.icon-action--danger:hover { color: var(--up); border-color: color-mix(in srgb, var(--up) 45%, transparent); background: color-mix(in srgb, var(--up) 12%, transparent); }
+/* 行操作组：hover 才浮出（由 DataTable 的 hoverActions 控制容器透明度） */
+.icon-actions { display: inline-flex; align-items: center; gap: 4px; }

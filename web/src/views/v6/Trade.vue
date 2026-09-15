@@ -389,7 +389,15 @@ watch(tab, async (v) => {
               </span>
             </template>
             <template #actions="{ row }">
-              <button class="ui-btn ui-btn--sm" @click="sellPosition(row as unknown as Position)">卖出</button>
+              <div class="icon-actions">
+                <button
+                  class="icon-action icon-action--up tip"
+                  data-tip="卖出：按市价清仓该持仓"
+                  @click="sellPosition(row as unknown as Position)"
+                >
+                  <Icon name="minus" :size="14" />
+                </button>
+              </div>
             </template>
           </DataTable>
         </div>
@@ -459,13 +467,15 @@ watch(tab, async (v) => {
               </span>
             </template>
             <template #actions="{ row }">
-              <button
-                v-if="row.status === 'pending'"
-                class="ui-btn ui-btn--sm ui-btn--danger"
-                @click="handleCancel(Number(row.id))"
-              >
-                撤单
-              </button>
+              <div v-if="row.status === 'pending'" class="icon-actions">
+                <button
+                  class="icon-action icon-action--danger tip"
+                  data-tip="撤单"
+                  @click="handleCancel(Number(row.id))"
+                >
+                  <Icon name="close" :size="14" />
+                </button>
+              </div>
             </template>
           </DataTable>
         </div>
@@ -491,7 +501,15 @@ watch(tab, async (v) => {
               <span class="gold">{{ Number(row.score).toFixed(1) }}</span>
             </template>
             <template #actions="{ row }">
-              <button class="ui-btn ui-btn--sm" @click="buyPick(row as unknown as PickItem)">买入</button>
+              <div class="icon-actions">
+                <button
+                  class="icon-action icon-action--gold tip"
+                  data-tip="按评分买入"
+                  @click="buyPick(row as unknown as PickItem)"
+                >
+                  <Icon name="plus" :size="14" />
+                </button>
+              </div>
             </template>
             <template #empty-action>
               <button class="ui-btn ui-btn--primary" :disabled="picksRunning" @click="rescanPicks">
