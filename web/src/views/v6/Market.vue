@@ -70,6 +70,14 @@ const lwcBars = computed(() =>
     volume: b.volume,
   })),
 )
+/** 涨跌停阈值：主板 10%、创业板/科创 20%、北交所 30%（用于 K 线涨跌停标记） */
+const limitPct = computed(() => {
+  const c = String(code.value || '')
+  if (c.startsWith('30') || c.startsWith('68')) return 0.198
+  if (/^(43|83|87|88|92)/.test(c)) return 0.298
+  return 0.098
+})
+
 const changePct = computed(() => {
   if (!lastBar.value || kline.value.length < 2) return 0
   const prev = kline.value[kline.value.length - 2].close
@@ -306,7 +314,12 @@ onMounted(() => {
               <span class="num" :class="changePct >= 0 ? 'up' : 'down'">{{ fmtPct(changePct) }}</span>
             </div>
           </div>
-          <KlineChart :bars="lwcBars" :height="460" :fund-flow="lwcFundFlow" />
+          <KlineChart
+            :bars="lwcBars"
+            :height="460"
+            :fund-flow="lwcFundFlow"
+            :limit-pct="limitPct"
+          />
           <div class="detail-table">
             <h3 class="sub-title">历史数据（近 {{ Math.min(kline.length, 60) }} 条）</h3>
             <DataTable

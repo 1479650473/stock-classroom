@@ -438,6 +438,7 @@ function buildOption(): echarts.EChartsCoreOption {
       trigger: 'axis',
       axisPointer: { type: 'cross', lineStyle: { color: gridLine } },
       backgroundColor: _t.glass,
+      extraCssText: 'backdrop-filter: blur(8px); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.28);',
       borderColor: _t.border,
       textStyle: { color: _t.text, fontSize: 12 },
       formatter(params: unknown) {

@@ -139,6 +139,50 @@ export function ensureEChartsTheme(force = false): string {
   return THEME_NAME
 }
 
+/** 把颜色（hex / rgb / rgba）转成带透明度的 rgba；解析不了就原样返回 */
+export function withAlpha(color: string, alpha: number): string {
+  const c = (color || '').trim()
+  const hex = c.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i)
+  if (hex) {
+    let h = hex[1]
+    if (h.length === 3) h = h.split('').map((x) => x + x).join('')
+    const n = parseInt(h, 16)
+    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`
+  }
+  const rgb = c.match(/^rgba?\(([^)]+)\)$/i)
+  if (rgb) {
+    const parts = rgb[1].split(',').map((x) => x.trim())
+    if (parts.length >= 3) return `rgba(${parts[0]}, ${parts[1]}, ${parts[2]}, ${alpha})`
+  }
+  return c
+}
+
+/** 面积渐变（自上而下衰减），ECharts 可直接用在 areaStyle.color */
+export function areaGradient(color: string, top = 0.26, bottom = 0) {
+  return {
+    type: 'linear' as const,
+    x: 0,
+    y: 0,
+    x2: 0,
+    y2: 1,
+    colorStops: [
+      { offset: 0, color: withAlpha(color, top) },
+      { offset: 1, color: withAlpha(color, bottom) },
+    ],
+  }
+}
+
+/** 折线+面积 的统一样式片段（净值/权益曲线用） */
+export function areaLineStyle(color: string, width = 2, top = 0.26) {
+  return {
+    showSymbol: false,
+    smooth: true,
+    lineStyle: { width, color },
+    itemStyle: { color },
+    areaStyle: { color: areaGradient(color, top) },
+  }
+}
+
 /** tooltip 的 HTML 内联配色（老图表手写 formatter 时用） */
 export function tooltipInline(): { label: string; up: string; down: string; dim: string } {
   const t = chartTokens()

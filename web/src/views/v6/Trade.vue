@@ -19,6 +19,7 @@ import {
 } from '@/api'
 import type { AccountSummary, Position, Order, PickItem } from '@/api'
 import { useEChart, cssVar } from '@/composables/useEChart'
+import { areaLineStyle, tooltipStyle } from '@/lib/chartTheme'
 import { usePersistedRef } from '@/composables/usePersistedRef'
 
 type Tab = 'positions' | 'order' | 'orders' | 'picks'
@@ -102,13 +103,12 @@ const { draw: drawNav } = useEChart(navEl, () => {
   const idx = n.map((v) => (start ? +((v / start) * 100).toFixed(2) : 0))
   return {
     grid: { left: 56, right: 18, top: 18, bottom: 28 },
-    tooltip: { trigger: 'axis' },
+    tooltip: { trigger: 'axis', ...tooltipStyle() },
     xAxis: { type: 'category', data: idx.map((_, i) => i), axisLabel: { show: false }, axisLine: { lineStyle: { color: cssVar('--border') } } },
     yAxis: { type: 'value', scale: true, splitLine: { lineStyle: { color: cssVar('--border-soft') } } },
     series: [{
-      type: 'line', data: idx, smooth: true, showSymbol: false,
-      lineStyle: { color: cssVar('--gold'), width: 2 },
-      areaStyle: { color: cssVar('--gold-dim') },
+      type: 'line', data: idx,
+      ...areaLineStyle(cssVar('--gold'), 2, 0.3),
     }],
   }
 })

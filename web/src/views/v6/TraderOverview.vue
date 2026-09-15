@@ -9,6 +9,7 @@ import StatTile from '@/components/ui/StatTile.vue'
 import EmptyGuide from '@/components/ui/EmptyGuide.vue'
 import LoadingBlock from '@/components/ui/LoadingBlock.vue'
 import { useEChart, cssVar } from '@/composables/useEChart'
+import { areaLineStyle, tooltipStyle } from '@/lib/chartTheme'
 import { getTraderOverview } from '@/api'
 import type { TraderOverview } from '@/api'
 
@@ -68,10 +69,7 @@ const series = computed(() => {
     out.push({
       name: t.name,
       type: 'line',
-      showSymbol: false,
-      smooth: true,
-      lineStyle: { width: 2 },
-      itemStyle: { color },
+      ...areaLineStyle(color, 2, i === 0 ? 0.26 : 0.1),   // 第一只给明显渐变，其余淡一些
       data: norm(t.nav.map((p) => ({ date: p.date, v: p.nav }))),
     })
   })
@@ -94,6 +92,7 @@ const chart = useEChart(el, () => ({
   grid: { left: 48, right: 20, top: 36, bottom: 40 },
   tooltip: {
     trigger: 'axis',
+    ...tooltipStyle(),
     valueFormatter: (v: unknown) => (v === null || v === undefined ? '—' : (Number(v) * 100).toFixed(2) + '%'),
   },
   legend: { top: 4, textStyle: { color: cssVar('--text-sub', '#9AA4B2'), fontSize: 11 } },

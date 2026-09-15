@@ -10,6 +10,7 @@ import KlineChart from '@/components/charts/KlineChart.vue'
 import { getEtfList, getEtfKline, getEtfCompare } from '@/api'
 import type { EtfRef, KlineBar, EtfCompare } from '@/api'
 import { useEChart, cssVar } from '@/composables/useEChart'
+import { tooltipStyle } from '@/lib/chartTheme'
 
 const props = defineProps<{ initialCode?: string }>()
 
@@ -123,7 +124,7 @@ useEChart(compareEl, () => {
   const palette = [cssVar('--accent', '#D4A574'), up, down, cssVar('--ok', '#58c08a'), '#7d9dff']
   return {
     backgroundColor: 'transparent',
-    tooltip: { trigger: 'axis' },
+    tooltip: { trigger: 'axis', ...tooltipStyle() },
     legend: { data: c?.series.map((s) => s.name) ?? [], textStyle: { color: text } },
     grid: { left: 56, right: 20, top: 40, bottom: 28 },
     xAxis: {

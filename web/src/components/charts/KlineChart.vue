@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import {
-  createChart, CandlestickSeries, HistogramSeries, LineSeries, LineStyle, CrosshairMode, createSeriesMarkers,
+  createChart, CandlestickSeries, HistogramSeries, LineSeries, AreaSeries, LineStyle, CrosshairMode,
+  createSeriesMarkers,
 } from 'lightweight-charts'
 import type {
   IChartApi, ISeriesApi, Time, SeriesMarker, IPriceLine, ISeriesMarkersPluginApi,
 } from 'lightweight-charts'
 import { cssVar } from '@/composables/useEChart'
-import { chartTokens, maColors } from '@/lib/chartTheme'
+import { chartTokens, maColors, withAlpha } from '@/lib/chartTheme'
 
 /** 轻量专业 K 线：TradingView Lightweight Charts v5 封装 */
 export interface LwcBar {
@@ -58,6 +59,10 @@ const props = withDefaults(
     equity?: { time: string; value: number }[]
     /** 资金流副图（主力净流入柱状, 独立 pane） */
     fundFlow?: LwcFundFlow[]
+    /** 涨跌停判定阈值（0.098 主板 / 0.198 创业科创 / 0.048 ST）；0 = 不标记 */
+    limitPct?: number
+    /** 成交量均线周期（0 = 不画） */
+    volumeMa?: number
   }>(),
   {
     mas: () => [5, 20],
@@ -69,6 +74,8 @@ const props = withDefaults(
     height: 420,
     equity: () => [],
     fundFlow: () => [],
+    limitPct: 0,
+    volumeMa: 5,
   },
 )
 
@@ -77,8 +84,9 @@ const playheadEl = ref<HTMLDivElement>()
 const chart = shallowRef<IChartApi | null>(null)
 const candleSeries = shallowRef<ISeriesApi<'Candlestick'> | null>(null)
 const volumeSeries = shallowRef<ISeriesApi<'Histogram'> | null>(null)
-const equitySeries = shallowRef<ISeriesApi<'Line'> | null>(null)
+const equitySeries = shallowRef<ISeriesApi<'Area'> | null>(null)
 const fundFlowSeries = shallowRef<ISeriesApi<'Histogram'> | null>(null)
+const volMaSeries = shallowRef<ISeriesApi<'Line'> | null>(null)
 const maSeries: ISeriesApi<'Line'>[] = []
 let priceLine: IPriceLine | null = null
 let markersPlugin: ISeriesMarkersPluginApi<Time> | null = null
@@ -144,14 +152,30 @@ function init() {
       { priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false },
       1,
     )
+    if (props.volumeMa > 1) {
+      volMaSeries.value = chart.value.addSeries(
+        LineSeries,
+        {
+          color: tokens().textSub,
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        },
+        1,
+      )
+    }
   }
 
   if (props.equity.length) {
+    const line = cssVar('--accent', '#7AA2F7')
     equitySeries.value = chart.value.addSeries(
-      LineSeries,
+      AreaSeries,
       {
-        color: cssVar('--info', '#7AA2F7'),
+        lineColor: line,
         lineWidth: 2,
+        topColor: withAlpha(line, 0.28),
+        bottomColor: withAlpha(line, 0.02),
         priceLineVisible: false,
         lastValueVisible: false,
       },
@@ -215,6 +239,18 @@ function apply() {
     )
   }
 
+  // 成交量均线：量的 5 日均线，滤掉单日放量噪音
+  if (volMaSeries.value && props.volumeMa > 1) {
+    const n = props.volumeMa
+    const data: { time: Time; value: number }[] = []
+    for (let i = n - 1; i < bars.length; i++) {
+      let sum = 0
+      for (let j = i - n + 1; j <= i; j++) sum += bars[j].volume ?? 0
+      data.push({ time: bars[i].time as Time, value: Math.round(sum / n) })
+    }
+    volMaSeries.value.setData(data)
+  }
+
   if (equitySeries.value && props.equity.length) {
     equitySeries.value.setData(props.equity.map((e) => ({ time: e.time as Time, value: e.value })))
   }
@@ -236,6 +272,27 @@ function apply() {
     shape: m.shape,
     text: m.text,
   })) as SeriesMarker<Time>[]
+
+  // 涨跌停自动标记（limitPct>0 时生效）：主板 9.8% / 创业科创 19.8% / ST 4.8%
+  if (props.limitPct > 0) {
+    for (let i = 1; i < bars.length; i++) {
+      const prev = bars[i - 1].close
+      if (!prev) continue
+      const chg = bars[i].close / prev - 1
+      if (chg >= props.limitPct) {
+        markerData.push({
+          time: bars[i].time as Time, position: 'aboveBar', color: upColor(),
+          shape: 'arrowDown', text: '涨停',
+        } as SeriesMarker<Time>)
+      } else if (chg <= -props.limitPct) {
+        markerData.push({
+          time: bars[i].time as Time, position: 'belowBar', color: downColor(),
+          shape: 'arrowUp', text: '跌停',
+        } as SeriesMarker<Time>)
+      }
+    }
+    markerData.sort((a, b) => String(a.time).localeCompare(String(b.time)))
+  }
   if (markersPlugin) {
     markersPlugin.setMarkers(markerData)
   } else if (candleSeries.value) {
@@ -290,6 +347,7 @@ function applyTheme() {
   })
   // 均线 / 量柱 / 资金流 / 权益线也要跟着主题重刷，否则切换后仍留旧配色
   maSeries.forEach((s, i) => s.applyOptions({ color: maColor(i) }))
+  volMaSeries.value?.applyOptions({ color: tokens().textSub })
   if (volumeSeries.value) {
     volumeSeries.value.setData(
       props.bars.map((b) => ({
@@ -308,7 +366,14 @@ function applyTheme() {
       })),
     )
   }
-  equitySeries.value?.applyOptions({ color: cssVar('--info', '#7AA2F7') })
+  {
+    const line = cssVar('--accent', '#7AA2F7')
+    equitySeries.value?.applyOptions({
+      lineColor: line,
+      topColor: withAlpha(line, 0.28),
+      bottomColor: withAlpha(line, 0.02),
+    })
+  }
 }
 
 watch(() => props.bars, () => apply())

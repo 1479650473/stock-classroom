@@ -14,6 +14,7 @@ import Icon from '@/components/Icon.vue'
 import KlineChart from '@/components/charts/KlineChart.vue'
 import type { LwcBar, LwcMarker } from '@/components/charts/KlineChart.vue'
 import { useEChart, cssVar } from '@/composables/useEChart'
+import { tooltipStyle } from '@/lib/chartTheme'
 import { streamJob } from '@/api/client'
 import { useToastStore } from '@/stores/toast'
 import { useJobsStore } from '@/stores/jobs'
@@ -505,6 +506,14 @@ async function loadKline(code: string, asOf: string) {
     klineLoading.value[key] = false
   }
 }
+/** 按代码推断涨跌停阈值（主板 10% / 创业科创 20% / 北交所 30%） */
+function limitPctFor(code: string): number {
+  const c = String(code || '')
+  if (c.startsWith('30') || c.startsWith('68')) return 0.198
+  if (/^(43|83|87|88|92)/.test(c)) return 0.298
+  return 0.098
+}
+
 function markersFor(d: TraderDecision): LwcMarker[] {
   return (d.plan || []).map((o) => ({
     time: d.trade_date, position: o.side === 'buy' ? 'belowBar' : 'aboveBar',
@@ -525,7 +534,7 @@ const navSeries = computed(() => {
 const chart = useEChart(chartEl, () => ({
   animation: false,
   grid: { left: 52, right: 16, top: 30, bottom: 36 },
-  tooltip: { trigger: 'axis' },
+  tooltip: { trigger: 'axis', ...tooltipStyle() },
   legend: { top: 2, textStyle: { color: cssVar('--text-sub', '#9AA4B2'), fontSize: 11 } },
   xAxis: { type: 'time', axisLabel: { color: cssVar('--text-faint', '#6B7280'), fontSize: 10, hideOverlap: true },
            axisLine: { lineStyle: { color: cssVar('--border', '#2A2E37') } } },
@@ -889,6 +898,7 @@ watch([current, navSeries], async () => { await Promise.resolve(); chart.draw() 
                     :bars="klineBars[c + '@' + d.trade_date]"
                     :markers="markersFor(d)"
                     :height="260" :mas="[5, 20]"
+                    :limit-pct="limitPctFor(c)"
                     :key="c + '@' + d.trade_date"
                   />
                   <div v-else class="muted" @click="loadKline(c, d.trade_date)">点击加载 K 线</div>

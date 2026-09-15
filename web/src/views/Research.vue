@@ -17,6 +17,7 @@ import {
   type RegimeData, type FactorDef, type StrategyDef, type BacktestResult,
 } from '@/api'
 import { useEChart, cssVar } from '@/composables/useEChart'
+import { areaLineStyle, tooltipStyle } from '@/lib/chartTheme'
 
 const toast = useToastStore()
 const jobs = useJobsStore()
@@ -74,13 +75,12 @@ const btChartEl = ref<HTMLElement | null>(null)
 
 const { draw: drawBtChart } = useEChart(btChartEl, () => ({
   grid: { left: 50, right: 16, top: 20, bottom: 28 },
-  tooltip: { trigger: 'axis' },
+  tooltip: { trigger: 'axis', ...tooltipStyle() },
   xAxis: { type: 'category', data: btResult.value?.dates || [], axisLabel: { show: false } },
   yAxis: { type: 'value', scale: true },
   series: [{
-    type: 'line', data: btResult.value?.nav || [], smooth: true, showSymbol: false,
-    lineStyle: { color: cssVar('--gold'), width: 2 },
-    areaStyle: { color: cssVar('--gold-dim') },
+    type: 'line', data: btResult.value?.nav || [],
+    ...areaLineStyle(cssVar('--gold'), 2, 0.3),
   }],
 }))
 
