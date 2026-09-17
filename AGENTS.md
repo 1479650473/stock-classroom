@@ -159,6 +159,9 @@ Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
 | Backend | `scripts/rebuild_etf.py` | ETF 全量历史首拉(多进程, 1606只/144万行, 幂等可续跑); update_daily ⑫步每日增量 |
 | Backend | `backend/api/blueprints/fund_flow.py` | **资金流**: `/api/fund-flow/kline` 个股日频资金流历史; kline.db `fund_flow_daily`(主力/超大/大/中/小单 额+占比, 东财daykline全历史) |
 | Scripts | `scripts/rebuild_fund_flow.py` | 资金流全量首拉(多进程幂等); `probe_fund_flow.py` 东财反爬探测+速率测试; update_daily ⑬步每日增量 |
+| Backend | `backend/api/blueprints/lhb_margin.py` | **龙虎榜/融资融券**: `/api/lhb`(单股/最近明细) + `/api/margin`(单股融资融券历史); lhb_daily 24.2万行(2010起) + margin_daily(2010-03起) |
+| Scripts | `scripts/rebuild_lhb_margin.py` | 龙虎榜+融资融券全历史首拉(季度批次/按日16线程续跑); update_daily ⑮步回补 |
+| Backend | `backend/data_manager.py` | `rebuild_period_kline`(周K/月K聚合: kline_weekly 293万行+kline_monthly 70万行) + `get_period_kline`; update_daily ⑭步增量 |
 
 ## Navigation (v6)
 `web/src/lib/nav.ts` = [工作台, 行情, 策略, 交易, AI, 数据]；设置入口在顶栏右侧。旧页面 (Research/Optimize/Replay/Agent/AgentOps/Pipeline/DataCenter/Trainer) 仍被新页面内嵌复用，保留。
