@@ -460,6 +460,22 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
         except Exception as e:
             out['steps']['period_kline'] = str(e)[:120]
             lg.warning('  周K/月K失败: %s', str(e)[:80])
+        # ⑮ 龙虎榜(近5交易日回补) + 融资融券(近5交易日回补, T+1发布)
+        try:
+            from data_manager import init_lhb_margin_tables, update_lhb_range, update_margin_dates
+            init_lhb_margin_tables()
+            _cal = _trade_calendar()
+            _today = datetime.now().strftime('%Y-%m-%d')
+            _last5 = sorted([d for d in (_cal or set()) if d <= _today])[-5:] or [_today]
+            _lhb_n = 0
+            for _d in _last5:
+                _lhb_n += update_lhb_range(_d.replace('-', ''), _d.replace('-', '')) or 0
+            _mg = update_margin_dates([d.replace('-', '') for d in _last5])
+            out['steps']['lhb_margin'] = {'lhb_rows': _lhb_n, **{k: _mg.get(k) for k in ('ok', 'rows')}}
+            lg.info('  龙虎榜+融资融券: lhb=%d行, margin=%s天/%s行', _lhb_n, _mg.get('ok'), _mg.get('rows'))
+        except Exception as e:
+            out['steps']['lhb_margin'] = str(e)[:120]
+            lg.warning('  龙虎榜/融资融券失败: %s', str(e)[:80])
 
     out['finished'] = datetime.now().isoformat(timespec='seconds')
     out['elapsed'] = round(time.time() - t0, 1)

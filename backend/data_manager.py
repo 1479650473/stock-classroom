@@ -1254,6 +1254,90 @@ def get_period_kline(code: str, period: str = "weekly", limit: int = 250) -> Lis
     return [dict(r) for r in reversed(rows)]
 
 
+# ════════════════════════════════════════════════════════
+#  龙虎榜 (lhb_daily) + 融资融券 (margin_daily)
+# ════════════════════════════════════════════════════════
+def init_lhb_margin_tables(rebuild: bool = False):
+    """建表. rebuild=True 时重建 lhb_daily(首拉用, 旧表无唯一约束)."""
+    conn = get_kline_db()
+    if rebuild:
+        conn.execute("DROP TABLE IF EXISTS lhb_daily")
+    conn.execute("""CREATE TABLE IF NOT EXISTS lhb_daily (
+        code TEXT, name TEXT, trade_date TEXT, close_price REAL, change_rate REAL,
+        net_amount REAL, buy_amount REAL, sell_amount REAL, deal_amount REAL,
+        market_amount REAL, net_ratio REAL, deal_ratio REAL, turnover REAL,
+        market_cap REAL, reason TEXT, d1_chg REAL, d2_chg REAL, d5_chg REAL, d10_chg REAL,
+        PRIMARY KEY (code, trade_date, reason))""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_lhb_date ON lhb_daily(trade_date)")
+    conn.execute("""CREATE TABLE IF NOT EXISTS margin_daily (
+        code TEXT, date TEXT, name TEXT,
+        rzye REAL, rzmre REAL, rzche REAL, rqye REAL, rqmcl REAL, rqchl REAL, rzrqye REAL,
+        PRIMARY KEY (code, date))""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_margin_date ON margin_daily(date)")
+    conn.commit()
+    conn.close()
+
+
+def update_lhb_range(start_date: str, end_date: str) -> int:
+    """拉取日期范围龙虎榜明细并写入. 返回行数."""
+    from akshare_source import ak_fetch_lhb_range
+    rows = ak_fetch_lhb_range(start_date, end_date)
+    if not rows:
+        return 0
+    conn = get_kline_db()
+    conn.executemany(
+        "INSERT OR REPLACE INTO lhb_daily (code,name,trade_date,close_price,change_rate,"
+        "net_amount,buy_amount,sell_amount,deal_amount,market_amount,net_ratio,deal_ratio,"
+        "turnover,market_cap,reason,d1_chg,d2_chg,d5_chg,d10_chg) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+    conn.commit()
+    conn.close()
+    return len(rows)
+
+
+def update_margin_dates(dates: List[str]) -> dict:
+    """拉取指定日期列表的融资融券明细(SSE+SZSE). 返回 {ok, rows}."""
+    from akshare_source import ak_fetch_margin_day
+    ok = rows_n = 0
+    for d in dates:
+        rows = ak_fetch_margin_day(d)
+        if rows:
+            conn = get_kline_db()
+            conn.executemany(
+                "INSERT OR REPLACE INTO margin_daily "
+                "(code,date,name,rzye,rzmre,rzche,rqye,rqmcl,rqchl,rzrqye) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
+            conn.commit()
+            conn.close()
+            ok += 1
+            rows_n += len(rows)
+    return {"ok": ok, "rows": rows_n}
+
+
+def get_lhb(code: str = "", days: int = 250) -> List[Dict]:
+    """龙虎榜明细(按股票或最近N条)."""
+    conn = get_kline_db()
+    if code:
+        rows = conn.execute(
+            "SELECT * FROM lhb_daily WHERE code=? ORDER BY trade_date DESC LIMIT ?",
+            (code, days)).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM lhb_daily ORDER BY trade_date DESC LIMIT ?", (days,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_margin(code: str, days: int = 250) -> List[Dict]:
+    """单只股票融资融券历史(升序)."""
+    conn = get_kline_db()
+    rows = conn.execute(
+        "SELECT date, rzye, rzmre, rzche, rqye, rqmcl, rqchl, rzrqye "
+        "FROM margin_daily WHERE code=? ORDER BY date DESC LIMIT ?", (code, days)).fetchall()
+    conn.close()
+    return [dict(r) for r in reversed(rows)]
+
+
 def cache_sector_board_from_akshare():
     """写入 sector_board 快照表(991行: 行业/概念板块涨跌榜, 含 leader).
 

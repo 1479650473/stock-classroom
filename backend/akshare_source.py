@@ -695,6 +695,97 @@ def ak_fetch_fund_flow(code: str, timeout: float = 25.0) -> List[tuple]:
     return rows
 
 
+def ak_fetch_lhb_range(start_date: str, end_date: str, timeout: float = 40.0) -> List[tuple]:
+    """龙虎榜明细(东财, 按日期范围一次拉多天). 返回 lhb_daily 表行元组.
+
+    列: (code,name,trade_date,close_price,change_rate,net_amount,buy_amount,sell_amount,
+         deal_amount,market_amount,net_ratio,deal_ratio,turnover,market_cap,reason,
+         d1_chg,d2_chg,d5_chg,d10_chg)
+    """
+    akshare_wait()
+    df = ak.stock_lhb_detail_em(start_date=start_date, end_date=end_date)
+    if df is None or df.empty:
+        return []
+    colmap = {
+        "代码": "code", "名称": "name", "上榜日": "trade_date", "收盘价": "close_price",
+        "涨跌幅": "change_rate", "龙虎榜净买额": "net_amount", "龙虎榜买入额": "buy_amount",
+        "龙虎榜卖出额": "sell_amount", "龙虎榜成交额": "deal_amount",
+        "市场总成交额": "market_amount", "净买额占总成交比": "net_ratio",
+        "成交额占总成交比": "deal_ratio", "换手率": "turnover", "流通市值": "market_cap",
+        "上榜原因": "reason", "上榜后1日": "d1_chg", "上榜后2日": "d2_chg",
+        "上榜后5日": "d5_chg", "上榜后10日": "d10_chg",
+    }
+    d = df.rename(columns={k: v for k, v in colmap.items() if k in df.columns})
+    rows = []
+    for _, r in d.iterrows():
+        try:
+            def _f(k):
+                v = r.get(k)
+                try:
+                    x = float(v)
+                    return x if x == x else None
+                except (TypeError, ValueError):
+                    return None
+            rows.append((str(r.get("code", "")), str(r.get("name", "")),
+                         str(r.get("trade_date", "")),
+                         _f("close_price"), _f("change_rate"), _f("net_amount"),
+                         _f("buy_amount"), _f("sell_amount"), _f("deal_amount"),
+                         _f("market_amount"), _f("net_ratio"), _f("deal_ratio"),
+                         _f("turnover"), _f("market_cap"), str(r.get("reason", "") or ""),
+                         _f("d1_chg"), _f("d2_chg"), _f("d5_chg"), _f("d10_chg")))
+        except Exception:
+            continue
+    return rows
+
+
+def ak_fetch_margin_day(date: str, timeout: float = 30.0) -> List[tuple]:
+    """融资融券个股明细(上交所+深交所合并). date=YYYYMMDD. 返回 margin_daily 表行元组.
+
+    列: (code, date, name, rzye, rzmre, rzche, rqye, rqmcl, rqchl, rzrqye)
+    SSE 列: 融资余额/融资买入额/融资偿还量/融券余量/融券卖出量/融券偿还量
+    SZSE 列: 融资买入额/融资余额/融券卖出量/融券余量/融券偿还量/融资融券余额
+    """
+    import requests as _rq
+
+    def _f(v):
+        try:
+            x = float(v)
+            return x if x == x else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+
+    rows = []
+    # 上交所 (位置索引访问, 防中文列名差异): 0日期 1代码 2名称 3融资余额 4融资买入额 5融资偿还额 6融券余量 7融券卖出量 8融券偿还量
+    try:
+        df = ak.stock_margin_detail_sse(date=date)
+        if df is not None and not df.empty:
+            for _, r in df.iterrows():
+                try:
+                    rows.append((str(r.iloc[1]), date, str(r.iloc[2]),
+                                 _f(r.iloc[3]), _f(r.iloc[4]), _f(r.iloc[5]),
+                                 _f(r.iloc[6]), _f(r.iloc[7]), _f(r.iloc[8]),
+                                 0.0))
+                except Exception:
+                    continue
+    except Exception as e:
+        log.warning("margin_sse %s 失败: %s", date, str(e)[:60])
+    # 深交所 (位置索引): 0代码 1名称 2融资买入额 3融资余额 4融券卖出量 5融券余量 6融券偿还量 7融资融券余额
+    try:
+        df = ak.stock_margin_detail_szse(date=date)
+        if df is not None and not df.empty:
+            for _, r in df.iterrows():
+                try:
+                    rows.append((str(r.iloc[0]), date, str(r.iloc[1]),
+                                 _f(r.iloc[3]), _f(r.iloc[2]), 0.0,
+                                 _f(r.iloc[5]), _f(r.iloc[4]), _f(r.iloc[6]),
+                                 _f(r.iloc[7])))
+                except Exception:
+                    continue
+    except Exception as e:
+        log.warning("margin_szse %s 失败: %s", date, str(e)[:60])
+    return rows
+
+
 def ak_get_etf_list() -> List[Dict]:
     """ETF实时行情"""
     try:
