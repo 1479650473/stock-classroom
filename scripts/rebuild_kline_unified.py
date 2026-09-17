@@ -85,6 +85,7 @@ def _proc_worker(codes: list) -> dict:
             fail += 1
         if (i + 1) % 50 == 0 or i + 1 == len(codes):
             print(f"    [proc {os.getpid()}] {i+1}/{len(codes)} ok={ok} fail={fail} rows={rows}", flush=True)
+    _flush(force=True)   # 结束前 flush 残留缓冲(否则每进程最后 <30000 行丢失)
     return {"ok": ok, "fail": fail, "rows": rows, "failed": failed}
 
 

@@ -14,13 +14,18 @@ bp = Blueprint("kline", __name__, url_prefix="/api")
 def kline():
     code = request.args.get("code", "").strip()
     days = int_arg(request.args.get("days"), 180, 5, 5000)
+    period = request.args.get("period", "daily").strip()   # daily|weekly|monthly
     if not code:
         return err(400, "missing_code", "需要 code 参数")
     try:
-        from data_manager import get_kline_data
         from indicators import enrich_kline
+        if period in ("weekly", "monthly"):
+            from data_manager import get_period_kline
+            kd = get_period_kline(code, period, days)
+            return ok(enrich_kline(kd), period=period)
+        from data_manager import get_kline_data
         kd = get_kline_data(code, days)
-        return ok(enrich_kline(kd))
+        return ok(enrich_kline(kd), period="daily")
     except Exception as e:
         return err(500, "kline_error", str(e))
 

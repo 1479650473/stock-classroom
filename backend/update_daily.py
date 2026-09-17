@@ -450,6 +450,16 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
         except Exception as e:
             out['steps']['fund_flow'] = str(e)[:120]
             lg.warning('  资金流失败: %s', str(e)[:80])
+        # ⑭ 周K/月K (从日K聚合增量重建最近60天)
+        try:
+            from data_manager import rebuild_period_kline
+            _pk = rebuild_period_kline(recent_days=60,
+                                       progress=lambda m, p=None: lg.info('  ' + str(m)))
+            out['steps']['period_kline'] = _pk
+            lg.info('  周K/月K: weekly=%s monthly=%s (%ss)', _pk.get('weekly'), _pk.get('monthly'), _pk.get('elapsed'))
+        except Exception as e:
+            out['steps']['period_kline'] = str(e)[:120]
+            lg.warning('  周K/月K失败: %s', str(e)[:80])
 
     out['finished'] = datetime.now().isoformat(timespec='seconds')
     out['elapsed'] = round(time.time() - t0, 1)

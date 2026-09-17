@@ -148,7 +148,9 @@ export const getNews = (code: string, limit = 20) => api.get<Record<string, unkn
 export const getQuote = (codes: string[]) => api.get<IndexQuote[]>('/api/market/quote', { codes: codes.join(',') })
 
 // ---- kline / stock ----
-export const getKline = (code: string, days = 250) => api.get<KlineBar[]>('/api/kline', { code, days })
+export type KlinePeriod = 'daily' | 'weekly' | 'monthly'
+export const getKline = (code: string, days = 250, period: KlinePeriod = 'daily') =>
+  api.get<KlineBar[]>('/api/kline', { code, days, period })
 export const getCyq = (code: string) => api.get<Record<string, unknown>[]>('/api/kline/cyq', { code })
 export const searchStock = (q: string, signal?: AbortSignal) => api.get<StockRef[]>('/api/stock/search', { q }, { signal })
 

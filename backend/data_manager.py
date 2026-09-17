@@ -1131,6 +1131,129 @@ def update_fund_flow(codes=None, workers: int = 10, progress=None) -> dict:
             "total": total, "elapsed": round(time.time() - t0, 1)}
 
 
+# ════════════════════════════════════════════════════════
+#  周K/月K (从日K聚合, kline_weekly / kline_monthly)
+# ════════════════════════════════════════════════════════
+def _period_agg(data, keyfn):
+    """data: [(date,o,h,l,c,vol,amt,turn)] 升序 → [(key,last_date,o,h,l,c,vol,amt,turn)]."""
+    out = []
+    cur_key = None
+    o = h = l = c = 0.0
+    vol = amt = turn_n = 0
+    turn_sum = 0.0
+    last_date = None
+    for r in data:
+        k = keyfn(r[0])
+        if k != cur_key:
+            if cur_key is not None:
+                out.append((cur_key, last_date, o, h, l, c, int(vol), amt,
+                            round(turn_sum / turn_n, 4) if turn_n else 0.0))
+            cur_key = k
+            o, h, l, c = r[1], r[2], r[3], r[4]
+            vol, amt, turn_sum, turn_n = 0, 0.0, 0.0, 0
+        else:
+            if r[2] > h:
+                h = r[2]
+            if r[3] < l:
+                l = r[3]
+        c = r[4]
+        vol += r[5] or 0
+        amt += r[6] or 0
+        if r[7]:
+            turn_sum += r[7]
+            turn_n += 1
+        last_date = r[0]
+    if cur_key is not None:
+        out.append((cur_key, last_date, o, h, l, c, int(vol), amt,
+                    round(turn_sum / turn_n, 4) if turn_n else 0.0))
+    return out
+
+
+def _week_key(d: str) -> str:
+    from datetime import datetime as _dt, timedelta as _td
+    dt = _dt(int(d[:4]), int(d[4:6]), int(d[6:8]))
+    return (dt - _td(days=dt.weekday())).strftime("%Y%m%d")
+
+
+def _month_key(d: str) -> str:
+    return d[:6]
+
+
+def rebuild_period_kline(recent_days: int = 0, progress=None) -> dict:
+    """从日K聚合重建周K/月K. recent_days=0 全量; >0 仅重建最近 N 天(每日增量).
+
+    表结构: (code, date=该周期最后交易日, open, high, low, close, volume, amount, turnover).
+    """
+    from datetime import datetime, timedelta
+    conn = get_kline_db()
+    c = conn.cursor()
+    if recent_days <= 0:
+        c.execute("DROP TABLE IF EXISTS kline_weekly")
+        c.execute("DROP TABLE IF EXISTS kline_monthly")
+    for t in ("kline_weekly", "kline_monthly"):
+        c.execute(f"""CREATE TABLE IF NOT EXISTS {t} (
+            code TEXT, date TEXT, open REAL, high REAL, low REAL, close REAL,
+            volume INTEGER, amount REAL, turnover REAL DEFAULT 0,
+            PRIMARY KEY (code, date))""")
+        c.execute(f"CREATE INDEX IF NOT EXISTS idx_{t}_code ON {t}(code, date)")
+
+    cutoff = ""
+    if recent_days > 0:
+        cutoff = (datetime.now() - timedelta(days=recent_days)).strftime("%Y%m%d")
+        c.execute("DELETE FROM kline_weekly WHERE date >= ?", (cutoff,))
+        c.execute("DELETE FROM kline_monthly WHERE date >= ?", (cutoff,))
+    conn.commit()
+
+    codes = [str(r[0]) for r in c.execute("SELECT DISTINCT code FROM kline_daily ORDER BY code")]
+    where = " AND date >= ?" if cutoff else ""
+    w_buf, m_buf = [], []
+    done = 0
+    t0 = time.time()
+    for code in codes:
+        params = (code, cutoff) if cutoff else (code,)
+        rows = c.execute(
+            "SELECT date, open, high, low, close, volume, amount, turnover "
+            f"FROM kline_daily WHERE code=?{where} ORDER BY date", params).fetchall()
+        if not rows:
+            continue
+        data = [(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]) for r in rows]
+        for _k, d, o, h, l, cl, v, a, tu in _period_agg(data, _week_key):
+            w_buf.append((code, d, o, h, l, cl, v, a, tu))
+        for _k, d, o, h, l, cl, v, a, tu in _period_agg(data, _month_key):
+            m_buf.append((code, d, o, h, l, cl, v, a, tu))
+        done += 1
+        if len(w_buf) >= 50000:
+            c.executemany("INSERT OR REPLACE INTO kline_weekly VALUES (?,?,?,?,?,?,?,?,?)", w_buf)
+            w_buf = []
+        if len(m_buf) >= 50000:
+            c.executemany("INSERT OR REPLACE INTO kline_monthly VALUES (?,?,?,?,?,?,?,?,?)", m_buf)
+            m_buf = []
+        if progress and done % 1000 == 0:
+            progress(f"聚合进度 {done}/{len(codes)}", None)
+    if w_buf:
+        c.executemany("INSERT OR REPLACE INTO kline_weekly VALUES (?,?,?,?,?,?,?,?,?)", w_buf)
+    if m_buf:
+        c.executemany("INSERT OR REPLACE INTO kline_monthly VALUES (?,?,?,?,?,?,?,?,?)", m_buf)
+    conn.commit()
+    w_n = c.execute("SELECT COUNT(*) FROM kline_weekly").fetchone()[0]
+    m_n = c.execute("SELECT COUNT(*) FROM kline_monthly").fetchone()[0]
+    conn.close()
+    log.info("period kline: weekly=%d monthly=%d (%s)", w_n, m_n,
+             "recent %dd" % recent_days if recent_days else "full")
+    return {"weekly": w_n, "monthly": m_n, "elapsed": round(time.time() - t0, 1)}
+
+
+def get_period_kline(code: str, period: str = "weekly", limit: int = 250) -> List[Dict]:
+    """读周K/月K (升序). period: weekly|monthly."""
+    table = "kline_weekly" if period == "weekly" else "kline_monthly"
+    conn = get_kline_db()
+    rows = conn.execute(
+        f"SELECT code, date, open, high, low, close, volume, amount, turnover "
+        f"FROM {table} WHERE code=? ORDER BY date DESC LIMIT ?", (code, limit)).fetchall()
+    conn.close()
+    return [dict(r) for r in reversed(rows)]
+
+
 def cache_sector_board_from_akshare():
     """写入 sector_board 快照表(991行: 行业/概念板块涨跌榜, 含 leader).
 
@@ -1309,35 +1432,6 @@ def cache_high_low_from_akshare():
 
 
 
-def build_weekly_kline(full: bool = False):
-    from datetime import datetime, timedelta
-    conn = get_kline_db()
-    conn.execute('CREATE TABLE IF NOT EXISTS kline_weekly (code TEXT, week_start TEXT, open REAL, high REAL, low REAL, close REAL, volume INTEGER, amount REAL, turnover REAL DEFAULT 0, PRIMARY KEY (code, week_start))')
-    latest = conn.execute('SELECT MAX(date) FROM kline_daily').fetchone()[0]
-    dt = datetime.strptime(latest, '%Y%m%d')
-    cur_week = (dt - timedelta(days=dt.weekday())).strftime('%Y%m%d')
-    if full:
-        conn.execute('DELETE FROM kline_weekly')
-        min_d = conn.execute('SELECT MIN(date) FROM kline_daily').fetchone()[0]
-    else:
-        conn.execute('DELETE FROM kline_weekly WHERE week_start=?', (cur_week,))
-        min_d = cur_week
-    sql = (
-        "INSERT INTO kline_weekly SELECT code, week_start, "
-        "MAX(CASE WHEN rn=1 THEN open END), MAX(high), MIN(low), "
-        "MAX(CASE WHEN rn_desc=1 THEN close END), "
-        "SUM(volume), SUM(amount), AVG(turnover) "
-        "FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY code, week_start ORDER BY date) as rn, "
-        "ROW_NUMBER() OVER (PARTITION BY code, week_start ORDER BY date DESC) as rn_desc "
-        "FROM (SELECT *, date(SUBSTR(date,1,4)||'-'||SUBSTR(date,5,2)||'-'||SUBSTR(date,7,2), 'weekday 1', '-7 days') as week_start "
-        "FROM kline_daily WHERE date>=? AND date<=?)) GROUP BY code, week_start"
-    )
-    conn.execute(sql, (min_d, latest))
-    conn.commit()
-    cnt = conn.execute('SELECT COUNT(*) FROM kline_weekly').fetchone()[0]
-    conn.close()
-    log.info('weekly: %d rows', cnt)
-    return cnt
 def smart_refresh_cache():
     """智能刷新缓存：交易时段拉行情，收盘后拉涨停/龙虎榜，其他数据随时拉"""
     from datetime import datetime as dt

@@ -274,6 +274,14 @@ def _normalize_kline_rows(stored: str, df, days: int = 10):
               "成交量": "volume", "volume": "volume", "成交额": "amount", "amount": "amount",
               "换手率": "turnover", "turnover": "turnover"}
     d = d.rename(columns={k: v for k, v in colmap.items() if k in d.columns})
+    # 腾讯源特征: 无 volume 列, 其 "amount" 列实为成交量(手) → 转股 + 估算成交额
+    # (东财/新浪均有独立 volume+amount 列, 不受影响)
+    if "volume" not in d.columns and "amount" in d.columns:
+        try:
+            d["volume"] = d["amount"] * 100          # 手 → 股
+            d["amount"] = d["close"] * d["volume"]   # 估算成交额(元)
+        except Exception:
+            pass
     rows = []
     for _, bar in d.tail(days).iterrows():
         try:

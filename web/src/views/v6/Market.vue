@@ -33,6 +33,13 @@ const tab = ref<Tab>(route.query.tab === 'stock' ? 'stock' : route.query.tab ===
 const code = usePersistedRef('market.code', String(route.query.code || ''))
 const stockName = ref(String(route.query.name || ''))
 const days = usePersistedRef('market.days', '250')
+const period = usePersistedRef<'daily' | 'weekly' | 'monthly'>('market.period', 'daily')
+
+const PERIOD_OPTIONS = [
+  { value: 'daily', label: '日K' },
+  { value: 'weekly', label: '周K' },
+  { value: 'monthly', label: '月K' },
+]
 
 const indices = ref<IndexQuote[]>([])
 const sectors = ref<Record<string, unknown>[]>([])
@@ -112,8 +119,10 @@ async function loadKline() {
   klineError.value = ''
   try {
     const [bars, ff] = await Promise.all([
-      getKline(code.value, Number(days.value)),
-      getFundFlow(code.value, Number(days.value)).catch(() => [] as FundFlowBar[]),
+      getKline(code.value, Number(days.value), period.value),
+      period.value === 'daily'
+        ? getFundFlow(code.value, Number(days.value)).catch(() => [] as FundFlowBar[])
+        : Promise.resolve([] as FundFlowBar[]),
     ])
     kline.value = bars
     fundFlow.value = ff
@@ -154,6 +163,7 @@ watch(tab, (v) => {
   router.replace({ query: { ...route.query, tab: v } })
 })
 watch(days, () => { if (code.value) loadKline() })
+watch(period, () => { if (code.value) loadKline() })
 watch(
   () => route.query,
   (q) => {
@@ -227,12 +237,10 @@ onMounted(() => {
       <div style="padding: 0 var(--sp-5)">
         <PageToolbar v-model="tab" :tabs="TABS">
           <template #extra>
-            <SegmentedControl
-              v-if="tab === 'stock'"
-              v-model="days"
-              size="sm"
-              :options="DAY_OPTIONS"
-            />
+            <template v-if="tab === 'stock'">
+              <SegmentedControl v-model="period" size="sm" :options="PERIOD_OPTIONS" />
+              <SegmentedControl v-model="days" size="sm" :options="DAY_OPTIONS" />
+            </template>
           </template>
         </PageToolbar>
       </div>
