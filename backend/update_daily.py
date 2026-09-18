@@ -495,6 +495,28 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
         except Exception as e:
             out['steps']['lhb_margin'] = str(e)[:120]
             lg.warning('  龙虎榜/融资融券失败: %s', str(e)[:80])
+        # ⑯ 行业市盈率(巨潮证监会行业分类 120 行业, 日频)
+        try:
+            from data_manager import init_industry_pe_table, cache_industry_pe
+            init_industry_pe_table()
+            _ipe = cache_industry_pe()   # 默认今日
+            out['steps']['industry_pe'] = {'rows': _ipe}
+            lg.info('  行业PE: %d 行业', _ipe)
+        except Exception as e:
+            out['steps']['industry_pe'] = str(e)[:120]
+            lg.warning('  行业PE失败: %s', str(e)[:80])
+        # ⑰ 筹码分布全市场重算(最近250天, subprocess 多进程 — 独立进程避免 Flask job 内 mp 问题)
+        try:
+            import subprocess as _sp
+            _chip_script = os.path.join(ROOT, 'scripts', 'rebuild_chip.py')
+            _r = _sp.run([sys.executable, _chip_script, '--days', '250'],
+                         cwd=ROOT, capture_output=True, text=True, timeout=5400)
+            _tail = (_r.stdout or '')[-300:]
+            out['steps']['chip'] = 'ok' if _r.returncode == 0 else 'rc=%s %s' % (_r.returncode, _tail[:150])
+            lg.info('  筹码分布: %s', out['steps']['chip'] if _r.returncode == 0 else out['steps']['chip'])
+        except Exception as e:
+            out['steps']['chip'] = str(e)[:120]
+            lg.warning('  筹码分布失败: %s', str(e)[:80])
 
     out['finished'] = datetime.now().isoformat(timespec='seconds')
     out['elapsed'] = round(time.time() - t0, 1)

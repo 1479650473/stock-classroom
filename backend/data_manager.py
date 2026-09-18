@@ -1365,6 +1365,124 @@ def get_margin(code: str, days: int = 250) -> List[Dict]:
     return [dict(r) for r in reversed(rows)]
 
 
+# ════════════════════════════════════════════════════════
+#  行业市盈率 (industry_pe, 巨潮证监会行业分类 120 行业)
+# ════════════════════════════════════════════════════════
+def init_industry_pe_table():
+    conn = get_kline_db()
+    conn.execute("""CREATE TABLE IF NOT EXISTS industry_pe (
+        date TEXT, code TEXT, name TEXT, category TEXT, level TEXT,
+        company_count INTEGER, calc_count INTEGER, total_mv REAL, net_profit REAL,
+        pe_weighted REAL, pe_median REAL, pe_avg REAL,
+        PRIMARY KEY (date, code))""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_industry_pe_date ON industry_pe(date)")
+    conn.commit()
+    conn.close()
+
+
+def cache_industry_pe(date: str = None) -> int:
+    """拉取指定日期(默认最近交易日)行业市盈率并写入. 返回行数."""
+    from akshare_source import ak_get_industry_pe
+    if date is None:
+        date = datetime.now().strftime("%Y%m%d")
+    data = ak_get_industry_pe(date)
+    if not data:
+        return 0
+    conn = get_kline_db()
+    conn.executemany(
+        "INSERT OR REPLACE INTO industry_pe "
+        "(date,code,name,category,level,company_count,calc_count,total_mv,net_profit,"
+        "pe_weighted,pe_median,pe_avg) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        [(d["date"], d["code"], d["name"], d["category"], d["level"],
+          d["company_count"], d["calc_count"], d["total_mv"], d["net_profit"],
+          d["pe_weighted"], d["pe_median"], d["pe_avg"]) for d in data])
+    conn.commit()
+    conn.close()
+    log.info("cached %d industry_pe rows for %s", len(data), date)
+    return len(data)
+
+
+def get_industry_pe(date: str = None, level: str = "") -> List[Dict]:
+    """行业市盈率. date=None 取最新日期; level='1'/'2' 过滤层级."""
+    conn = get_kline_db()
+    if not date:
+        date = conn.execute("SELECT MAX(date) FROM industry_pe").fetchone()[0]
+    if not date:
+        conn.close()
+        return []
+    sql = "SELECT * FROM industry_pe WHERE date=?"
+    params = [date]
+    if level:
+        sql += " AND level=?"
+        params.append(level)
+    sql += " ORDER BY code"
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# ════════════════════════════════════════════════════════
+#  筹码分布 (chip_distribution, 全市场最近 N 天)
+# ════════════════════════════════════════════════════════
+def _chip_worker(codes: list, days: int) -> dict:
+    """多进程 worker: 每进程独立 py_mini_racer(V8 并发会崩, 必须多进程)."""
+    from akshare_source import ak_get_cyq_chip_data
+    import sqlite3 as _sq
+    ok = fail = rows_n = 0
+    failed = []
+    db = KLINE_DB
+    for code in codes:
+        try:
+            data = ak_get_cyq_chip_data(code, days=days)
+            if not data:
+                fail += 1
+                failed.append(code)
+                continue
+            con = _sq.connect(db, timeout=60)
+            con.executemany(
+                "INSERT OR REPLACE INTO chip_distribution (code, date, [获利比例], [平均成本], "
+                "[90成本_低], [90成本_高], [90集中度], [70成本_低], [70成本_高], [70集中度], updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                [(d["code"], d["date"], d["获利比例"], d["平均成本"],
+                  d["90成本-低"], d["90成本-高"], d["90集中度"],
+                  d["70成本-低"], d["70成本-高"], d["70集中度"],
+                  datetime.now().strftime("%Y-%m-%d %H:%M:%S")) for d in data])
+            con.commit()
+            con.close()
+            ok += 1
+            rows_n += len(data)
+        except Exception:
+            fail += 1
+            failed.append(code)
+    return {"ok": ok, "fail": fail, "rows": rows_n, "failed": failed}
+
+
+def update_chip_all(days: int = 250, procs: int = 6, progress=None) -> dict:
+    """全市场筹码分布重算(最近 days 天). 多进程(每进程独立 V8). 返回 {ok, fail, rows}."""
+    import multiprocessing as mp
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    conn = get_kline_db()
+    codes = [str(r[0]) for r in conn.execute(
+        "SELECT code FROM stock_list WHERE status='active' AND substr(code,1,2) IN ('00','30','60','68') "
+        "ORDER BY code").fetchall()]
+    conn.close()
+    total = len(codes)
+    chunks = [codes[i::procs] for i in range(procs)]
+    chunks = [ch for ch in chunks if ch]
+    t0 = time.time()
+    ok = fail = rows_n = 0
+    # 用线程池跑多个"进程池任务"? 直接用 mp.Pool
+    with mp.Pool(len(chunks)) as pool:
+        results = pool.starmap(_chip_worker, [(ch, days) for ch in chunks])
+    for r in results:
+        ok += r["ok"]
+        fail += r["fail"]
+        rows_n += r["rows"]
+    el = round(time.time() - t0, 1)
+    log.info("chip update: ok=%d fail=%d rows=%d (%ss)", ok, fail, rows_n, el)
+    return {"ok": ok, "fail": fail, "rows": rows_n, "total": total, "elapsed": el}
+
+
 def cache_sector_board_from_akshare():
     """写入 sector_board 快照表(991行: 行业/概念板块涨跌榜, 含 leader).
 

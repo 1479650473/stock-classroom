@@ -478,6 +478,50 @@ def ak_get_sectors(sector_type: str = "industry") -> List[Dict]:
         return []
 
 
+def ak_get_industry_pe(date: str) -> List[Dict]:
+    """巨潮行业市盈率(证监会行业分类, 120 行业). date=YYYYMMDD.
+
+    列(位置索引, 防中文列名差异): 0变动日期 1行业分类 2行业层级 3行业代码 4行业名称
+      5公司数量 6纳入计算公司数量 7总市值-静态 8净利润-静态
+      9静态市盈率-加权平均 10静态市盈率-中位数 11静态市盈率-算术平均
+    """
+    try:
+        df = ak.stock_industry_pe_ratio_cninfo(symbol="证监会行业分类", date=date)
+        if df is None or df.empty:
+            return []
+
+        def _f(v, d=0.0):
+            try:
+                x = float(v)
+                return x if x == x else d
+            except (TypeError, ValueError):
+                return d
+
+        results = []
+        for _, r in df.iterrows():
+            try:
+                results.append({
+                    "date": str(r.iloc[0]).replace("-", "")[:8],
+                    "category": str(r.iloc[1]),
+                    "level": str(r.iloc[2]),
+                    "code": str(r.iloc[3]),
+                    "name": str(r.iloc[4]),
+                    "company_count": int(_f(r.iloc[5])),
+                    "calc_count": int(_f(r.iloc[6])),
+                    "total_mv": _f(r.iloc[7]),
+                    "net_profit": _f(r.iloc[8]),
+                    "pe_weighted": _f(r.iloc[9]),
+                    "pe_median": _f(r.iloc[10]),
+                    "pe_avg": _f(r.iloc[11]),
+                })
+            except Exception:
+                continue
+        return results
+    except Exception as e:
+        log.warning("industry_pe %s failed: %s", date, str(e)[:60])
+        return []
+
+
 def ak_get_sectors_ths() -> List[Dict]:
     """同花顺行业板块行情(东财板块接口反爬时的备选). 含领涨股/涨跌家数.
 

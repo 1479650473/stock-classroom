@@ -102,6 +102,18 @@ def north_flow():
         return err(502, "market_error", str(e), retriable=True)
 
 
+@bp.route("/industry-pe")
+def industry_pe():
+    """行业市盈率(巨潮证监会行业分类). ?date=&level=1|2"""
+    date = request.args.get("date", "").strip().replace("-", "") or None
+    level = request.args.get("level", "").strip()
+    try:
+        from data_manager import get_industry_pe
+        return ok(get_industry_pe(date, level))
+    except Exception as e:
+        return err(502, "market_error", str(e), retriable=True)
+
+
 @bp.route("/news")
 def news():
     code = request.args.get("code", "000001")
