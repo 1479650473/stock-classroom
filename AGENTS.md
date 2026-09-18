@@ -162,6 +162,8 @@ Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
 | Backend | `backend/api/blueprints/lhb_margin.py` | **龙虎榜/融资融券**: `/api/lhb`(单股/最近明细) + `/api/margin`(单股融资融券历史); lhb_daily 24.2万行(2010起) + margin_daily(2010-03起) |
 | Scripts | `scripts/rebuild_lhb_margin.py` | 龙虎榜+融资融券全历史首拉(季度批次/按日16线程续跑); update_daily ⑮步回补 |
 | Backend | `backend/data_manager.py` | `rebuild_period_kline`(周K/月K聚合: kline_weekly 293万行+kline_monthly 70万行) + `get_period_kline`; update_daily ⑭步增量 |
+| Backend | `industry_pe` 表 + `/api/market/industry-pe` | **行业市盈率**(巨潮证监会行业分类 120 行业, 加权/中位/算术平均, 日频); update_daily ⑯步 |
+| Scripts | `scripts/rebuild_chip.py` | **筹码分布全市场**(250天, 多进程每进程独立V8); `update_chip_all`; update_daily ⑰步每日重算 |
 
 ## Navigation (v6)
 `web/src/lib/nav.ts` = [工作台, 行情, 策略, 交易, AI, 数据]；设置入口在顶栏右侧。旧页面 (Research/Optimize/Replay/Agent/AgentOps/Pipeline/DataCenter/Trainer) 仍被新页面内嵌复用，保留。
