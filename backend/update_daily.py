@@ -72,17 +72,27 @@ def _log():
     return lg
 
 
-def refresh_fundamentals(codes, workers=16, progress=None):
-    """并行刷新基本面(东财估值, 每code ~2s 全历史). 只刷已缓存/有盘的, 防误杀新股. 返回 {updated, skipped}."""
+def refresh_fundamentals(codes, workers=16, progress=None, budget_secs=1800):
+    """并行刷新基本面(东财估值, 每code ~2s 全历史). 只刷已缓存/有盘的, 防误杀新股.
+
+    东财反爬时接口挂起 → 加时间预算(默认30分钟) + 连续失败快速退出, 防阻塞后续步骤.
+    """
     from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
     import fundamental as fund
     updated = skipped = 0
+    deadline = time.time() + budget_secs
+    consec_fail = 0
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futs = {pool.submit(fund.fetch_fundamental, c): c for c in codes}
         done = 0
         pending = dict(futs)
         while pending:
-            # wait 20s 无任何完成 → 剩余全部放弃(东财接口可能永久挂起, 防死循环)
+            if time.time() > deadline:
+                skipped += len(pending)
+                log_budget = len(pending)
+                print(f"  基本面: 时间预算 {budget_secs}s 用尽, 跳过剩余 {log_budget} 只", flush=True)
+                pending.clear()
+                break
             finished, _ = wait(list(pending), timeout=20, return_when=FIRST_COMPLETED)
             if not finished:
                 skipped += len(pending)
@@ -95,12 +105,21 @@ def refresh_fundamentals(codes, workers=16, progress=None):
                     rows = f.result()
                     if rows:
                         updated += 1
+                        consec_fail = 0
                     else:
                         skipped += 1
+                        consec_fail += 1
                 except Exception:
                     skipped += 1
+                    consec_fail += 1
                 if progress and (done % 40 == 0 or done == len(codes)):
                     progress(done, len(codes), updated, skipped)
+                if consec_fail >= 30:
+                    # 连续失败判定源故障(反爬), 放弃剩余
+                    skipped += len(pending)
+                    print(f"  基本面: 连续失败 {consec_fail} 只(源故障), 跳过剩余 {len(pending)} 只", flush=True)
+                    pending.clear()
+                    break
     return {'updated': updated, 'skipped': skipped}
 
 

@@ -984,9 +984,10 @@ def get_etf_compare(codes: List[str], days: int = 250) -> dict:
     return {"dates": dates or [], "series": series}
 
 
-def update_etf_kline(codes=None, workers: int = 10, progress=None) -> dict:
+def update_etf_kline(codes=None, workers: int = 10, progress=None, budget_secs: int = 1200) -> dict:
     """ETF K线增量更新. codes=None 时自动选落后(etf_daily 最新 < 日K最新交易日)的 ETF.
 
+    加时间预算(默认20分钟)防新浪反爬时阻塞后续步骤.
     Returns: {updated, skipped, errors, rows_added, total}
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1004,6 +1005,7 @@ def update_etf_kline(codes=None, workers: int = 10, progress=None) -> dict:
     updated = skipped = errors = rows_added = 0
     batch = []
     t0 = time.time()
+    deadline = t0 + budget_secs
 
     def _fetch(c):
         rows = ak_fetch_etf_kline(c)
@@ -1015,6 +1017,10 @@ def update_etf_kline(codes=None, workers: int = 10, progress=None) -> dict:
         for f in as_completed(futs):
             c = futs[f]
             done += 1
+            if time.time() > deadline:
+                errors += total - done
+                log.warning("etf: 时间预算 %ds 用尽, 跳过剩余 %d 只", budget_secs, total - done)
+                break
             try:
                 rows, _ = f.result(timeout=60)
             except Exception:
@@ -1082,7 +1088,7 @@ def get_fund_flow(code: str, days: int = 250) -> List[Dict]:
     return out
 
 
-def update_fund_flow(codes=None, workers: int = 10, progress=None) -> dict:
+def update_fund_flow(codes=None, workers: int = 10, progress=None, budget_secs: int = 1800) -> dict:
     """个股资金流增量更新(新浪主源, 幂等 INSERT OR REPLACE).
 
     codes=None 时自动选"落后股票"(fund_flow 最新日期 < 日K最新交易日) + 无记录新股,
@@ -1106,14 +1112,26 @@ def update_fund_flow(codes=None, workers: int = 10, progress=None) -> dict:
     t0 = time.time()
 
     def _fetch(c):
+        # 每只重置坏源缓存: 新浪限流是周期性窗口(数分钟), 不应触发 300s 全局暂停
+        try:
+            from akshare_source import _SRC_HEALTH
+            _SRC_HEALTH.pop("sina", None)
+            _SRC_HEALTH.pop("em", None)
+        except Exception:
+            pass
         return ak_fetch_fund_flow(c), c
 
     done = 0
+    deadline = t0 + budget_secs
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futs = {pool.submit(_fetch, c): c for c in codes}
         for f in as_completed(futs):
             c = futs[f]
             done += 1
+            if time.time() > deadline:
+                errors += total - done
+                log.warning("fund_flow: 时间预算 %ds 用尽, 跳过剩余 %d 只", budget_secs, total - done)
+                break
             try:
                 rows, _ = f.result(timeout=70)
             except Exception:
