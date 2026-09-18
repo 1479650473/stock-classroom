@@ -994,11 +994,12 @@ def update_etf_kline(codes=None, workers: int = 10, progress=None) -> dict:
     if codes is None:
         conn = get_kline_db()
         latest = conn.execute("SELECT MAX(date) FROM kline_2026").fetchone()[0] or ""
+        today = datetime.now().strftime("%Y%m%d")
         rows = conn.execute(
             "SELECT l.code, COALESCE((SELECT MAX(date) FROM etf_daily e WHERE e.code=l.code), '') md "
             "FROM etf_list l").fetchall()
         conn.close()
-        codes = [str(r[0]) for r in rows if str(r[1]) < str(latest)]
+        codes = [str(r[0]) for r in rows if str(r[1]) < str(latest) or str(r[1]) == today]
     total = len(codes)
     updated = skipped = errors = rows_added = 0
     batch = []
@@ -1092,11 +1093,13 @@ def update_fund_flow(codes=None, workers: int = 10, progress=None) -> dict:
     if codes is None:
         conn = get_kline_db()
         latest = conn.execute("SELECT MAX(date) FROM kline_2026").fetchone()[0] or ""
+        today = datetime.now().strftime("%Y%m%d")
         rows = conn.execute(
             "SELECT s.code, COALESCE((SELECT MAX(date) FROM fund_flow_daily f WHERE f.code=s.code), '') md "
             "FROM stock_list s WHERE s.status='active' AND substr(s.code,1,2) IN ('00','30','60','68')").fetchall()
         conn.close()
-        codes = [str(r[0]) for r in rows if str(r[1]) < str(latest)]
+        # 落后于日K最新 或 已有当日行(可能盘中快照, 收盘后重拉覆盖)
+        codes = [str(r[0]) for r in rows if str(r[1]) < str(latest) or str(r[1]) == today]
     total = len(codes)
     updated = errors = rows_added = 0
     batch = []
