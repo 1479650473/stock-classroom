@@ -478,6 +478,46 @@ def ak_get_sectors(sector_type: str = "industry") -> List[Dict]:
         return []
 
 
+def ak_get_sectors_ths() -> List[Dict]:
+    """同花顺行业板块行情(东财板块接口反爬时的备选). 含领涨股/涨跌家数.
+
+    列: 序号/板块/涨跌幅/总成交量/总成交额/净流入/上涨家数/下跌家数/领涨股/领涨股-最新价/领涨股-涨跌幅
+    """
+    try:
+        df = ak.stock_board_industry_summary_ths()
+        if df is None or df.empty:
+            return []
+
+        def _f(v, d=0.0):
+            try:
+                x = float(v)
+                return x if x == x else d
+            except (TypeError, ValueError):
+                return d
+
+        results = []
+        for _, row in df.iterrows():
+            name = str(row.iloc[1])
+            # 列: 0序号 1板块 2涨跌幅 3总成交量 4总成交额 5净流入 6上涨家数 7下跌家数
+            #     8均价 9领涨股 10领涨股-最新价 11领涨股-涨跌幅
+            results.append({
+                "name": name,
+                "code": "THS_" + name,
+                "price": _f(row.iloc[8]) if len(row) > 8 else 0.0,
+                "change_pct": _f(row.iloc[2]),
+                "up_count": int(_f(row.iloc[6])),
+                "down_count": int(_f(row.iloc[7])),
+                "leader": str(row.iloc[9]) if len(row) > 9 else "",
+                "leader_chg": _f(row.iloc[11]) if len(row) > 11 else 0.0,
+                "source": "ths",
+            })
+        results.sort(key=lambda x: x["change_pct"], reverse=True)
+        return results
+    except Exception as e:
+        log.warning("THS sectors failed: %s", str(e)[:60])
+        return []
+
+
 def ak_get_north_flow(days: int = 30) -> List[Dict]:
     """北向资金净流入"""
     try:

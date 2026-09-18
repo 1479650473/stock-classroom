@@ -985,7 +985,7 @@ def get_etf_compare(codes: List[str], days: int = 250) -> dict:
 
 
 def update_etf_kline(codes=None, workers: int = 10, progress=None) -> dict:
-    """ETF K线增量更新(多进程安全: 单进程多线程). 缺数据的全历史首拉, 存量按缺口补.
+    """ETF K线增量更新. codes=None 时自动选落后(etf_daily 最新 < 日K最新交易日)的 ETF.
 
     Returns: {updated, skipped, errors, rows_added, total}
     """
@@ -993,8 +993,12 @@ def update_etf_kline(codes=None, workers: int = 10, progress=None) -> dict:
     from akshare_source import ak_fetch_etf_kline
     if codes is None:
         conn = get_kline_db()
-        codes = [str(r[0]) for r in conn.execute("SELECT code FROM etf_list ORDER BY code").fetchall()]
+        latest = conn.execute("SELECT MAX(date) FROM kline_2026").fetchone()[0] or ""
+        rows = conn.execute(
+            "SELECT l.code, COALESCE((SELECT MAX(date) FROM etf_daily e WHERE e.code=l.code), '') md "
+            "FROM etf_list l").fetchall()
         conn.close()
+        codes = [str(r[0]) for r in rows if str(r[1]) < str(latest)]
     total = len(codes)
     updated = skipped = errors = rows_added = 0
     batch = []
@@ -1078,19 +1082,21 @@ def get_fund_flow(code: str, days: int = 250) -> List[Dict]:
 
 
 def update_fund_flow(codes=None, workers: int = 10, progress=None) -> dict:
-    """个股资金流全历史增量(东财 daykline, 幂等 INSERT OR REPLACE).
+    """个股资金流增量更新(新浪主源, 幂等 INSERT OR REPLACE).
 
-    全量拉取(接口无日期窗口), 已最新的股票数据量小但请求照发 — 东财恢复后
-    首拉 ~5200 只; 每日增量同样全量重拉(每只 1 请求, 10 线程 ~15-25 分钟).
+    codes=None 时自动选"落后股票"(fund_flow 最新日期 < 日K最新交易日) + 无记录新股,
+    通常几十只 → 每日增量 ~1-2 分钟; 全量首拉用 scripts/rebuild_fund_flow.py.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from akshare_source import ak_fetch_fund_flow
     if codes is None:
         conn = get_kline_db()
-        codes = [str(r[0]) for r in conn.execute(
-            "SELECT code FROM stock_list WHERE status='active' AND code[:2] IN ('00','30','60','68') "
-            "ORDER BY code").fetchall()]
+        latest = conn.execute("SELECT MAX(date) FROM kline_2026").fetchone()[0] or ""
+        rows = conn.execute(
+            "SELECT s.code, COALESCE((SELECT MAX(date) FROM fund_flow_daily f WHERE f.code=s.code), '') md "
+            "FROM stock_list s WHERE s.status='active' AND substr(s.code,1,2) IN ('00','30','60','68')").fetchall()
         conn.close()
+        codes = [str(r[0]) for r in rows if str(r[1]) < str(latest)]
     total = len(codes)
     updated = errors = rows_added = 0
     batch = []
@@ -1363,14 +1369,23 @@ def cache_sector_board_from_akshare():
         total = 0
         for s_type in ("industry", "concept"):
             data = ak_get_sectors(s_type) or []
+            # 东财反爬时行业板块用同花顺备选(含领涨股)
+            if not data and s_type == "industry":
+                try:
+                    from akshare_source import ak_get_sectors_ths
+                    data = ak_get_sectors_ths() or []
+                except Exception:
+                    data = []
             for i, d in enumerate(data):
                 code = str(d.get("code", ""))
                 name = str(d.get("name", ""))
                 old = conn.execute("SELECT leader, leader_chg FROM sector_board WHERE code=? AND type=?",
                                    (code, s_type)).fetchone()
-                leader = (old[0] if old and old[0] else
-                          limit_map.get(code, limit_map.get(str(i + 1), "")))
-                leader_chg = (old[1] if old and old[1] is not None else 0.0)
+                # 新值优先, 空则保留旧值(防源缺字段时清掉)
+                new_leader = str(d.get("leader", "") or "") or limit_map.get(code, "")
+                leader = new_leader or (old[0] if old and old[0] else "")
+                new_chg = float(d.get("leader_chg", 0) or 0)
+                leader_chg = new_chg if new_chg else (old[1] if old and old[1] is not None else 0.0)
                 conn.execute("""INSERT OR REPLACE INTO sector_board
                     (code, name, type, rank, latest_price, change_pct, up_count, dn_count,
                      leader, leader_chg, updated_at)
