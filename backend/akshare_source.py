@@ -756,8 +756,9 @@ def ak_fetch_margin_day(date: str, timeout: float = 30.0) -> List[tuple]:
 
     rows = []
     # 上交所 (位置索引访问, 防中文列名差异): 0日期 1代码 2名称 3融资余额 4融资买入额 5融资偿还额 6融券余量 7融券卖出量 8融券偿还量
+    # 交易所接口无超时, 用 _run_with_timeout 防挂起(akshare 内部 requests 无 timeout)
     try:
-        df = ak.stock_margin_detail_sse(date=date)
+        df = _run_with_timeout(lambda: ak.stock_margin_detail_sse(date=date), timeout)
         if df is not None and not df.empty:
             for _, r in df.iterrows():
                 try:
@@ -771,7 +772,7 @@ def ak_fetch_margin_day(date: str, timeout: float = 30.0) -> List[tuple]:
         log.warning("margin_sse %s 失败: %s", date, str(e)[:60])
     # 深交所 (位置索引): 0代码 1名称 2融资买入额 3融资余额 4融券卖出量 5融券余量 6融券偿还量 7融资融券余额
     try:
-        df = ak.stock_margin_detail_szse(date=date)
+        df = _run_with_timeout(lambda: ak.stock_margin_detail_szse(date=date), timeout)
         if df is not None and not df.empty:
             for _, r in df.iterrows():
                 try:
