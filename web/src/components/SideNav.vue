@@ -2,6 +2,7 @@
 import { useRoute } from 'vue-router'
 import Icon from './Icon.vue'
 import { NAV } from '@/lib/nav'
+import { isTauri } from '@/lib/tauri'
 
 const route = useRoute()
 </script>
@@ -24,7 +25,7 @@ const route = useRoute()
       </router-link>
     </div>
     <div class="spacer" />
-    <div class="foot muted">v6.0 · Web</div>
+    <div class="foot muted">v5.2 · {{ isTauri() ? '桌面端' : 'Web' }}</div>
   </nav>
 </template>
 

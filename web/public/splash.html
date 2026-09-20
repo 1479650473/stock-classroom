@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>股票教室</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: transparent;
+    overflow: hidden;
+    font-family: 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', system-ui, sans-serif;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  /* 承载卡片：窗口是透明的，圆角与阴影都由 CSS 画，视觉上像微信启动窗 */
+  .splash {
+    position: absolute;
+    inset: 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    padding: 28px 30px;
+    border-radius: 18px;
+    background: linear-gradient(180deg, #1c2028 0%, #14171c 55%, #0b0d11 100%);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    animation: in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  @keyframes in {
+    from { opacity: 0; transform: translateY(8px) scale(0.985); }
+    to { opacity: 1; transform: none; }
+  }
+  /* 顶部一抹金色氛围光 */
+  .splash::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 46%;
+    border-radius: 18px 18px 60% 60%;
+    background: radial-gradient(70% 100% at 50% 0%, rgba(212, 165, 116, 0.18), transparent 70%);
+    pointer-events: none;
+  }
+  .logo { width: 96px; height: 96px; position: relative; z-index: 1; }
+  .name {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 6px;
+    color: #e8eaed;
+    position: relative;
+    z-index: 1;
+  }
+  .sub {
+    margin-top: -10px;
+    font-size: 12px;
+    letter-spacing: 2px;
+    color: #7c8695;
+    position: relative;
+    z-index: 1;
+  }
+  .bar {
+    width: 200px;
+    height: 3px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+    margin-top: 6px;
+    position: relative;
+    z-index: 1;
+  }
+  .bar > i {
+    display: block;
+    width: 12%;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, rgba(212, 165, 116, 0.55), #d4a574);
+    box-shadow: 0 0 12px rgba(212, 165, 116, 0.55);
+    transition: width 0.9s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .status {
+    font-size: 12px;
+    color: #6b7381;
+    letter-spacing: 0.5px;
+    position: relative;
+    z-index: 1;
+  }
+  .ver {
+    position: absolute;
+    bottom: 18px;
+    font-size: 11px;
+    letter-spacing: 1px;
+    color: #4b525c;
+  }
+</style>
+</head>
+<body>
+  <div class="splash">
+    <!-- 与应用图标同构的 K 线标记 -->
+    <svg class="logo" viewBox="0 0 128 128" aria-hidden="true">
+      <defs>
+        <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#1e232b"/>
+          <stop offset="1" stop-color="#0d1014"/>
+        </linearGradient>
+      </defs>
+      <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#card)" stroke="rgba(212,165,116,.32)"/>
+      <g stroke-linecap="round">
+        <line x1="28" y1="74" x2="28" y2="96" stroke="#e5484d" stroke-width="2.5"/>
+        <rect x="23" y="78" width="10" height="14" rx="2.5" fill="#e5484d"/>
+        <line x1="50" y1="62" x2="50" y2="96" stroke="#3fb950" stroke-width="2.5"/>
+        <rect x="45" y="68" width="10" height="24" rx="2.5" fill="#3fb950"/>
+        <line x1="72" y1="50" x2="72" y2="96" stroke="#e5484d" stroke-width="2.5"/>
+        <rect x="67" y="56" width="10" height="36" rx="2.5" fill="#e5484d"/>
+        <line x1="94" y1="34" x2="94" y2="96" stroke="#3fb950" stroke-width="2.5"/>
+        <rect x="89" y="40" width="10" height="52" rx="2.5" fill="#3fb950"/>
+      </g>
+      <path d="M28 70 L50 56 L72 44 L94 30" fill="none" stroke="#d4a574" stroke-width="3.4" stroke-linejoin="round" stroke-linecap="round"/>
+      <circle cx="94" cy="30" r="5.4" fill="#d4a574"/>
+      <circle cx="94" cy="30" r="2.1" fill="#0d1014"/>
+    </svg>
+    <div class="name">股票教室</div>
+    <div class="sub">A 股量化工作台</div>
+    <div class="bar"><i id="bar"></i></div>
+    <div class="status" id="status">正在启动…</div>
+    <div class="ver">v5.2</div>
+  </div>
+
+  <script>
+    const STATUS = ['正在启动本地服务…', '正在检查行情数据…', '正在载入工作台…']
+    let step = 0
+    const bar = document.getElementById('bar')
+    const text = document.getElementById('status')
+    const widths = ['38%', '72%', '92%']
+    function tick() {
+      if (step >= STATUS.length - 1) return
+      step += 1
+      text.textContent = STATUS[step]
+      bar.style.width = widths[step]
+    }
+    setTimeout(tick, 1100)
+    setTimeout(tick, 2600)
+  </script>
+</body>
+</html>

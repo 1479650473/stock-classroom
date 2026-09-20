@@ -1,7 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicedoc/tauri/v2/core/tauri-config-schema/schema.json",
-  "productName": "StockClassroom",
-  "version": "5.0.0",
+  "productName": "股票教室",
+  "mainBinaryName": "StockClassroom",
+  "version": "5.2.0",
   "identifier": "com.stockclassroom.app",
   "build": {
     "frontendDist": "../dist",
@@ -12,15 +13,35 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "股票教室",
-        "width": 1280,
-        "height": 800,
-        "minWidth": 900,
-        "minHeight": 600,
+        "width": 1360,
+        "height": 860,
+        "minWidth": 1024,
+        "minHeight": 640,
         "decorations": false,
         "transparent": false,
+        "shadow": true,
         "resizable": true,
-        "center": true
+        "center": true,
+        "visible": false,
+        "focus": true
+      },
+      {
+        "label": "splash",
+        "title": "股票教室",
+        "url": "splash.html",
+        "width": 420,
+        "height": 420,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "center": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": true,
+        "focus": false
       }
     ],
     "security": {
@@ -29,7 +50,13 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "nsis"
+    ],
+    "publisher": "股票教室",
+    "category": "Finance",
+    "shortDescription": "A股量化工作台",
+    "longDescription": "股票教室：数据更新、因子挖掘、策略回测、模拟交易与 AI 操盘手一体的本地量化工作台。",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -41,7 +68,18 @@
       "../../package/dist/stock-api.exe": "stock-api.exe"
     },
     "windows": {
-      "webviewInstallMode": { "type": "embedBootstrapper" }
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
+      },
+      "nsis": {
+        "displayLanguageSelector": false,
+        "languages": [
+          "SimpChinese"
+        ],
+        "installMode": "currentUser",
+        "compression": "lzma",
+        "installerIcon": "icons/icon.ico"
+      }
     }
   }
 }

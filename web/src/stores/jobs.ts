@@ -5,6 +5,7 @@
 import { defineStore } from 'pinia'
 import { api, streamJob } from '@/api/client'
 import { useToastStore } from './toast'
+import { getDesktopPrefs, systemNotify } from '@/lib/tauri'
 
 export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
 
@@ -43,6 +44,18 @@ export const KIND_LABEL: Record<string, string> = {
   trader: 'AI 操盘手决策',
   trader_all: '全体交易员决策',
   trader_replay: '交易员回放',
+}
+
+let _notifyOn = true
+void (async () => {
+  const p = await getDesktopPrefs()
+  if (p) _notifyOn = p.system_notify
+})()
+
+/** 系统通知（Windows 通知中心）；最小化到托盘时也能看到结果 */
+async function notifyDesktop(title: string, body: string) {
+  if (!_notifyOn) return
+  await systemNotify(title, body)
 }
 
 export const useJobsStore = defineStore('jobs', {
@@ -143,6 +156,7 @@ export const useJobsStore = defineStore('jobs', {
             rec.doneTick = (rec.doneTick || 0) + 1
           }
           if (!silent) toast.success(`${rec?.title || '任务'}已完成`)
+          void notifyDesktop(`${rec?.title || '任务'}已完成`, '点击托盘图标回到工作台')
         },
         onError: (message) => {
           STREAMS.delete(jobId)
@@ -155,6 +169,7 @@ export const useJobsStore = defineStore('jobs', {
             rec.doneTick = (rec.doneTick || 0) + 1
           }
           toast.error(`${rec?.title || '任务'}失败：${message}`)
+          void notifyDesktop(`${rec?.title || '任务'}失败`, String(message).slice(0, 120))
         },
       })
       STREAMS.set(jobId, close)

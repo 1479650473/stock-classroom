@@ -6,6 +6,9 @@ import Icon from '@/components/Icon.vue'
 import { useAppStore } from '@/stores/app'
 import { useToastStore } from '@/stores/toast'
 import { getSettings, saveSettings, testLlm, getScheduler, saveScheduler, schedulerRunNow } from '@/api'
+import {
+  isTauri, getDesktopPrefs, setDesktopPrefs, getAutostart, setAutostart, hideToTray,
+} from '@/lib/tauri'
 
 const app = useAppStore()
 const toast = useToastStore()
@@ -45,6 +48,37 @@ async function runNow() {
   } catch (e: unknown) {
     toast.error('触发失败：' + (e instanceof Error ? e.message : String(e)))
   } finally { schRunning.value = false }
+}
+
+// ─── 桌面（外壳）行为 ───
+const desk = reactive({ autostart: false, close_to_tray: true, system_notify: true, isDesktop: false })
+const deskBusy = ref(false)
+
+async function loadDesktop() {
+  desk.isDesktop = isTauri()
+  if (!desk.isDesktop) return
+  const p = await getDesktopPrefs()
+  if (p) {
+    desk.close_to_tray = p.close_to_tray
+    desk.system_notify = p.system_notify
+  }
+  desk.autostart = await getAutostart()
+}
+
+async function saveDesktop() {
+  if (!desk.isDesktop) {
+    toast.info('桌面行为只在安装版客户端里生效')
+    return
+  }
+  deskBusy.value = true
+  try {
+    await setDesktopPrefs({ close_to_tray: desk.close_to_tray, system_notify: desk.system_notify })
+    const on = await setAutostart(desk.autostart)
+    desk.autostart = on
+    toast.success('桌面设置已保存')
+  } catch (e: unknown) {
+    toast.error('保存失败：' + (e instanceof Error ? e.message : String(e)))
+  } finally { deskBusy.value = false }
 }
 
 const themeOptions = [
@@ -147,6 +181,47 @@ async function save() {
           </button>
         </div>
       </div>
+    </Card>
+
+    <Card class="sec">
+      <h2 class="sec-title">桌面</h2>
+      <div class="row">
+        <label class="lbl">开机自启</label>
+        <div class="opts">
+          <label class="switch">
+            <input v-model="desk.autostart" type="checkbox" />
+            <span class="switch__track"><span class="switch__thumb" /></span>
+            <span class="switch__text">{{ desk.autostart ? '随系统启动' : '关闭' }}</span>
+          </label>
+        </div>
+      </div>
+      <div class="row">
+        <label class="lbl">关闭按钮</label>
+        <div class="opts">
+          <label class="switch">
+            <input v-model="desk.close_to_tray" type="checkbox" />
+            <span class="switch__track"><span class="switch__thumb" /></span>
+            <span class="switch__text">{{ desk.close_to_tray ? '最小化到托盘（后台继续跑任务）' : '直接退出程序' }}</span>
+          </label>
+        </div>
+      </div>
+      <div class="row">
+        <label class="lbl">系统通知</label>
+        <div class="opts">
+          <label class="switch">
+            <input v-model="desk.system_notify" type="checkbox" />
+            <span class="switch__track"><span class="switch__thumb" /></span>
+            <span class="switch__text">{{ desk.system_notify ? '任务完成/失败时通知我' : '关闭' }}</span>
+          </label>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn" :disabled="deskBusy" @click="saveDesktop">
+          {{ deskBusy ? '保存中…' : '保存桌面设置' }}
+        </button>
+        <button class="btn ghost" @click="hideToTray()">立即最小化到托盘</button>
+      </div>
+      <p v-if="!desk.isDesktop" class="muted small">当前在浏览器里预览，桌面行为需在安装版客户端中生效。</p>
     </Card>
 
     <Card class="sec">
@@ -268,4 +343,33 @@ async function save() {
 }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* 桌面设置：主题化开关（非系统默认勾选框） */
+.switch { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; }
+.switch input { position: absolute; opacity: 0; pointer-events: none; }
+.switch__track {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+  flex: none;
+}
+.switch__thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform var(--dur) var(--ease-out), background var(--dur-fast) var(--ease);
+}
+.switch input:checked + .switch__track { background: var(--gold-dim); border-color: var(--gold); }
+.switch input:checked + .switch__track .switch__thumb { transform: translateX(16px); background: var(--gold); }
+.switch__text { font-size: var(--fs-sm); color: var(--text-sub); }
+.small { font-size: var(--fs-xs); }
 </style>
