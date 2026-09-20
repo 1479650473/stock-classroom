@@ -51,6 +51,10 @@ Thumbs.db
 *.db-shm
 *.db-wal
 
+# 根目录误建的数据库文件（脚本 cwd 写错时会产生，如误跑的 sqlite3.connect("kline.db")）
+/*.db
+/*.db-journal
+
 # flow cockpit 运行时产物
 _chain_result.json
 _run_chain.py
