@@ -107,9 +107,10 @@ cd web/src-tauri && cargo tauri dev
 ```bat
 rem 1) 后端 sidecar (PyInstaller, 含 akshare data)
 python -m PyInstaller --clean --noconfirm package\stock_api.spec --distpath package\dist --workpath package\build_api
-rem 2) 前端 + 外壳 (需先 activate VS BuildTools vcvars64)
-cd web\src-tauri && cargo tauri build
-rem 输出: web\src-tauri\target\release\bundle\{msi,nsis}\StockClassroom_*.exe
+rem 2) 前端 + 外壳：一键脚本（内部 vcvars64 + npm build + 打包 nsis）
+web\build_desktop.bat
+rem 输出: web\src-tauri\target\release\bundle\nsis\股票教室_<版本>_x64-setup.exe
+rem 安装：简体中文向导、当前用户安装、桌面/开始菜单快捷方式；卸载走控制面板或安装目录 uninstall.exe
 ```
 
 ## 💬 AI 助手配置
