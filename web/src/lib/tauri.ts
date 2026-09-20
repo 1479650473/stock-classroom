@@ -38,6 +38,8 @@ export interface DesktopPrefs {
   close_to_tray: boolean
   /** 任务完成/失败时弹系统通知（默认 true） */
   system_notify: boolean
+  /** 数据目录（SC_DATA_DIR）；留空 = 用安装目录下的 data/ */
+  data_dir?: string | null
 }
 
 /** 告诉外壳：前端已就绪 → 关闪屏、显示主窗口 */

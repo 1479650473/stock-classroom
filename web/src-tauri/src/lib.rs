@@ -27,11 +27,14 @@ pub struct DesktopPrefs {
     pub close_to_tray: bool,
     /// 任务完成/失败时弹系统通知
     pub system_notify: bool,
+    /// 数据目录（SC_DATA_DIR）。留空 = 使用后端 exe 同目录下的 data/
+    #[serde(default)]
+    pub data_dir: Option<String>,
 }
 
 impl Default for DesktopPrefs {
     fn default() -> Self {
-        Self { close_to_tray: true, system_notify: true }
+        Self { close_to_tray: true, system_notify: true, data_dir: None }
     }
 }
 
@@ -288,39 +291,77 @@ pub fn run() {
 /// 开发模式(debug build)不启动 —— 由 run_web.py / vite dev 手动管理。
 #[cfg(not(debug_assertions))]
 fn spawn_backend(app: &tauri::App) {
+    use std::fs::OpenOptions;
+
     let mut sidecar = None;
+    // 打包后资源目录；便携版则与主程序同目录
     if let Ok(dir) = app.path().resource_dir() {
-        let p = dir.join("stock-api.exe");
-        if p.exists() {
-            sidecar = Some(p);
+        for cand in [dir.join("stock-api").join("stock-api.exe"), dir.join("stock-api.exe")] {
+            if cand.exists() {
+                sidecar = Some(cand);
+                break;
+            }
         }
     }
     if sidecar.is_none() {
         if let Ok(exe) = std::env::current_exe() {
             if let Some(dir) = exe.parent() {
-                let p = dir.join("stock-api.exe");
-                if p.exists() {
-                    sidecar = Some(p);
+                for cand in [dir.join("stock-api").join("stock-api.exe"), dir.join("stock-api.exe")] {
+                    if cand.exists() {
+                        sidecar = Some(cand);
+                        break;
+                    }
                 }
             }
         }
     }
-    if let Some(sidecar_path) = sidecar {
-        let dir = sidecar_path
-            .parent()
-            .unwrap_or_else(|| std::path::Path::new("."))
-            .to_path_buf();
-        match Command::new(&sidecar_path)
-            .arg("--port")
-            .arg("5000")
-            .current_dir(&dir)
-            .spawn()
-        {
-            Ok(_) => eprintln!("[stock-classroom] 后端已启动: {}", sidecar_path.display()),
-            Err(e) => eprintln!("[stock-classroom] 无法启动后端: {e}"),
-        }
-    } else {
+    let Some(sidecar_path) = sidecar else {
         eprintln!("[stock-classroom] 未找到 stock-api.exe, 后端需手动启动");
+        return;
+    };
+
+    let dir = sidecar_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .to_path_buf();
+
+    // 端口探测：若 127.0.0.1:5000 已有后端在服务（异常退出残留的实例），直接复用，
+    // 否则会出现"多个 stock-api 同时监听同一端口"（Werkzeug 默认允许），
+    // 请求被随机分到旧实例，表现为改了后端却"没生效"。
+    if std::net::TcpStream::connect_timeout(
+        &"127.0.0.1:5000".parse().expect("addr"),
+        std::time::Duration::from_millis(400),
+    )
+    .is_ok()
+    {
+        eprintln!("[stock-classroom] 检测到已有后端在 127.0.0.1:5000，复用该实例");
+        return;
+    }
+
+    let prefs = load_prefs(&app.handle().clone());
+    let mut cmd = Command::new(&sidecar_path);
+    cmd.arg("--port").arg("5000").current_dir(&dir);
+    // 数据目录：设置里指定优先，否则后端默认用 exe 同目录 data/
+    if let Some(dd) = prefs.data_dir.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        eprintln!("[stock-classroom] 数据目录: {dd}");
+        cmd.env("SC_DATA_DIR", dd);
+    }
+    // 后端日志落盘：app_log_dir/stock-api.log（出问题时可回看 Flask 访问日志与异常）
+    if let Ok(log_dir) = app.path().app_log_dir() {
+        let _ = std::fs::create_dir_all(&log_dir);
+        let log_path = log_dir.join("stock-api.log");
+        if let Ok(f) = OpenOptions::new().create(true).append(true).open(&log_path) {
+            if let Ok(f2) = f.try_clone() {
+                eprintln!("[stock-classroom] 后端日志: {}", log_path.display());
+                cmd.stdout(std::process::Stdio::from(f));
+                cmd.stderr(std::process::Stdio::from(f2));
+            }
+        }
+    }
+
+    match cmd.spawn() {
+        Ok(_) => eprintln!("[stock-classroom] 后端已启动: {}", sidecar_path.display()),
+        Err(e) => eprintln!("[stock-classroom] 无法启动后端: {e}"),
     }
 }
 

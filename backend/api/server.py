@@ -27,8 +27,15 @@ from flask_cors import CORS
 def create_app():
     app = Flask(__name__)
     # 本地桌面应用: 只允许 Tauri webview 与 vite dev origin
-    CORS(app, origins=["http://localhost:5173", "http://127.0.0.1:5173",
-                       "tauri://localhost", "https://tauri.localhost"])
+    # 注意: Windows 上 Tauri v2 的页面 origin 是 http://tauri.localhost（http，不是 https）
+    #       —— 之前只放了 tauri://localhost 与 https://tauri.localhost，
+    #       导致打包版里所有请求被 CORS 拦掉（表现为"后端连接不上"）。
+    CORS(app, origins=[
+        "http://localhost:5173", "http://127.0.0.1:5173",     # vite dev
+        "http://tauri.localhost",                             # Windows 打包版
+        "tauri://localhost", "https://tauri.localhost",       # macOS / Linux 打包版
+        "http://localhost", "http://127.0.0.1",               # 本地 file/端口直连兜底
+    ])
 
     # 全局异常 -> 统一错误信封(避免裸露 HTML 错误页)
     from .envelope import err

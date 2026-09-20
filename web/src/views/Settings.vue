@@ -51,7 +51,13 @@ async function runNow() {
 }
 
 // ─── 桌面（外壳）行为 ───
-const desk = reactive({ autostart: false, close_to_tray: true, system_notify: true, isDesktop: false })
+const desk = reactive({
+  autostart: false,
+  close_to_tray: true,
+  system_notify: true,
+  data_dir: '',
+  isDesktop: false,
+})
 const deskBusy = ref(false)
 
 async function loadDesktop() {
@@ -61,6 +67,7 @@ async function loadDesktop() {
   if (p) {
     desk.close_to_tray = p.close_to_tray
     desk.system_notify = p.system_notify
+    desk.data_dir = p.data_dir || ''
   }
   desk.autostart = await getAutostart()
 }
@@ -72,7 +79,11 @@ async function saveDesktop() {
   }
   deskBusy.value = true
   try {
-    await setDesktopPrefs({ close_to_tray: desk.close_to_tray, system_notify: desk.system_notify })
+    await setDesktopPrefs({
+      close_to_tray: desk.close_to_tray,
+      system_notify: desk.system_notify,
+      data_dir: desk.data_dir.trim() || null,
+    })
     const on = await setAutostart(desk.autostart)
     desk.autostart = on
     toast.success('桌面设置已保存')
@@ -206,6 +217,17 @@ async function save() {
         </div>
       </div>
       <div class="row">
+        <label class="lbl">数据目录</label>
+        <div class="opts" style="flex:1; min-width: 260px">
+          <input
+            v-model="desk.data_dir"
+            class="inp"
+            placeholder="留空 = 安装目录下的 data\"
+            spellcheck="false"
+          />
+        </div>
+      </div>
+      <div class="row">
         <label class="lbl">系统通知</label>
         <div class="opts">
           <label class="switch">
@@ -221,6 +243,9 @@ async function save() {
         </button>
         <button class="btn ghost" @click="hideToTray()">立即最小化到托盘</button>
       </div>
+      <p class="muted small">
+        数据目录指向已有行情库可避免重新下载；修改后<strong>需重启应用</strong>生效。
+      </p>
       <p v-if="!desk.isDesktop" class="muted small">当前在浏览器里预览，桌面行为需在安装版客户端中生效。</p>
     </Card>
 

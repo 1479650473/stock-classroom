@@ -65,7 +65,8 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../../package/dist/stock-api.exe": "stock-api.exe"
+      "../../package/dist/stock-api.exe": "stock-api.exe",
+      "../../backend/configs/settings.example.json": "backend/configs/settings.example.json"
     },
     "windows": {
       "webviewInstallMode": {
