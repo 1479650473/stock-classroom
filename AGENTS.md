@@ -9,16 +9,30 @@
 - **Data Source**: AKShare / Sina API (三源回退 Sina主/TX/EM)
 - **PyQt5 旧版已归档删除** (`archive/pyqt5-legacy-2026-09-05.zip`)，`frontend/` 目录不存在，后端无任何 `frontend.*` 依赖；旧文档在 `archive/docs-pyqt5-legacy/`
 
-## Architecture (Web v5.1)
+## Architecture (Web v5.2)
 ```
 Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
   └─ Vue3 SPA (web/src: views/router/stores/composables)
        └─ Flask API 127.0.0.1:5000 (backend/api/server.py, 17 blueprints, 统一 envelope)
 ```
 - **后端打包**: `package/stock_api.spec` → 单文件 `stock-api.exe` (PyInstaller, 含 akshare data)
-- **前端打包**: `web/src-tauri` → NSIS/MSI 安装包 (bundle.resources 内嵌 stock-api.exe)
+- **前端打包**: `web/src-tauri` → NSIS 安装包 (bundle.resources 内嵌 stock-api.exe + settings.example.json)
 - **打包 pathex 只加 root + `backend/`**（不要加已不存在的 `frontend/`）
-- **打包后数据目录**: exe 旁 `data/` (或 `SC_DATA_DIR` 环境变量); frozen 路径经 `backend/api/paths.py` / `data_manager.py` / `trade_engine/schema.py` 处理
+- **打包后数据目录**: 优先 `desktop.json` 里的 `data_dir`（桌面设置页可改，由壳注入 `SC_DATA_DIR`），
+  否则 exe 旁 `data/`; frozen 路径经 `backend/api/paths.py` / `data_manager.py` / `trade_engine/schema.py` 处理
+
+### 桌面壳（web/src-tauri/src/lib.rs，2026-09-20 起）
+启动即「微信式」体验：**闪屏 → 主窗口**（主窗口 `visible:false` 创建，前端 bootstrap 完成调 `app_ready`
+才显示；壳侧 25s 兜底）、**系统托盘**（显示/最小化到托盘/退出，左键切换）、**关闭=收进托盘**（可关）、
+**单实例**（二次双击只唤起）、**窗口记忆**（`window-state`，特意排除 VISIBLE 标志否则会跳过闪屏）、
+**开机自启**、**系统通知**（任务完成/失败）。偏好存 `app_config_dir/desktop.json`。
+- **CORS 坑（打包版"后端连接不上"的根因）**：Windows 上 Tauri v2 的页面 origin 是
+  **`http://tauri.localhost`**（http 不是 https），`backend/api/server.py` 的白名单必须含它，
+  否则 webview 里所有请求被浏览器拦掉。
+- **端口复用**：壳启动前探测 5000，已有后端就直接复用 —— Werkzeug 默认允许**多个 stock-api 同时监听同一端口**，
+  请求会被随机分到旧实例（改后端"不生效"的隐形坑）。
+- **后端日志**：`%LOCALAPPDATA%\com.stockclassroom.app\logs\stock-api.log`（GUI 模式下 stderr 原本全丢）。
+- **图标**：`web/src-tauri/make_icon.py` 生成 1024 母版 → `cargo tauri icon app-icon.png` 出全平台图标集。
 
 ## Web API(backend/api/)
 - `server.py`: create_app, 全局错误信封, CORS 限本机 origins; 注册 blueprints: system/jobs_bp/market/trade/kline/picks/overview/research/research_v2/agentops/pipeline/trainer/agent_chat/optimize/scheduler_bp/replay/**trader**
@@ -164,6 +178,13 @@ Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
 | Backend | `backend/data_manager.py` | `rebuild_period_kline`(周K/月K聚合: kline_weekly 293万行+kline_monthly 70万行) + `get_period_kline`; update_daily ⑭步增量 |
 | Backend | `industry_pe` 表 + `/api/market/industry-pe` | **行业市盈率**(巨潮证监会行业分类 120 行业, 加权/中位/算术平均, 日频); update_daily ⑯步 |
 | Scripts | `scripts/rebuild_chip.py` | **筹码分布全市场**(250天, 多进程每进程独立V8); `update_chip_all`; update_daily ⑰步每日重算 |
+| Desktop | `dev.py`（根目录） | **一键开发环境**：后端+前端一起起，先检查 5000 是否被桌面版冻结后端占用（`--kill` 可停），`--port/--api-only/--web-only` |
+| Desktop | `web/src-tauri/src/lib.rs` | 桌面壳：闪屏→主窗口、系统托盘、单实例、窗口记忆、开机自启、系统通知、`SC_DATA_DIR` 注入、后端日志落盘、端口复用检测 |
+| Desktop | `web/public/splash.html` | 启动闪屏（品牌 + 进度条 + 三段状态），纯 HTML 随包分发 |
+| Desktop | `web/src-tauri/make_icon.py` + `app-icon.png` | 应用图标母版（1024px）→ `cargo tauri icon` 生成全平台图标集（icon.ico 含 16~256） |
+| Desktop | `web/build_desktop.bat` | 一键打包（vcvars64 → npm build → cargo tauri build --bundles nsis）；ASCII-only 避开 cmd 代码页问题 |
+| Web | `web/src/lib/chartTheme.ts` | 图表主题：从 CSS 令牌解析颜色/均线配色/tooltip 样式，注册 `sc-tokens` ECharts 主题（切主题自动重建实例） |
+| Web | `web/src/lib/tauri.ts` | 桌面能力桥（`isTauri()` 降级）：窗口控制 + `appReady/systemNotify/hideToTray/autostart/desktopPrefs` |
 
 ## Navigation (v6)
 `web/src/lib/nav.ts` = [工作台, 行情, 策略, 交易, AI, 数据]；设置入口在顶栏右侧。旧页面 (Research/Optimize/Replay/Agent/AgentOps/Pipeline/DataCenter/Trainer) 仍被新页面内嵌复用，保留。
@@ -183,15 +204,29 @@ Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
 - 后端: `backend/` 含全部数据/策略逻辑; 蓝图在 `backend/api/blueprints/`
 - 中文 UI 文案; 尺寸/颜色用 CSS 变量 (`tokens.css`)，不硬编码
 
+## 开发与调试（重要，2026-09-20 起）
+**一条命令起开发环境**：`python dev.py`（后端 5000 + 前端 5173，Ctrl+C 一起停；`--kill` 先停桌面版后端，
+`--api-only/--web-only/--port` 可选）。
+- **别拿桌面版后端做开发**：安装的客户端常驻托盘并占用 5000，其后端是**冻结的旧构建** ——
+  改 Python 代码不会生效却毫无报错，最容易误判"改了没用"。`dev.py` 会直接把它点出来。
+- **并行联调**：`python run_web.py --port 5001` + `cd web && SC_API_TARGET=http://127.0.0.1:5001 npm run dev`
+  （vite 的 `/api` 代理支持 `SC_API_TARGET`；前端 `VITE_API_BASE` 亦可用）。
+- **浏览器开发不受桌面壳影响**：`isTauri()` 为假时闪屏/托盘/单实例/通知/等后端全部跳过。
+- **调桌面壳本身**：`cd web/src-tauri && cargo tauri dev`（debug 构建不会拉起 sidecar，后端仍用 dev.py）。
+- **前端校验**：`cd web && npx vue-tsc --noEmit && npx vite build`（本机 npx 不在 PATH 时显式用
+  `C:/nvm/v22.23.2/node.exe`）。**改了 Rust 或 tauri.conf 必须 `cargo check`/重新 `build_desktop.bat`**，
+  否则安装版还是旧的。
+
 ## Build
-**Web 版(Tauri) — 需要 vcvars64 环境(cl.exe)**:
+**Web 版(Tauri) — 一键脚本（内部处理 vcvars64，无需手动 activate）**:
 ```bat
 rem 1) 后端 sidecar (PyInstaller, 含 akshare data)
 python -m PyInstaller --clean --noconfirm package\stock_api.spec --distpath package\dist --workpath package\build_api
-rem 2) 前端 + 外壳 (需先 activate VS BuildTools vcvars64)
-cd web\src-tauri && cargo tauri build
-rem 输出: web\src-tauri\target\release\bundle\{msi,nsis}\StockClassroom_*.exe
-rem 便携版: package\dist\stock-api.exe 与 web\src-tauri\target\release\stock-classroom.exe 放同目录, 旁有 data/ + backend/configs/
+rem 2) 前端 + 外壳（vcvars64 → npm build → cargo tauri build --bundles nsis）
+web\build_desktop.bat
+rem 输出: web\src-tauri\target\release\bundle\nsis\股票教室_<版本>_x64-setup.exe
+rem 安装：简体中文向导 / 当前用户安装 / 桌面+开始菜单快捷方式
+rem 便携版: package\dist\stock-api.exe 与 web\src-tauri\target\release\StockClassroom.exe 放同目录, 旁有 data/ + backend/configs/
 ```
 **前端校验**: `cd web && npx vue-tsc --noEmit && npx vite build`（本机 npx 不在 PATH 时用 `C:/nvm/v22.23.2/node.exe`）
 
