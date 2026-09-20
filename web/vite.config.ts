@@ -17,7 +17,9 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:5000',
+        // 可用环境变量指向别的后端端口：SC_API_TARGET=http://127.0.0.1:5001
+        // （桌面版常驻 5000 时，开发环境可以换个端口，互不干扰）
+        target: process.env.SC_API_TARGET || 'http://127.0.0.1:5000',
         changeOrigin: true,
       },
     },

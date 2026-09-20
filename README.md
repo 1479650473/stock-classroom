@@ -69,16 +69,38 @@ Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
 
 ## 🚀 快速开始 (Web v5.0)
 
+**一条命令起开发环境**（推荐；会先检查端口占用，避免和安装的桌面版抢 5000）：
+
+```bash
+python dev.py               # 后端 5000 + 前端 5173，Ctrl+C 一起停
+python dev.py --kill        # 先停掉占用 5000 的桌面版后端再起
+python dev.py --web-only    # 只起前端（后端已在别处跑）
+```
+
+安装的桌面版客户端常驻托盘并占用 5000，且它的后端是**冻结的旧构建**（改 Python 不生效），
+所以开发时要么退出托盘里的应用，要么给开发环境换个端口：
+
+```bash
+# 后端换端口 + 前端代理跟着换（互不干扰）
+python run_web.py --port 5001
+cd web && SC_API_TARGET=http://127.0.0.1:5001 npm run dev
+```
+
+手动分步（等价于 dev.py 做的事）：
+
 ```bash
 # 1) 后端 API (127.0.0.1:5000)
 C:/Python314/python.exe run_web.py
 
-# 2) 前端 dev (Vite HMR, 5173, 代理 /api → 5000)
+# 2) 前端 dev (Vite HMR, 5173, 代理 /api → 5000，或 SC_API_TARGET)
 cd web && npm run dev
 
-# 3) 桌面壳 (可选, 需 Rust + VS BuildTools)
+# 3) 桌面壳 (可选, 需 Rust + VS BuildTools；debug 构建不会拉起 sidecar)
 cd web/src-tauri && cargo tauri dev
 ```
+
+> 桌面外壳（闪屏/托盘/单实例/系统通知）在浏览器里全是 no-op：`isTauri()` 为假时跳过，
+> 因此浏览器开发体验与加桌面壳之前完全一致。
 
 ## 📦 打包 (Web)
 
