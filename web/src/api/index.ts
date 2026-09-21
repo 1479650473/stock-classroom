@@ -131,17 +131,22 @@ export interface Bootstrap {
 }
 
 // ---- system ----
-export const getBootstrap = () => api.get<Bootstrap>('/api/system/bootstrap')
+// TTL 说明：30~120s 内重复进入页面直接命中缓存，避免"切回来又转圈"；
+// 需要最新数据时调用方传 { fresh: true }（页面的刷新按钮）。
+const T_SYS = 120_000
+const T_PAGE = 30_000
+export const getBootstrap = (fresh = false) => api.get<Bootstrap>('/api/system/bootstrap', undefined, { ttl: T_SYS, fresh })
 export const getHealth = () => api.get('/api/system/health')
-export const getSettings = () => api.get<Record<string, unknown>>('/api/system/settings')
+export const getSettings = (fresh = false) =>
+  api.get<Record<string, unknown>>('/api/system/settings', undefined, { ttl: 300_000, fresh })
 export const saveSettings = (body: Record<string, unknown>) => api.post<Record<string, unknown>>('/api/system/settings', body)
 export const testLlm = (agent: Record<string, unknown>) => api.post('/api/system/settings/test-llm', agent)
 
 // ---- overview ----
-export const getOverview = () => api.get<OverviewData>('/api/overview')
+export const getOverview = (fresh = false) => api.get<OverviewData>('/api/overview', undefined, { ttl: T_PAGE, fresh })
 
 // ---- market ----
-export const getIndices = () => api.get<IndexQuote[]>('/api/market/indices')
+export const getIndices = (fresh = false) => api.get<IndexQuote[]>('/api/market/indices', undefined, { ttl: T_PAGE, fresh })
 export const getSectors = (type = 'industry') => api.get<Record<string, unknown>[]>('/api/market/sectors', { type })
 export const getNorthFlow = (days = 30) => api.get<Record<string, unknown>[]>('/api/market/north-flow', { days })
 export const getNews = (code: string, limit = 20) => api.get<Record<string, unknown>[]>('/api/market/news', { code, limit })
@@ -201,7 +206,8 @@ export const cancelOrder = (id: number) => api.post(`/api/trade/orders/${id}/can
 export const refreshPrices = (id: number) => api.post(`/api/trade/accounts/${id}/refresh-prices`)
 
 // ---- picks ----
-export const getPicks = (top = 20) => api.get<{ items: PickItem[]; total: number; stale: boolean; ts: number }>('/api/picks', { top })
+export const getPicks = (top = 20, fresh = false) =>
+  api.get<{ items: PickItem[]; total: number; stale: boolean; ts: number }>('/api/picks', { top }, { ttl: T_PAGE, fresh })
 export const runPicks = (force = true) => api.post<JobHandle>('/api/picks/run', { force })
 
 // ---- research ----

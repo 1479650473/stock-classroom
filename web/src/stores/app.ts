@@ -51,6 +51,31 @@ export const useAppStore = defineStore('app', {
       }
     },
 
+    /** 空闲预加载：把其它主页面的 chunk 与首屏接口预热，点进去就是现成的 */
+    async prefetch() {
+      const idle = (fn: () => void) =>
+        (window.requestIdleCallback ? window.requestIdleCallback(fn, { timeout: 4000 }) : setTimeout(fn, 1200))
+      idle(() => {
+        // 1) 页面 chunk（动态 import 即预热，不挂载）
+        for (const load of [
+          () => import('@/views/v6/Market.vue'),
+          () => import('@/views/v6/Trade.vue'),
+          () => import('@/views/v6/Strategy.vue'),
+          () => import('@/views/v6/Data.vue'),
+          () => import('@/views/v6/AI.vue'),
+        ]) {
+          void load().catch(() => {})
+        }
+        // 2) 关键接口（顺序执行，避免启动瞬时并发；结果进 API 缓存）
+        void (async () => {
+          const { getIndices, getSectors, getOverview } = await import('@/api')
+          for (const fn of [() => getOverview(), () => getIndices(), () => getSectors('industry')]) {
+            try { await fn() } catch { /* 后端可能还没起来 */ }
+          }
+        })()
+      })
+    },
+
     async init() {
       this.applyTheme()
       try {
@@ -77,6 +102,8 @@ export const useAppStore = defineStore('app', {
       this.ready = true
       // 桌面外壳：前端就绪 → 关掉启动闪屏、显示主窗口（浏览器里是 no-op）
       void appReady()
+      // 首屏渲染完之后，趁空闲把其它主页面「预热」：JS chunk + 关键接口的缓存
+      void this.prefetch()
     },
   },
 })

@@ -52,7 +52,15 @@ async function markOne(it: NotifyItem) {
 watch(open, (v) => { if (v) load() })
 onMounted(load)
 // 每 2 分钟刷新未读数（失败的任务会持续产生通知）
-setInterval(load, 120000)
+// 通知轮询：默认 2 分钟；页面在后台时跳过（省电、少打扰本地服务），
+// 重新可见时立刻补一次，保证回来就看到最新。
+const POLL_MS = 120_000
+setInterval(() => {
+  if (document.visibilityState === 'visible') void load()
+}, POLL_MS)
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') void load()
+})
 const hasAny = computed(() => items.value.length > 0)
 </script>
 

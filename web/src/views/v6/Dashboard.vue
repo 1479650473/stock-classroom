@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onActivated, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import AppPage from '@/components/ui/AppPage.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
@@ -26,11 +26,14 @@ const totalProfit = computed(() => data.value?.accounts?.reduce((s, a) => s + a.
 const totalPositions = computed(() => data.value?.accounts?.reduce((s, a) => s + a.positions, 0) ?? 0)
 const totalBalance = computed(() => data.value?.accounts?.reduce((s, a) => s + a.balance, 0) ?? 0)
 
-async function load() {
-  loading.value = true
+async function load(fresh = false) {
+  // 已有数据时不显示整页加载态：直接渲染旧数据 + 后台静默刷新（切回页面零等待）
+  loading.value = !data.value
   error.value = ''
   try {
-    const [ov, pk, bs] = await Promise.allSettled([getOverview(), getPicks(5), getBootstrap()])
+    const [ov, pk, bs] = await Promise.allSettled([
+      getOverview(fresh), getPicks(5, fresh), getBootstrap(fresh),
+    ])
     if (ov.status === 'fulfilled') data.value = ov.value
     else throw ov.reason
     if (pk.status === 'fulfilled') picks.value = pk.value.items
@@ -41,7 +44,9 @@ async function load() {
     loading.value = false
   }
 }
-onMounted(load)
+onMounted(() => load())
+// 从别的页面切回来：若缓存已过期就静默刷新（TTL 内则是零请求）
+onActivated(() => load())
 
 // ── 数据新鲜度：引导用户手动更新数据 ──
 function fmtDate(s: string) {
@@ -60,7 +65,7 @@ const fresh = computed(() => {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
   const days = Math.max(0, Math.round((today.getTime() - d.getTime()) / 86400000))
-  const base = { days, max: fmtDate(s), rows: b.kline?.rows ?? 0 }
+  const base = { days, max: fmtDate(s), rows: b.kline?.rows ?? null }
   if (days <= 3) return { ...base, level: 'ok' as const, label: '数据较新' }
   if (days <= 7) return { ...base, level: 'warn' as const, label: '建议更新' }
   return { ...base, level: 'bad' as const, label: '数据过期' }
@@ -113,7 +118,7 @@ const QUICK = [
       <button class="ui-btn" title="自定义工作台模块" @click="modsOpen = true">
         <Icon name="settings" :size="14" /><span>自定义</span>
       </button>
-      <button class="ui-btn" @click="load"><Icon name="refresh" :size="14" /><span>刷新</span></button>
+      <button class="ui-btn" @click="load(true)"><Icon name="refresh" :size="14" /><span>刷新</span></button>
       <button class="ui-btn ui-btn--primary" @click="go('/trade?tab=picks')">
         <Icon name="picks" :size="14" /><span>去选股</span>
       </button>
@@ -122,7 +127,7 @@ const QUICK = [
     <LoadingBlock v-if="loading && !data" :rows="6" />
 
     <EmptyGuide v-else-if="error && !data" icon="alert" title="加载失败" :desc="error">
-      <template #action><button class="ui-btn" @click="load">重试</button></template>
+      <template #action><button class="ui-btn" @click="load(true)">重试</button></template>
     </EmptyGuide>
 
     <template v-else-if="data">
@@ -156,6 +161,7 @@ const QUICK = [
           label="最优策略"
           :value="data.strategy.name"
           :hint="`总收益 ${fmtPct((data.strategy.total_return ?? 0) * 100)} · 夏普 ${(data.strategy.sharpe ?? 0).toFixed(2)}`"
+          :hint-trend="(data.strategy.total_return ?? 0) >= 0 ? 'up' : 'down'"
         />
       </div>
 
@@ -226,7 +232,7 @@ const QUICK = [
             <div class="fresh__desc">
               最新交易日 <b class="mono">{{ fresh.max }}</b>
               <template v-if="fresh.days !== null"> · 距今 {{ fresh.days }} 天</template>
-              <template v-if="fresh.rows"> · 共 {{ (fresh.rows / 1e6).toFixed(1) }}M 行</template>
+              <template v-if="fresh.rows != null"> · 共 {{ (fresh.rows / 1e6).toFixed(1) }}M 行</template>
             </div>
             <div v-if="updating" class="fresh__progress">
               {{ updateJob?.msg }} <span class="mono">{{ updateJob?.pct }}%</span>
@@ -319,6 +325,7 @@ const QUICK = [
 .mods__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .mods__label { font-size: var(--fs-md); color: var(--text); }
 .mods__desc { font-size: var(--fs-xs); color: var(--text-faint); }
+/* 开关样式（沿用系统勾选框但套上主题色） */
 .mods__switch {
   flex: none;
   width: 34px;
@@ -389,7 +396,7 @@ const QUICK = [
 }
 .index-item:last-child { border-bottom: 0; }
 .index-item__name { flex: 1; color: var(--text-sub); font-size: var(--fs-sm); }
-.index-item__price { font-size: var(--fs-lg); font-weight: 600; }
+.index-item__price { width: 110px; text-align: right; font-size: var(--fs-lg); font-weight: 600; }
 .index-item__chg { width: 72px; text-align: right; font-size: var(--fs-sm); }
 
 .quick-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }

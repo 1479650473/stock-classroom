@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onActivated, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppPage from '@/components/ui/AppPage.vue'
 import PageToolbar from '@/components/ui/PageToolbar.vue'
@@ -98,11 +98,11 @@ const DAY_OPTIONS = [
   { value: '500', label: '500日' },
 ]
 
-async function loadMarket() {
-  marketLoading.value = true
+async function loadMarket(fresh = false) {
+  marketLoading.value = !indices.value.length
   marketError.value = ''
   try {
-    const [i, s, n] = await Promise.all([getIndices(), getSectors('industry'), getNorthFlow(30)])
+    const [i, s, n] = await Promise.all([getIndices(fresh), getSectors('industry'), getNorthFlow(30)])
     indices.value = i
     sectors.value = s
     north.value = n
@@ -212,6 +212,11 @@ const klineColumns: DataColumn[] = [
 
 const klineRows = computed(() => [...kline.value].reverse() as unknown as Record<string, unknown>[])
 
+onActivated(() => {
+  // 切回行情页：指数有 TTL（30s），过期才真正请求；K 线按当前选中代码保持
+  loadMarket()
+})
+
 onMounted(() => {
   loadMarket()
   if (code.value) {
@@ -249,7 +254,7 @@ onMounted(() => {
       <div v-if="tab === 'market'" class="pane">
         <LoadingBlock v-if="marketLoading && !indices.length" :rows="6" />
         <EmptyGuide v-else-if="marketError && !indices.length" icon="alert" title="市场数据加载失败" :desc="marketError">
-          <template #action><button class="ui-btn" @click="loadMarket">重试</button></template>
+          <template #action><button class="ui-btn" @click="loadMarket()">重试</button></template>
         </EmptyGuide>
         <template v-else>
           <div class="indices">

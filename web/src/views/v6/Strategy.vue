@@ -50,7 +50,7 @@ watch(
 )
 
 async function loadRegime() {
-  loading.value = true
+  loading.value = !regime.value
   error.value = ''
   try {
     regime.value = await getRegime()

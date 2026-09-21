@@ -11,6 +11,9 @@ const app = useAppStore()
 const jobs = useJobsStore()
 const searchOpen = ref(false)
 
+/** 需要保活的主页面（组件名 = 文件名）：工作台/行情/策略/交易/AI/数据 */
+const KEEP_ALIVE = ['Dashboard', 'Market', 'Strategy', 'Trade', 'AI', 'Data']
+
 onMounted(() => {
   app.init()
   // 恢复上次会话中未完成/刚完成的后台任务（刷新页面后进度不丢）
@@ -24,9 +27,13 @@ onMounted(() => {
     <div class="body">
       <SideNav />
       <main class="content">
+        <!-- KeepAlive：主页面切走再切回复用实例（不重新挂载、不重新请求）；
+             新鲜度交给 API 层 TTL + 各页 onActivated，不会看到陈旧数据。 -->
         <router-view v-slot="{ Component }">
           <transition name="page" mode="out-in">
-            <component :is="Component" />
+            <keep-alive :include="KEEP_ALIVE">
+              <component :is="Component" />
+            </keep-alive>
           </transition>
         </router-view>
       </main>
@@ -71,16 +78,19 @@ onMounted(() => {
   overflow-y: auto;
   padding: var(--sp-5);
 }
-.page-enter-active,
+/* 页面切换：out-in 模式下两段动画是串行的，所以刻意压短（总时长 ≈ 260ms），
+   否则每次导航都要"等动画"—— 在有了 KeepAlive 之后动画反而是主要延迟来源。 */
 .page-leave-active {
-  transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
+  transition: opacity 0.09s linear;
+}
+.page-enter-active {
+  transition: opacity 0.15s var(--ease-out), transform 0.15s var(--ease-out);
 }
 .page-enter-from {
   opacity: 0;
-  transform: translateY(6px);
+  transform: translateY(4px);
 }
 .page-leave-to {
   opacity: 0;
-  transform: translateY(-4px);
 }
 </style>

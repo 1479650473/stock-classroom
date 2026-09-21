@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onActivated, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppPage from '@/components/ui/AppPage.vue'
 import PageToolbar from '@/components/ui/PageToolbar.vue'
@@ -114,7 +114,8 @@ const { draw: drawNav } = useEChart(navEl, () => {
 })
 
 async function loadAccounts() {
-  loading.value = true
+  // 已有账户数据时静默刷新，避免切回交易页看到整页转圈
+  loading.value = !accounts.value.length
   loadError.value = ''
   try {
     accounts.value = await listAccounts()
@@ -298,6 +299,11 @@ const pickColumns: DataColumn[] = [
   { key: 'change_pct', title: '涨跌', align: 'right', sortable: true },
   { key: 'score', title: '评分', align: 'right', sortable: true, format: (r) => Number(r.score).toFixed(1) },
 ]
+
+onActivated(() => {
+  // 切回交易页：静默刷新账户与持仓（有旧数据就不显示加载态）
+  if (selectedId.value) void refreshAccountData()
+})
 
 onMounted(async () => {
   await loadAccounts()
