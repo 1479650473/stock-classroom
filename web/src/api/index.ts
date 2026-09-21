@@ -147,15 +147,18 @@ export const getOverview = (fresh = false) => api.get<OverviewData>('/api/overvi
 
 // ---- market ----
 export const getIndices = (fresh = false) => api.get<IndexQuote[]>('/api/market/indices', undefined, { ttl: T_PAGE, fresh })
-export const getSectors = (type = 'industry') => api.get<Record<string, unknown>[]>('/api/market/sectors', { type })
-export const getNorthFlow = (days = 30) => api.get<Record<string, unknown>[]>('/api/market/north-flow', { days })
+export const getSectors = (type = 'industry') =>
+  api.get<Record<string, unknown>[]>('/api/market/sectors', { type }, { ttl: 120_000 })
+export const getNorthFlow = (days = 30) =>
+  api.get<Record<string, unknown>[]>('/api/market/north-flow', { days }, { ttl: 120_000 })
 export const getNews = (code: string, limit = 20) => api.get<Record<string, unknown>[]>('/api/market/news', { code, limit })
 export const getQuote = (codes: string[]) => api.get<IndexQuote[]>('/api/market/quote', { codes: codes.join(',') })
 
 // ---- kline / stock ----
 export type KlinePeriod = 'daily' | 'weekly' | 'monthly'
+// K 线是较重的查询：同参数 60s 内复用（切 tab 来回不再打库）
 export const getKline = (code: string, days = 250, period: KlinePeriod = 'daily') =>
-  api.get<KlineBar[]>('/api/kline', { code, days, period })
+  api.get<KlineBar[]>('/api/kline', { code, days, period }, { ttl: 60_000 })
 export const getCyq = (code: string) => api.get<Record<string, unknown>[]>('/api/kline/cyq', { code })
 export const searchStock = (q: string, signal?: AbortSignal) => api.get<StockRef[]>('/api/stock/search', { q }, { signal })
 
@@ -164,9 +167,9 @@ export interface EtfRef { code: string; name: string; type: string; updated_at?:
 export interface EtfCompareSeries { code: string; name: string; values: number[] }
 export interface EtfCompare { dates: string[]; series: EtfCompareSeries[] }
 export const getEtfList = (search = '', type = '') =>
-  api.get<EtfRef[]>('/api/etf/list', { search, type })
+  api.get<EtfRef[]>('/api/etf/list', { search, type }, { ttl: 300_000 })
 export const getEtfKline = (code: string, days = 250) =>
-  api.get<KlineBar[]>('/api/etf/kline', { code, days })
+  api.get<KlineBar[]>('/api/etf/kline', { code, days }, { ttl: 60_000 })
 export const getEtfCompare = (codes: string[], days = 250) =>
   api.get<EtfCompare>('/api/etf/compare', { codes: codes.join(','), days })
 
@@ -187,7 +190,7 @@ export interface FundFlowBar {
   small_ratio: number
 }
 export const getFundFlow = (code: string, days = 250) =>
-  api.get<FundFlowBar[]>('/api/fund-flow/kline', { code, days })
+  api.get<FundFlowBar[]>('/api/fund-flow/kline', { code, days }, { ttl: 120_000 })
 
 // ---- trade ----
 export const listAccounts = () => api.get<AccountSummary[]>('/api/trade/accounts')
@@ -520,7 +523,7 @@ export const updateTraderProfile = (id: number, fields: Partial<TraderProfile>) 
   api.post<{ profile: TraderProfile }>(`/api/trader/profiles/${id}`, fields)
 export const deleteTraderProfile = (id: number) =>
   api.del<{ deleted: number }>(`/api/trader/profiles/${id}`)
-export const getTraderOverview = () => api.get<TraderOverview>('/api/trader/overview')
+export const getTraderOverview = () => api.get<TraderOverview>('/api/trader/overview', undefined, { ttl: 30_000 })
 export const getTraderState = (profile_id?: number) =>
   api.get<TraderState>('/api/trader/state', { profile_id })
 export const getTraderDecisions = (limit = 30, offset = 0, profile_id?: number) =>
