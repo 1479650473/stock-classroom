@@ -517,6 +517,17 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
         except Exception as e:
             out['steps']['chip'] = str(e)[:120]
             lg.warning('  筹码分布失败: %s', str(e)[:80])
+        # ⑱ 大盘情绪(涨停/跌停家数, 本地K线派生最近5天 — 东财涨停池历史不可用)
+        try:
+            import subprocess as _sp
+            _md_script = os.path.join(ROOT, 'scripts', 'rebuild_market_daily.py')
+            _r = _sp.run([sys.executable, _md_script, '--days', '5'],
+                         cwd=ROOT, capture_output=True, text=True, timeout=900)
+            out['steps']['market_daily'] = 'ok' if _r.returncode == 0 else 'rc=%s' % _r.returncode
+            lg.info('  大盘情绪(涨停/跌停家数): %s', out['steps']['market_daily'])
+        except Exception as e:
+            out['steps']['market_daily'] = str(e)[:120]
+            lg.warning('  大盘情绪失败: %s', str(e)[:80])
 
     out['finished'] = datetime.now().isoformat(timespec='seconds')
     out['elapsed'] = round(time.time() - t0, 1)
