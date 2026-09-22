@@ -526,6 +526,34 @@ export const updateTraderProfile = (id: number, fields: Partial<TraderProfile>) 
 export const deleteTraderProfile = (id: number) =>
   api.del<{ deleted: number }>(`/api/trader/profiles/${id}`)
 export const getTraderOverview = () => api.get<TraderOverview>('/api/trader/overview', undefined, { ttl: 30_000 })
+
+export interface TraderOutlookStats {
+  n: number
+  hit_rate: number | null
+  brier: number | null
+  baseline_hit: number
+  /** 排除"看平"的方向性命中率（更诚实：空仓天天预测"平"会虚高总命中率） */
+  n_directional: number
+  hit_rate_directional: number | null
+  n_flat: number
+  hit_rate_flat: number | null
+  note?: string
+  recent: {
+    date: string
+    actual: 'up' | 'down' | 'flat'
+    actual_pct: number
+    hit: boolean
+    confidence: number
+    predicted: 'up' | 'down' | 'flat'
+    brier: number
+    reason?: string
+  }[]
+  buckets: { label: string; n: number; hit_rate: number; avg_conf: number }[]
+  by_direction: { direction: string; label: string; n: number; hit_rate: number }[]
+}
+/** 方向预测校准：每日"次日净值方向 + 置信度"的命中率和 Brier 分数 */
+export const getTraderOutlook = (profile_id: number, days = 60) =>
+  api.get<TraderOutlookStats>('/api/trader/outlook', { profile_id, days }, { ttl: 30_000 })
 export const getTraderState = (profile_id?: number) =>
   api.get<TraderState>('/api/trader/state', { profile_id })
 export const getTraderDecisions = (limit = 30, offset = 0, profile_id?: number) =>

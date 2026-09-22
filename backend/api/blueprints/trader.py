@@ -328,6 +328,20 @@ def rules():
                "rules": discipline.describe_rules(rs)})
 
 
+@bp.route("/outlook", methods=["GET"])
+def outlook_stats():
+    """方向预测校准：每日预测 vs 真实净值（命中率 / 置信度分桶 / Brier 分数）。
+
+    这是"区分运气与能力"的指标：总收益会被单只票和行情带偏，预测命中率与置信度校准不会。
+    """
+    from backend.trader.outlook import stats
+    p = _require_profile(_pid_arg())
+    if p is None:
+        return err(404, "not_found", "交易员不存在", retriable=False)
+    days = int(request.args.get("days") or 60)
+    return ok(stats(int(p["id"]), days=max(10, min(days, 500))))
+
+
 @bp.route("/performance", methods=["GET"])
 def performance():
     """交易员战绩：胜率/盈亏比/回撤/最近已平仓交易（自我提升的依据）。"""

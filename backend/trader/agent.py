@@ -44,7 +44,10 @@ SYSTEM = (
     "并在 reflection 里对之前被盈亏证伪的判断做出回应；连续亏损或回撤扩大时必须写下 lesson。\n"
     "8. 「生效纪律规则」是过去自省时你自己定下的约束，已由交易系统强制执行：违反的买入委托会被直接拒绝；"
     "系统每天收盘还会对持仓做兑底保护（止损/移动止损），你不卖的它也会卖。规则到期自动失效，不用手动解除。\n"
-    "9. 最后调用 submit_decision 提交 thinking 与 reflection，结束今日决策（不操作时也要调用）。\n"
+    "9. 最后调用 submit_decision 提交 thinking、reflection 与 **outlook**，结束今日决策（不操作时也要调用）。\n"
+    "   outlook 是对次一交易日你自己账户净值方向的预测（up/down/flat + 置信度 0-100）：\n"
+    "   系统次日用真实净值自动打分，并在「预测校准」里长期统计你的命中率与 Brier 分数。\n"
+    "   请如实给（置信度不要一律 90）——它是评估你判断力的客观依据，也是你改进打法的镜子。\n"
     "\n"
     "全部用中文，数字用工具/上下文里的真实值。"
 )
@@ -250,10 +253,12 @@ class TraderAgent:
 
         d = self.tools.decision
         event({"event": "decision", "thinking": d.get("thinking") or narration,
-               "reflection": d.get("reflection") or ""})
+               "reflection": d.get("reflection") or "",
+               "outlook": d.get("outlook") or {}})
         return {
             "thinking": d.get("thinking") or "",
             "reflection": d.get("reflection") or "",
+            "outlook": d.get("outlook") or {},
             "notes": self.tools.notes,
             "trace": self.tools.log,
         }

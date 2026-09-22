@@ -43,6 +43,15 @@ def run_daily_decision(profile_id: Optional[int] = None, trigger: str = "manual"
     pid = int(profile["id"])
     trade_date = date.today().isoformat()
 
+    # 补分：把此前给出预测但还没结算的日子打分（预测 → 次日真实净值 → 命中/未命中）
+    try:
+        from . import outlook as outlook_mod
+        scored = outlook_mod.score_pending(pid)
+        if scored:
+            _emit(progress, f"预测打分：补记 {scored} 条方向预测结果", 5)
+    except Exception:
+        pass
+
     existing = store.get_decision(pid, trade_date)
     if existing and existing.get("status") == "done" and not force:
         _emit(progress, f"今日({trade_date})已完成决策，跳过")
@@ -152,6 +161,7 @@ def run_daily_decision(profile_id: Optional[int] = None, trigger: str = "manual"
     store.upsert_decision(
         pid, trade_date, status="done",
         thinking=result.get("thinking") or "", reflection=result.get("reflection") or "",
+        outlook=result.get("outlook") or {},
         context=ctx, candidates=(ctx.get("candidates") or {}),
         news=(ctx.get("news") or {}), plan=plan, executions=executions,
         rejections=agent.tools.rejections, trace=result.get("trace") or [],

@@ -11,9 +11,9 @@ import { useToastStore } from '@/stores/toast'
 import { useJobsStore } from '@/stores/jobs'
 import {
   getTraderState, getTraderDecisions, getTraderMemory, toggleTraderMemory,
-  updateTraderProfile, runTrader,
+  updateTraderProfile, runTrader, getTraderOutlook,
 } from '@/api'
-import type { TraderState, TraderDecision, TraderMemory } from '@/api'
+import type { TraderState, TraderDecision, TraderMemory, TraderOutlookStats } from '@/api'
 
 const toast = useToastStore()
 const jobs = useJobsStore()
@@ -27,6 +27,7 @@ const styleMem = ref<TraderMemory | null>(null)
 const loading = ref(true)
 const error = ref('')
 const memKind = ref<'style' | 'thesis' | 'lesson' | 'note'>('style')
+const outlook = ref<TraderOutlookStats | null>(null)
 const expanded = ref<Record<string, boolean>>({})
 const settingsOpen = ref(false)
 const saving = ref(false)
@@ -67,6 +68,7 @@ async function loadLists() {
     decisions.value = d.items
     memory.value = m.items
     styleMem.value = s.items[0] || null
+    if (props.profileId) outlook.value = await getTraderOutlook(props.profileId, 60).catch(() => null)
   } catch {
     /* 列表失败不阻塞主视图 */
   }
@@ -258,6 +260,57 @@ function toolLine(t: { tool: string; args?: Record<string, unknown>; error?: str
       </SectionCard>
 
       <!-- 今日/最近决策 -->
+      <!-- 预测校准：每日"次日净值方向 + 置信度" vs 真实结果 -->
+      <SectionCard v-if="outlook && outlook.n > 0" title="预测校准"
+        desc="它每天给出的「次日方向 + 置信度」与真实净值对账 —— 比总收益更能区分运气与能力">
+        <div class="metrics" style="padding:0; background:none; border:none">
+          <StatTile label="已结算预测" :value="outlook.n" unit="次" />
+          <StatTile label="命中率" :value="outlook.hit_rate != null ? outlook.hit_rate + '%' : '—'"
+            :hint="'随机基线 ' + outlook.baseline_hit + '%（涨/跌/平三分类）'" />
+          <StatTile label="方向性命中率" :value="outlook.hit_rate_directional != null ? outlook.hit_rate_directional + '%' : '—'"
+            :hint="`排除「看平」的 ${outlook.n_directional || 0} 次预测（更诚实）`" />
+          <StatTile label="Brier 分数" :value="outlook.brier != null ? outlook.brier.toFixed(3) : '—'"
+            hint="越低越好（0=完美，>0.66 比乱猜差）" />
+        </div>
+        <div v-if="outlook.buckets.length" class="kv" style="margin-top:10px">
+          <span class="kv__k">按置信度</span>
+          <span class="kv__v">
+            <span v-for="b in outlook.buckets" :key="b.label" style="margin-right:12px">
+              {{ b.label }}：<b>{{ b.hit_rate }}%</b>（{{ b.n }} 次，均值 {{ b.avg_conf }}%）
+            </span>
+          </span>
+        </div>
+        <div v-if="outlook.by_direction.length" class="kv">
+          <span class="kv__k">按方向</span>
+          <span class="kv__v">
+            <span v-for="d in outlook.by_direction" :key="d.direction" style="margin-right:12px">
+              {{ d.label }}：<b>{{ d.hit_rate }}%</b>（{{ d.n }} 次）
+            </span>
+          </span>
+        </div>
+        <div class="table-wrap" style="margin-top:10px">
+          <table class="tbl">
+            <thead><tr><th>日期</th><th>预测</th><th>置信度</th><th>实际</th><th>结果</th></tr></thead>
+            <tbody>
+              <tr v-for="r in outlook.recent.slice(0, 8)" :key="r.date">
+                <td class="mono">{{ r.date }}</td>
+                <td>{{ r.predicted === 'up' ? '看涨' : r.predicted === 'down' ? '看跌' : '看平' }}</td>
+                <td class="num">{{ r.confidence }}%</td>
+                <td class="num" :class="r.actual_pct >= 0 ? 'up' : 'down'">
+                  {{ r.actual === 'up' ? '涨' : r.actual === 'down' ? '跌' : '平' }} {{ r.actual_pct }}%
+                </td>
+                <td>
+                  <span class="ui-chip" :class="r.hit ? 'ui-chip--down' : 'ui-chip--up'">
+                    {{ r.hit ? '命中' : '未中' }}
+                  </span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="muted small" style="margin-top:8px">{{ outlook.note }}</p>
+      </SectionCard>
+
       <SectionCard title="最新决策" :desc="latest ? `${latest.trade_date} · ${latest.trigger === 'auto' ? '自动' : '手动'} · ${latest.status === 'done' ? '已完成' : latest.status}` : ''">
         <template #actions>
           <button class="ui-btn ui-btn--ghost" @click="reloadAll"><Icon name="refresh" :size="13" /><span>刷新</span></button>

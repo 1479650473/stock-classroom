@@ -343,12 +343,21 @@ class TraderTools:
                            "code": str(code or ""), "content": content[:1000]})
         return {"状态": "已记入长期记忆"}
 
-    def submit_decision(self, thinking: str, reflection: str = "") -> dict:
+    def submit_decision(self, thinking: str, reflection: str = "",
+                        outlook: Optional[dict] = None) -> dict:
+        """结束今日决策。outlook = 对**次一交易日**自己账户净值方向的预测：
+        {"direction": "up|down|flat", "confidence": 0-100, "target": "...", "reason": "..."}
+        （系统次日用真实净值自动打分，长期统计校准度。）"""
+        from . import outlook as outlook_mod
         self.decision = {
             "thinking": str(thinking or "").strip(),
             "reflection": str(reflection or "").strip(),
         }
-        return {"状态": "今日决策已记录", "委托数": len(self.plan)}
+        norm = outlook_mod.normalize_outlook(outlook) if outlook else {}
+        if norm:
+            self.decision["outlook"] = norm
+        tip = (outlook_mod.CN.get(norm.get("direction"), "") + f" {norm.get('confidence'):g}%") if norm             else "（未给预测，建议每次都给：系统会按真实净值打分）"
+        return {"状态": "今日决策已记录", "委托数": len(self.plan), "预测": tip}
 
     # ── 调度 ──
     _RESERVED = ("execute", "decision", "notes", "log", "plan", "executions",
@@ -469,7 +478,18 @@ TOOL_SPECS = [
                         "这里只写文字总结；不操作时也要调用以结束。"),
         "parameters": {"type": "object", "properties": {
             "thinking": {"type": "string", "description": "今日完整分析（市场/持仓/候选/新闻如何影响你的判断）"},
-            "reflection": {"type": "string", "description": "对上一交易日的复盘与经验（首次可为空）"}},
+            "reflection": {"type": "string", "description": "对上一交易日的复盘与经验（首次可为空）"},
+            "outlook": {
+                "type": "object",
+                "description": ("对**次一交易日自己账户净值**方向的预测；系统次日用真实净值自动打分，"
+                                "长期统计命中率与 Brier 分数（请如实给，别一律高置信）"),
+                "properties": {
+                    "direction": {"type": "string", "enum": ["up", "down", "flat"],
+                                  "description": "看涨/看跌/看平（净值涨跌幅 ±0.3% 以内算平）"},
+                    "confidence": {"type": "number", "description": "置信度 0-100（50 ≈ 掷硬币）"},
+                    "target": {"type": "string", "description": "预测主要依据的标的或指数，可空"},
+                    "reason": {"type": "string", "description": "一句话依据"}},
+                "required": ["direction", "confidence"]}},
             "required": ["thinking"]}}},
 ]
 

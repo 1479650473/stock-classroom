@@ -101,6 +101,11 @@ def ensure_schema() -> None:
             con.execute("ALTER TABLE trader_decision ADD COLUMN review TEXT DEFAULT '{}'")
         if "rejections" not in cols:
             con.execute("ALTER TABLE trader_decision ADD COLUMN rejections TEXT DEFAULT '[]'")
+        if "outlook" not in cols:
+            # 每日方向预测（次日净值方向 + 置信度），供自动打分校准
+            con.execute("ALTER TABLE trader_decision ADD COLUMN outlook TEXT DEFAULT '{}'")
+        if "outlook_score" not in cols:
+            con.execute("ALTER TABLE trader_decision ADD COLUMN outlook_score TEXT DEFAULT '{}'")
         if "expired" not in cols:
             # 系统撤销的超时挂单（挂单超时规则），与 rejections（纪律拦截）分开记录
             con.execute("ALTER TABLE trader_decision ADD COLUMN expired TEXT DEFAULT '[]'")

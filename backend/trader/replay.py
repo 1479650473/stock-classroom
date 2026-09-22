@@ -457,6 +457,7 @@ def run_replay_batch(run_id: int, days: int = MAX_BATCH,
         store.upsert_decision(
             pid, d, status=("error" if (result.get("error") and not (result.get("thinking") or agent.tools.plan)) else "done"),
             thinking=result.get("thinking") or "", reflection=result.get("reflection") or "",
+            outlook=result.get("outlook") or {},
             context=ctx, candidates=ctx.get("candidates") or {}, news=ctx.get("news") or {},
             plan=agent.tools.plan,
             executions=agent.tools.executions, trace=result.get("trace") or [],
@@ -464,6 +465,12 @@ def run_replay_batch(run_id: int, days: int = MAX_BATCH,
             expired=expired_today,
             nav_after=nav_after, total_assets_after=float(s2.get("total_assets", 0) or 0),
             error=result.get("error") or "", finished_at=datetime.now().isoformat(timespec="seconds"))
+        # 预测打分：把此前没结算的预测用"已发生的净值"补上（当日预测要等次日才算得出）
+        try:
+            from . import outlook as outlook_mod
+            outlook_mod.score_pending(pid, limit=10)
+        except Exception:
+            pass
         for n in result.get("notes") or []:
             if n.get("content"):
                 store.add_memory(pid, n["content"], kind=n.get("kind", "note"),

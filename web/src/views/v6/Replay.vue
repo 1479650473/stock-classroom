@@ -66,6 +66,8 @@ interface StreamDay {
   protection?: StreamOrder[]
   rejections?: { code?: string; side?: string; qty?: number; message?: string }[]
   expired?: { code?: string; name?: string; side?: string; qty?: number; days?: number; detail?: string }[]
+  outlook?: { direction?: string; confidence?: number; reason?: string }
+  outlook_score?: { actual?: string; actual_pct?: number; hit?: boolean }
   status: 'running' | 'settled'
 }
 const liveDays = ref<StreamDay[]>([])
@@ -718,7 +720,22 @@ watch([current, navSeries], async () => { await Promise.resolve(); chart.draw() 
                       <span v-for="(o, i) in day.protection" :key="'pr' + i" class="order__name">
                         {{ o.name || o.code }} · {{ o.detail || o.reason || '兜底止损' }}</span>
                     </div>
-                    <div v-if="day.expired?.length" class="rejects">
+                    <div v-if="day.outlook" class="sec">
+                    <div class="sec__label">次日预测</div>
+                    <p class="sec__text">
+                      {{ day.outlook.direction === 'up' ? '看涨' : day.outlook.direction === 'down' ? '看跌' : '看平' }}
+                      <b class="num">{{ day.outlook.confidence }}%</b>
+                      <template v-if="day.outlook_score">
+                        · 实际
+                        <b :class="(day.outlook_score.actual_pct || 0) >= 0 ? 'up' : 'down'">
+                          {{ day.outlook_score.actual_pct }}%
+                        </b>
+                        · <b :class="day.outlook_score.hit ? 'down' : 'up'">{{ day.outlook_score.hit ? '命中' : '未中' }}</b>
+                      </template>
+                      <template v-if="day.outlook.reason"> · {{ day.outlook.reason }}</template>
+                    </p>
+                  </div>
+                  <div v-if="day.expired?.length" class="rejects">
                       <div class="block__title">挂单超时（系统自动撤销）</div>
                       <div v-for="(x, i) in day.expired" :key="'ex' + i" class="rejrow">
                         <span class="rejrow__code">{{ x.side === 'buy' ? '买入' : '卖出' }} {{ x.code }} {{ x.qty }}股</span>
