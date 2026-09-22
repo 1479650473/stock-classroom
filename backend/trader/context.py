@@ -324,9 +324,26 @@ def build_memory_block(profile_id: int, positions: List[dict], limit: int = 10,
                          "持仓分类": holds, "参考表": routing_mod.TABLE_TEXT}
     except Exception:
         routing_block = {}
+    calib = {}
+    try:
+        from . import calibration as calib_mod
+        rep = calib_mod.report(int(profile_id), days=180)
+        if rep.get("n"):
+            calib = {
+                "样本": rep["n"],
+                "原始ECE": rep.get("raw_ece"),
+                "校准后ECE": rep.get("calibrated_ece"),
+                "区分度": rep.get("discrimination"),
+                "门槛建议": rep.get("gate"),
+                "说明": "ECE 越低越好；校准后明显低于原始 = 你系统性过度自信。"
+                        "置信度区分度弱时别拿它当行动门槛（Laya 的教训：模型读不懂输入时置信度不会报警）。",
+            }
+    except Exception:
+        calib = {}
     return {
         "self_style": style,
         "continuity": continuity,
+        "your_calibration": calib,
         "structure_routing": routing_block,
         "history_note": "近 3 个交易日逐条详细（含委托与结果）；更早的日子只给摘要"
                         "（日期/操作/净值/复盘一句）——需要细节用工具查或问自己写下的记忆。",

@@ -547,8 +547,9 @@ TOOL_SPECS = [
                 "description": ("对**次一交易日自己账户净值**方向的预测；系统次日用真实净值自动打分，"
                                 "长期统计命中率与 Brier 分数（请如实给，别一律高置信）"),
                 "properties": {
-                    "direction": {"type": "string", "enum": ["up", "down", "flat"],
-                                  "description": "看涨/看跌/看平（净值涨跌幅 ±0.3% 以内算平）"},
+                    "direction": {"type": "string", "enum": ["up", "down", "flat", "abstain"],
+                                  "description": "看涨/看跌/看平（±0.3% 以内算平）；真的看不清就填 abstain"
+                                                 "（弃权，不计命中、不污染校准）"},
                     "confidence": {"type": "number", "description": "置信度 0-100（50 ≈ 掷硬币）"},
                     "target": {"type": "string", "description": "预测主要依据的标的或指数，可空"},
                     "reason": {"type": "string", "description": "一句话依据"}},

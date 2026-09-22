@@ -60,9 +60,10 @@ def validate_decision(d: Optional[dict]) -> list:
         from . import outlook as outlook_mod
         norm = outlook_mod.normalize_outlook(o)
         if not norm:
-            problems.append("outlook 不合法：direction 只能是 up/down/flat，confidence 为 0-100 数字。")
+            problems.append("outlook 不合法：direction 只能是 up/down/flat/abstain，"
+                            "confidence 为 0-100 数字（弃权时可省）。")
         elif not str(o.get("reason") or o.get("依据") or "").strip():
-            problems.append("outlook 缺少 reason（一句话依据）：预测要有依据，方便事后对账。")
+            problems.append("outlook 缺少 reason（一句话依据）：预测（或弃权）都要有依据，方便事后对账。")
     return problems
 
 

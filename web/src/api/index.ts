@@ -538,6 +538,23 @@ export interface TraderOutlookStats {
   hit_rate: number | null
   brier: number | null
   baseline_hit: number
+  /** 弃权（看不清）次数与占比：弃权不计命中，也不污染校准 */
+  abstained?: number
+  abstain_rate?: number | null
+  /** 置信度校准报告（借鉴 Laya 的 temperature scaling） */
+  calibration?: {
+    n: number
+    raw_ece: number | null
+    calibrated_ece: number | null
+    log_loss?: number | null
+    log_loss_calibrated?: number | null
+    temperature?: { a: number; b: number; n: number } | null
+    reliability: { bin: string; n: number; claimed: number; actual: number }[]
+    discrimination: { ok: boolean; low_bin_hit?: number; high_bin_hit?: number; spread?: number; note: string }
+    gate: { ok: boolean; threshold?: number; n?: number; hit_rate?: number; baseline_hit?: number; lift?: number; note: string }
+    note?: string
+    error?: string
+  }
   /** 排除"看平"的方向性命中率（更诚实：空仓天天预测"平"会虚高总命中率） */
   n_directional: number
   hit_rate_directional: number | null

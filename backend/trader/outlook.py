@@ -16,8 +16,8 @@ from typing import Optional
 from ..api.paths import SIM_DB
 from . import store
 
-DIRECTIONS = ("up", "down", "flat")
-CN = {"up": "看涨", "down": "看跌", "flat": "看平"}
+DIRECTIONS = ("up", "down", "flat", "abstain")
+CN = {"up": "看涨", "down": "看跌", "flat": "看平", "abstain": "弃权（看不清）"}
 FLAT_BAND_PCT = 0.3          # |涨跌| <= 0.3% 视为"平"
 
 
@@ -28,7 +28,10 @@ def normalize_outlook(raw) -> dict:
     d = str(raw.get("direction") or raw.get("方向") or "").strip().lower()
     alias = {"看涨": "up", "涨": "up", "up": "up", "bull": "up", "多": "up",
              "看跌": "down", "跌": "down", "down": "down", "bear": "down", "空": "down",
-             "看平": "flat", "平": "flat", "flat": "flat", "sideways": "flat", "震荡": "flat"}
+             "看平": "flat", "平": "flat", "flat": "flat", "sideways": "flat", "震荡": "flat",
+             # 弃权（借鉴 Laya 的 noul）：宁可不表态，也不要被迫三选一污染校准数据
+             "弃权": "abstain", "看不清": "abstain", "无信号": "abstain", "noul": "abstain",
+             "abstain": "abstain", "不确定": "abstain", "无观点": "abstain"}
     d = alias.get(d, d)
     if d not in DIRECTIONS:
         return {}
@@ -37,6 +40,11 @@ def normalize_outlook(raw) -> dict:
     except (TypeError, ValueError):
         conf = 0.0
     conf = max(0.0, min(100.0, conf))
+    if d == "abstain":
+        # 弃权不需要置信度，但要有理由
+        return {"direction": "abstain", "confidence": conf,
+                "reason": str(raw.get("reason") or raw.get("依据") or "").strip()[:300],
+                "target": str(raw.get("target") or "").strip()[:40]}
     reason = str(raw.get("reason") or raw.get("依据") or "").strip()[:300]
     target = str(raw.get("target") or raw.get("关注") or "").strip()[:40]
     return {"direction": d, "confidence": conf, "reason": reason, "target": target}
@@ -77,6 +85,10 @@ def score_decision(profile_id: int, trade_date: str) -> Optional[dict]:
     if not nxt:
         return None                      # 次日净值还没结算
     next_day = nxt[0]
+    if outlook.get("direction") == "abstain":
+        # 弃权：只记"当时确实看不清"，不计命中/不参与校准（否则等于白拿一条样本）
+        return {"as_of": next_day, "abstained": True, "scored_at": date.today().isoformat(),
+                "note": "弃权日：不计命中，也不计入校准统计"}
     actual_pct = (nav[next_day] / base - 1) * 100 if base else 0.0
     if abs(actual_pct) <= FLAT_BAND_PCT:
         actual = "flat"
@@ -141,13 +153,16 @@ def stats(profile_id: int, days: int = 60) -> dict:
         con.close()
     except Exception:
         rows = []
-    scored = []
+    scored, abstained = [], 0
     for tdate, o_raw, s_raw in rows:
-        o, s = _load_json(o_raw), None
+        o = _load_json(o_raw)
         try:
             s = json.loads(s_raw or "{}")
         except Exception:
             s = None
+        if s and s.get("abstained"):
+            abstained += 1
+            continue
         if o and s:
             scored.append({"date": str(tdate)[:10], **s, "reason": o.get("reason", ""),
                            "target": o.get("target", "")})
@@ -171,7 +186,9 @@ def stats(profile_id: int, days: int = 60) -> dict:
     # 方向性命中率（排除"看平"）：全现金账户天天预测"平"会白拿命中率，这个口径更诚实
     dir_sub = [x for x in scored if x.get("predicted") in ("up", "down")]
     flat_sub = [x for x in scored if x.get("predicted") == "flat"]
-    return {"n": n, "hit_rate": round(hits / n * 100, 1) if n else None,
+    return {"n": n, "abstained": abstained,
+            "abstain_rate": round(abstained / (n + abstained) * 100, 1) if (n + abstained) else None,
+            "hit_rate": round(hits / n * 100, 1) if n else None,
             "brier": round(brier, 4) if brier is not None else None,
             "baseline_hit": 33.3, "recent": scored[:20], "buckets": buckets, "by_direction": by_dir,
             "n_directional": len(dir_sub),

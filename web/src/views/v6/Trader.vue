@@ -354,6 +354,48 @@ function toolLine(t: { tool: string; args?: Record<string, unknown>; error?: str
             </tbody>
           </table>
         </div>
+        <div v-if="outlook.calibration?.n" class="kv" style="margin-top:10px">
+          <span class="kv__k">置信度可信度</span>
+          <span class="kv__v">
+            原始 ECE <b>{{ outlook.calibration.raw_ece }}</b>
+            <template v-if="outlook.calibration.calibrated_ece != null">
+              → 校准后 <b>{{ outlook.calibration.calibrated_ece }}</b>
+            </template>
+            （ECE 越低越好；校准后明显更低 = 系统性过度自信）
+          </span>
+        </div>
+        <div v-if="outlook.calibration?.discrimination?.ok" class="kv">
+          <span class="kv__k">区分度</span>
+          <span class="kv__v">
+            低置信组命中 {{ outlook.calibration.discrimination.low_bin_hit }}% ／
+            高置信组 {{ outlook.calibration.discrimination.high_bin_hit }}%
+            （差 {{ outlook.calibration.discrimination.spread }}pp）—— {{ outlook.calibration.discrimination.note }}
+          </span>
+        </div>
+        <div v-if="outlook.calibration?.gate?.ok" class="kv">
+          <span class="kv__k">门槛参考</span>
+          <span class="kv__v">
+            置信度 ≥ {{ outlook.calibration.gate.threshold }}% 时命中 {{ outlook.calibration.gate.hit_rate }}%
+            （整体 {{ outlook.calibration.gate.baseline_hit }}%，提升 {{ outlook.calibration.gate.lift }}pp）
+            —— {{ outlook.calibration.gate.note }}
+          </span>
+        </div>
+        <div v-if="outlook.calibration?.reliability?.length" class="table-wrap" style="margin-top:8px">
+          <table class="tbl">
+            <thead><tr><th>置信度区间</th><th>样本</th><th>声称</th><th>实际命中</th></tr></thead>
+            <tbody>
+              <tr v-for="r in outlook.calibration.reliability" :key="r.bin">
+                <td>{{ r.bin }}</td><td class="num">{{ r.n }}</td>
+                <td class="num">{{ r.claimed }}%</td>
+                <td class="num" :class="r.actual >= r.claimed ? 'up' : 'down'">{{ r.actual }}%</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div v-if="outlook.abstain_rate != null" class="kv">
+          <span class="kv__k">弃权率</span>
+          <span class="kv__v">{{ outlook.abstain_rate }}%（{{ outlook.abstained }} 次；弃权不计命中，也不算"看不清"的失败）</span>
+        </div>
         <p class="muted small" style="margin-top:8px">{{ outlook.note }}</p>
       </SectionCard>
 

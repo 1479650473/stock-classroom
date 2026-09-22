@@ -339,7 +339,14 @@ def outlook_stats():
     if p is None:
         return err(404, "not_found", "交易员不存在", retriable=False)
     days = int(request.args.get("days") or 60)
-    return ok(stats(int(p["id"]), days=max(10, min(days, 500))))
+    d = max(10, min(days, 500))
+    out = stats(int(p["id"]), days=d)
+    try:
+        from backend.trader.calibration import report as calib_report
+        out["calibration"] = calib_report(int(p["id"]), days=max(d, 180))
+    except Exception as e:
+        out["calibration"] = {"error": str(e)[:120]}
+    return ok(out)
 
 
 @bp.route("/performance", methods=["GET"])
