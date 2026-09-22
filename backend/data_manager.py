@@ -1483,6 +1483,132 @@ def update_chip_all(days: int = 250, procs: int = 6, progress=None) -> dict:
     return {"ok": ok, "fail": fail, "rows": rows_n, "total": total, "elapsed": el}
 
 
+# ════════════════════════════════════════════════════════
+#  股东户数 / 基金持仓 (季度)
+# ════════════════════════════════════════════════════════
+def get_holder_count(code: str, limit: int = 40) -> List[Dict]:
+    """股东户数历史(降序)."""
+    conn = get_kline_db()
+    rows = conn.execute(
+        "SELECT report_date, holder_count, holder_count_prev, holder_change, holder_change_pct, "
+        "avg_mv, avg_shares, total_mv, total_shares, announce_date "
+        "FROM holder_count WHERE code=? ORDER BY report_date DESC LIMIT ?", (code, limit)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_fund_hold(code: str, limit: int = 40) -> List[Dict]:
+    """基金持仓历史(降序)."""
+    conn = get_kline_db()
+    rows = conn.execute(
+        "SELECT report_date, fund_count, hold_shares, hold_value, hold_change_pct, change_shares "
+        "FROM fund_hold WHERE code=? ORDER BY report_date DESC LIMIT ?", (code, limit)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# ════════════════════════════════════════════════════════
+#  概念/行业板块 (THS 指数历史, board_list + board_daily)
+# ════════════════════════════════════════════════════════
+def init_board_tables():
+    conn = get_kline_db()
+    conn.execute("""CREATE TABLE IF NOT EXISTS board_list (
+        code TEXT PRIMARY KEY, name TEXT, type TEXT, updated_at TEXT)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS board_daily (
+        code TEXT, name TEXT, type TEXT, date TEXT,
+        open REAL, high REAL, low REAL, close REAL, volume INTEGER, amount REAL,
+        PRIMARY KEY (code, date))""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_board_daily_date ON board_daily(date)")
+    conn.commit()
+    conn.close()
+
+
+def cache_board_list() -> int:
+    """刷新板块列表(THS 概念+行业)."""
+    from akshare_source import ak_get_board_list_ths
+    data = ak_get_board_list_ths()
+    if not data:
+        return 0
+    conn = get_kline_db()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn.executemany("INSERT OR REPLACE INTO board_list VALUES (?,?,?,?)",
+                     [(d["code"], d["name"], d["type"], now) for d in data])
+    conn.commit()
+    conn.close()
+    return len(data)
+
+
+def update_board_daily(recent_days: int = 0, workers: int = 8, progress=None) -> dict:
+    """板块指数增量更新(THS). recent_days>0 时只拉最近 N 天."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from akshare_source import ak_fetch_board_index_ths
+    conn = get_kline_db()
+    boards = [dict(r) for r in conn.execute("SELECT code, name, type FROM board_list")]
+    conn.close()
+    if not boards:
+        return {"updated": 0, "errors": 0, "rows_added": 0, "total": 0}
+    if recent_days > 0:
+        start = (datetime.now() - timedelta(days=recent_days)).strftime("%Y%m%d")
+    else:
+        start = "20100101"
+    end = (datetime.now() + timedelta(days=1)).strftime("%Y%m%d")
+    total = len(boards)
+    updated = errors = rows_added = 0
+    batch = []
+    t0 = time.time()
+
+    def _fetch(b):
+        rows = ak_fetch_board_index_ths(b["name"], b["type"], start, end)
+        return rows, b
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futs = {pool.submit(_fetch, b): b for b in boards}
+        done = 0
+        for f in as_completed(futs):
+            b = futs[f]
+            done += 1
+            try:
+                rows, _ = f.result(timeout=60)
+            except Exception:
+                rows = []
+            if rows:
+                updated += 1
+                batch.extend([(b["code"], b["name"], b["type"]) + tuple(r) for r in rows])
+                rows_added += len(rows)
+            else:
+                errors += 1
+            if progress and (done % 50 == 0 or done == total):
+                progress(f"[{done}/{total}] +{rows_added} 行", None)
+    if batch:
+        conn = get_kline_db()
+        conn.executemany(
+            "INSERT OR REPLACE INTO board_daily "
+            "(code,name,type,date,open,high,low,close,volume,amount) VALUES (?,?,?,?,?,?,?,?,?,?)", batch)
+        conn.commit()
+        conn.close()
+    return {"updated": updated, "errors": errors, "rows_added": rows_added,
+            "total": total, "elapsed": round(time.time() - t0, 1)}
+
+
+def get_board_list(btype: str = "") -> List[Dict]:
+    conn = get_kline_db()
+    if btype:
+        rows = conn.execute("SELECT * FROM board_list WHERE type=? ORDER BY code", (btype,)).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM board_list ORDER BY type, code").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_board_kline(code: str, days: int = 250) -> List[Dict]:
+    conn = get_kline_db()
+    rows = conn.execute(
+        "SELECT date, open, high, low, close, volume, amount FROM board_daily "
+        "WHERE code=? ORDER BY date DESC LIMIT ?", (code, days)).fetchall()
+    conn.close()
+    return [dict(r) for r in reversed(rows)]
+
+
 def cache_sector_board_from_akshare():
     """写入 sector_board 快照表(991行: 行业/概念板块涨跌榜, 含 leader).
 

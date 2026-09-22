@@ -102,6 +102,34 @@ def north_flow():
         return err(502, "market_error", str(e), retriable=True)
 
 
+@bp.route("/board/list")
+def board_list():
+    """概念/行业板块列表(THS). ?type=concept|industry"""
+    btype = request.args.get("type", "").strip()
+    try:
+        from data_manager import get_board_list
+        return ok(get_board_list(btype))
+    except Exception as e:
+        return err(502, "market_error", str(e), retriable=True)
+
+
+@bp.route("/board/kline")
+def board_kline():
+    """板块指数历史(THS). ?code=308614&days=250"""
+    code = request.args.get("code", "").strip()
+    days = int_arg(request.args.get("days"), 250, 10, 6000)
+    if not code:
+        return err(400, "missing_code", "需要 code 参数")
+    try:
+        from data_manager import get_board_kline
+        rows = get_board_kline(code, days)
+        if not rows:
+            return err(404, "no_data", f"{code} 无板块数据", retriable=False)
+        return ok(rows, code=code)
+    except Exception as e:
+        return err(502, "market_error", str(e), retriable=True)
+
+
 @bp.route("/industry-pe")
 def industry_pe():
     """行业市盈率(巨潮证监会行业分类). ?date=&level=1|2"""

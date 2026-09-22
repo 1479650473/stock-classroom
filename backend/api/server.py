@@ -96,6 +96,9 @@ def create_app():
     # 龙虎榜 + 融资融券
     from .blueprints import lhb_margin
     app.register_blueprint(lhb_margin.bp)
+    # 股东户数 / 基金持仓(季度)
+    from .blueprints import holder
+    app.register_blueprint(holder.bp)
     # Agent Gateway v1 (/api/agent/v1) — 能力分级 R/W/B/T + 审计/幂等/限流，供外部 agent/MCP 调用
     from backend.agent.routes import register as register_agent_gateway
     register_agent_gateway(app)

@@ -478,6 +478,55 @@ def ak_get_sectors(sector_type: str = "industry") -> List[Dict]:
         return []
 
 
+def ak_get_board_list_ths() -> List[Dict]:
+    """同花顺概念+行业板块列表(名称用于后续查询). 返回 [{code,name,type}]."""
+    out = []
+    try:
+        df = ak.stock_board_concept_name_ths()
+        if df is not None and not df.empty:
+            for _, r in df.iterrows():
+                out.append({"code": str(r.iloc[1]), "name": str(r.iloc[0]), "type": "concept"})
+    except Exception as e:
+        log.warning("ths concept list failed: %s", str(e)[:60])
+    try:
+        df = ak.stock_board_industry_name_ths()
+        if df is not None and not df.empty:
+            for _, r in df.iterrows():
+                out.append({"code": str(r.iloc[1]), "name": str(r.iloc[0]), "type": "industry"})
+    except Exception as e:
+        log.warning("ths industry list failed: %s", str(e)[:60])
+    return out
+
+
+def ak_fetch_board_index_ths(name: str, btype: str = "concept",
+                             start_date: str = "20100101", end_date: str = "20261231",
+                             timeout: float = 30.0) -> List[tuple]:
+    """同花顺板块指数日线(概念/行业). 返回 [(date,o,h,l,c,vol,amt)]."""
+    akshare_wait()
+
+    def _fetch():
+        if btype == "concept":
+            return ak.stock_board_concept_index_ths(symbol=name, start_date=start_date, end_date=end_date)
+        return ak.stock_board_industry_index_ths(symbol=name, start_date=start_date, end_date=end_date)
+
+    try:
+        df = _run_with_timeout(_fetch, timeout)
+    except Exception as e:
+        log.warning("board_index_ths[%s] 异常: %s", name, str(e)[:50])
+        return []
+    if df is None or df.empty:
+        return []
+    rows = []
+    for _, r in df.iterrows():
+        try:
+            rows.append((str(r.iloc[0]).replace("-", ""), float(r.iloc[1]), float(r.iloc[2]),
+                         float(r.iloc[3]), float(r.iloc[4]),
+                         int(float(r.iloc[5] or 0)), float(r.iloc[6] or 0)))
+        except Exception:
+            continue
+    return rows
+
+
 def ak_get_industry_pe(date: str) -> List[Dict]:
     """巨潮行业市盈率(证监会行业分类, 120 行业). date=YYYYMMDD.
 

@@ -528,6 +528,29 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
         except Exception as e:
             out['steps']['market_daily'] = str(e)[:120]
             lg.warning('  大盘情绪失败: %s', str(e)[:80])
+        # ⑲ 股东户数/基金持仓(季度, 最近2期幂等 — 新报告期自动拉取)
+        try:
+            import subprocess as _sp
+            _h_script = os.path.join(ROOT, 'scripts', 'rebuild_holder.py')
+            _r = _sp.run([sys.executable, _h_script, '--recent', '2'],
+                         cwd=ROOT, capture_output=True, text=True, timeout=1800)
+            out['steps']['holder'] = 'ok' if _r.returncode == 0 else 'rc=%s' % _r.returncode
+            lg.info('  股东户数/基金持仓: %s', out['steps']['holder'])
+        except Exception as e:
+            out['steps']['holder'] = str(e)[:120]
+            lg.warning('  股东/基金持仓失败: %s', str(e)[:80])
+        # ⑳ 概念/行业板块指数增量(THS 375概念+90行业, 最近10天)
+        try:
+            from data_manager import init_board_tables, cache_board_list, update_board_daily
+            init_board_tables()
+            cache_board_list()
+            _bd = update_board_daily(recent_days=10, workers=8,
+                                     progress=lambda m, p=None: None)
+            out['steps']['board'] = {k: _bd.get(k) for k in ('updated', 'errors', 'rows_added', 'total', 'elapsed')}
+            lg.info('  板块指数: 更新%s 失败%s 新增%d行', _bd.get('updated'), _bd.get('errors'), _bd.get('rows_added'))
+        except Exception as e:
+            out['steps']['board'] = str(e)[:120]
+            lg.warning('  板块指数失败: %s', str(e)[:80])
 
     out['finished'] = datetime.now().isoformat(timespec='seconds')
     out['elapsed'] = round(time.time() - t0, 1)
