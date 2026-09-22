@@ -468,6 +468,8 @@ export interface TraderDecision {
   news: { market?: TraderNewsItem[]; stocks?: TraderStockNews[] }
   plan: TraderOrder[]; executions: TraderExecution[]
   rejections?: { code?: string; side?: string; qty?: number; message?: string }[]
+  /** 系统撤销的超时挂单（挂单超时规则） */
+  expired?: { order_id?: number; code?: string; name?: string; side?: string; qty?: number; days?: number; detail?: string }[]
   trace: TraderTrace[]
   nav_before?: number; nav_after?: number
   total_assets_before?: number; total_assets_after?: number

@@ -21,6 +21,11 @@
     stop_loss_pct         止损线（%），只能比系统兜底更严
     max_new_positions_day 单日最多开几个新仓
     require_momentum_up   买入前需 20 日动量为正（动能未回升不得买入）
+    sell_reentry_cooldown 卖出后冷静期：N 个交易日内不得买回同一只（反手冷却）
+    pending_expiry_days   限价挂单超过 N 个交易日未成交自动撤销（挂单超时）
+
+后两条借鉴 PA_Agent 的 decision_continuity（反手冷却 / 挂单过期）：前者抑制「今天割明天追」的
+来回横跳，后者避免陈旧限价单长期占着冻结资金与仓位。系统有兜底默认值，规则只能收紧。
 """
 from __future__ import annotations
 
@@ -28,7 +33,7 @@ import json
 import sqlite3
 from typing import Callable, Optional
 
-from ..api.paths import DATA_DIR, KLINE_DB
+from ..api.paths import DATA_DIR, KLINE_DB, SIM_DB
 from . import store
 
 RULE_KIND = "rule"
@@ -39,6 +44,10 @@ DEFAULT_PROTECTION = {
     "stop_loss_pct": 8.0,
     "trailing_stop_pct": 10.0,
     "trailing_activation_pct": 15.0,
+    # 反手冷却：卖出后 1 个交易日内不得买回同一只（可被规则收紧到更长）
+    "sell_reentry_cooldown": 1,
+    # 挂单超时：限价挂单 3 个交易日未成交自动撤销
+    "pending_expiry_days": 3,
 }
 
 DEFAULT_RULE_DAYS = 5          # 规则默认有效期（交易日）
@@ -107,7 +116,8 @@ def normalize_rules(raw_rules, base_rules: Optional[list] = None,
             continue
         kind = str(r.get("kind") or r.get("type") or "").strip()
         if kind not in ("block_new_buy", "position_cap_pct", "stop_loss_pct",
-                        "max_new_positions_day", "require_momentum_up"):
+                        "max_new_positions_day", "require_momentum_up",
+                        "sell_reentry_cooldown", "pending_expiry_days"):
             continue
         if kind in seen:
             continue
@@ -122,7 +132,8 @@ def normalize_rules(raw_rules, base_rules: Optional[list] = None,
         if kind == "block_new_buy":
             regs = [str(x).strip() for x in (r.get("regimes") or []) if str(x).strip()]
             item["regimes"] = [x for x in regs if x in REGIMES][:4]
-        elif kind in ("position_cap_pct", "stop_loss_pct", "max_new_positions_day"):
+        elif kind in ("position_cap_pct", "stop_loss_pct", "max_new_positions_day",
+                      "sell_reentry_cooldown", "pending_expiry_days"):
             v = _fnum(r.get("value"), 0.5, 100, None)
             if v is None:
                 continue
@@ -134,6 +145,19 @@ def normalize_rules(raw_rules, base_rules: Optional[list] = None,
             continue   # 不严于系统兜底，无意义
         if kind == "position_cap_pct" and item.get("value", 0) >= 100:
             continue
+        # 反手冷却 / 挂单超时：只能更保守（>= 系统兜底，上限 10）
+        if kind == "sell_reentry_cooldown":
+            v = item.get("value")
+            if v is None or float(v) < DEFAULT_PROTECTION["sell_reentry_cooldown"]:
+                item["value"] = DEFAULT_PROTECTION["sell_reentry_cooldown"]
+            elif float(v) > 10:
+                item["value"] = 10
+        if kind == "pending_expiry_days":
+            v = item.get("value")
+            if v is None or float(v) < DEFAULT_PROTECTION["pending_expiry_days"]:
+                item["value"] = DEFAULT_PROTECTION["pending_expiry_days"]
+            elif float(v) > 10:
+                item["value"] = 10
         if kind == "max_new_positions_day" and item.get("value", 99) >= 10:
             continue
         seen.add(kind)
@@ -189,6 +213,20 @@ def protection_rules(profile_id: int, as_of: Optional[str] = None) -> dict:
     """系统兜底保护参数 + 规则收紧（只取更严的值）。"""
     prot = dict(DEFAULT_PROTECTION)
     for r in active_rules(profile_id, as_of):
+        if r["kind"] == "sell_reentry_cooldown":
+            try:
+                prot["sell_reentry_cooldown"] = max(
+                    int(prot.get("sell_reentry_cooldown", 1)), int(float(r.get("value") or 1)))
+            except Exception:
+                pass
+            continue
+        if r["kind"] == "pending_expiry_days":
+            try:
+                prot["pending_expiry_days"] = max(
+                    int(prot.get("pending_expiry_days", 3)), int(float(r.get("value") or 3)))
+            except Exception:
+                pass
+            continue
         if r["kind"] == "stop_loss_pct":
             prot["stop_loss_pct"] = min(prot["stop_loss_pct"], float(r.get("value") or 99))
     return prot
@@ -217,6 +255,39 @@ def _momentum_asof(code: str, as_of: str, window: int = 20):
         return None
 
 
+def _account_of(profile_id: int) -> Optional[int]:
+    """档案 → 模拟账户 id。"""
+    try:
+        prof = store.get_profile(int(profile_id))
+        return int(prof["account_id"]) if prof and prof.get("account_id") is not None else None
+    except Exception:
+        return None
+
+
+def _trading_gap(d1: str, d2: str) -> Optional[int]:
+    """两个日期之间隔了几个交易日（不含起始日、含结束日），用于冷静期与挂单龄。"""
+    a, b = str(d1 or "")[:10], str(d2 or "")[:10]
+    if not a or not b or b < a:
+        return None
+    days = _trading_days_from(a, limit=120)
+    return len([d for d in days if a < d <= b])
+
+
+def last_sell_date(account_id: int, code: str, as_of: str = "") -> str:
+    """该账户对某只股票最近一次卖出的日期（<= as_of，取成交记录里的模拟交易日）。"""
+    try:
+        con = sqlite3.connect(str(SIM_DB))
+        row = con.execute(
+            "SELECT MAX(substr(traded_at,1,10)) FROM trades "
+            "WHERE account_id=? AND code=? AND side='sell' "
+            "AND (?='' OR substr(traded_at,1,10)<=?)",
+            (int(account_id), str(code), str(as_of)[:10], str(as_of)[:10])).fetchone()
+        con.close()
+        return str((row or [""])[0] or "")
+    except Exception:
+        return ""
+
+
 def check_buy(profile_id: int, code: str, ratio_after: float = 0.0,
               regime: str = "", new_buys_today: int = 0,
               as_of: Optional[str] = None) -> Optional[dict]:
@@ -228,6 +299,26 @@ def check_buy(profile_id: int, code: str, ratio_after: float = 0.0,
         rules = active_rules(int(profile_id), as_of)
     except Exception:
         return None
+
+    # 反手冷却（借鉴 PA_Agent 的 flip cooldown）：卖出后 N 个交易日内不得买回同一只。
+    # 系统默认 1 个交易日（防"今天割、明天追"），模型可用规则收紧到更长。
+    try:
+        prot = protection_rules(int(profile_id), as_of)
+        cool = int(prot.get("sell_reentry_cooldown") or 0)
+        acc = _account_of(profile_id) if cool > 0 else None
+        if cool > 0 and acc and code:
+            sold = last_sell_date(acc, code, as_of or "")
+            if sold:
+                gap = _trading_gap(sold, as_of or "")
+                if gap is not None and gap <= cool:
+                    tightened = next((r for r in rules if r["kind"] == "sell_reentry_cooldown"), None)
+                    src = "纪律规则" if tightened else "系统默认冷静期"
+                    return {"rule": tightened or {"kind": "sell_reentry_cooldown", "value": cool},
+                            "message": f"{src}：{code} 卖出后需冷静 {cool} 个交易日"
+                                       f"（上次卖出 {sold}，距今 {gap} 个交易日）"}
+    except Exception:
+        pass
+
     for r in rules:
         k = r["kind"]
         if k == "block_new_buy":
@@ -259,6 +350,8 @@ def describe_rules(rules: list) -> list:
         "stop_loss_pct": "止损线",
         "max_new_positions_day": "单日新仓数上限",
         "require_momentum_up": "买入需 20 日动量为正",
+        "sell_reentry_cooldown": "卖出后冷静期",
+        "pending_expiry_days": "挂单超时撤销",
     }
     out = []
     for r in rules or []:
@@ -268,6 +361,8 @@ def describe_rules(rules: list) -> list:
             txt += f" {float(r.get('value') or 0):g}%"
         elif k == "max_new_positions_day":
             txt += f" {int(r.get('value') or 0)} 个"
+        elif k in ("sell_reentry_cooldown", "pending_expiry_days"):
+            txt += f" {int(float(r.get('value') or 0))} 个交易日"
         if k == "block_new_buy" and r.get("regimes"):
             txt += "（" + "/".join(r["regimes"]) + "）"
         if r.get("until"):
@@ -275,6 +370,45 @@ def describe_rules(rules: list) -> list:
         if r.get("reason"):
             txt += f" —— {r['reason']}"
         out.append({"kind": k, "text": txt, "rule": r})
+    return out
+
+
+def expire_pending_orders(engine, profile_id: int, account_id: int, as_of: str) -> list:
+    """挂单超时：限价挂单超过 N 个交易日未成交，由系统撤销（释放冻结资金/仓位）。
+
+    借鉴 PA_Agent 的 pending limit 过期（默认 3 根 K 线）：陈旧挂单既占额度，
+    也会让模型误以为"已经在下单了"。返回被撤销的委托列表（供落库与前端展示）。
+    """
+    prot = protection_rules(int(profile_id), as_of)
+    limit_days = int(prot.get("pending_expiry_days") or 0)
+    out: list = []
+    if limit_days <= 0:
+        return out
+    try:
+        pendings = engine.get_orders(int(account_id), "pending") or []
+    except Exception:
+        return out
+    for o in pendings:
+        placed = str(o.get("created_at") or "")[:10]
+        if not placed:
+            continue
+        age = _trading_gap(placed, as_of)
+        if age is None or age <= limit_days:
+            continue
+        rec = {"order_id": o.get("id"), "code": o.get("code"),
+               "name": o.get("name") or o.get("code"), "side": o.get("side"),
+               "qty": o.get("qty"), "price": o.get("price"), "placed": placed,
+               "days": age, "forced": True, "ok": False, "detail": ""}
+        try:
+            ok, msg = engine.cancel_order(int(o.get("id")))
+        except Exception as e:
+            ok, msg = False, str(e)
+        if ok:
+            rec.update({"ok": True,
+                        "detail": f"挂单超时（{age} 个交易日未成交 > {limit_days} 日）已由系统撤销"})
+        else:
+            rec["detail"] = f"撤销失败：{msg}"
+        out.append(rec)
     return out
 
 

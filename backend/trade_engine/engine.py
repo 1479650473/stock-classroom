@@ -72,6 +72,7 @@ class TradeEngine:
         conn.execute("DELETE FROM orders WHERE account_id=?", (account_id,))
         conn.execute("DELETE FROM positions WHERE account_id=?", (account_id,))
         conn.execute("DELETE FROM trades WHERE account_id=?", (account_id,))
+        conn.execute("DELETE FROM account_nav WHERE account_id=?", (account_id,))
         conn.execute("DELETE FROM accounts WHERE id=?", (account_id,))
         conn.commit()
         conn.close()
@@ -84,6 +85,7 @@ class TradeEngine:
         conn.execute("DELETE FROM orders WHERE account_id=?", (account_id,))
         conn.execute("DELETE FROM positions WHERE account_id=?", (account_id,))
         conn.execute("DELETE FROM trades WHERE account_id=?", (account_id,))
+        conn.execute("DELETE FROM account_nav WHERE account_id=?", (account_id,))
         conn.execute(
             "UPDATE accounts SET balance=?, frozen=?, total_profit=? WHERE id=?",
             (acc['initial_capital'], 0, 0, account_id),
@@ -141,7 +143,8 @@ class TradeEngine:
                 order, trade = self._execute_market(conn, acc, code, name, side,
                                                     exec_price, qty, trade_date)
             else:
-                order = self._save_pending(conn, acc, code, name, side, price, qty)
+                order = self._save_pending(conn, acc, code, name, side, price, qty,
+                                           trade_date=trade_date)
                 conn.commit()
                 return order, None
 
@@ -430,7 +433,7 @@ class TradeEngine:
         order = self._save_filled(conn, acc['id'], code, name, side, 'market',
                                   price, qty, commission, stamp_tax)
         trade = self._save_trade(conn, acc['id'], order['id'], code, name, side,
-                                 price, qty, commission, stamp_tax)
+                                 price, qty, commission, stamp_tax, trade_date=trade_date)
         self._settle_position(conn, acc, code, name, side, price, qty, trade_date)
         return order, trade
 
@@ -475,19 +478,29 @@ class TradeEngine:
                                   existing_id=order['id'])
         trade = self._save_trade(conn, acc['id'], order['id'], order['code'],
                                  order['name'], order['side'], order['price'],
-                                 order['qty'], commission, stamp_tax)
+                                 order['qty'], commission, stamp_tax, trade_date=trade_date)
         self._settle_position(conn, acc, order['code'], order['name'],
                               order['side'], order['price'], order['qty'],
                               trade_date)
         return order, trade
 
-    def _save_pending(self, conn, acc, code, name, side, price, qty):
-        cur = conn.execute(
-            """INSERT INTO orders (account_id, code, name, side, order_type,
-               price, qty, status)
-               VALUES (?, ?, ?, ?, 'limit', ?, ?, 'pending')""",
-            (acc['id'], code, name, side, price, qty),
-        )
+    def _save_pending(self, conn, acc, code, name, side, price, qty, trade_date=None):
+        stamp = f"{str(trade_date)[:10]} 15:00:00" if trade_date else None
+        if stamp:
+            # created_at 记「挂单当天」（回放里必须是模拟日），供挂单超时规则判断挂单龄
+            cur = conn.execute(
+                """INSERT INTO orders (account_id, code, name, side, order_type,
+                   price, qty, status, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, 'limit', ?, ?, 'pending', ?, ?)""",
+                (acc['id'], code, name, side, price, qty, stamp, stamp),
+            )
+        else:
+            cur = conn.execute(
+                """INSERT INTO orders (account_id, code, name, side, order_type,
+                   price, qty, status)
+                   VALUES (?, ?, ?, ?, 'limit', ?, ?, 'pending')""",
+                (acc['id'], code, name, side, price, qty),
+            )
         oid = cur.lastrowid
 
         if side == 'buy':
@@ -529,14 +542,26 @@ class TradeEngine:
             conn.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone())
 
     def _save_trade(self, conn, account_id, order_id, code, name, side,
-                    price, qty, commission, stamp_tax):
-        cur = conn.execute(
-            """INSERT INTO trades (account_id, order_id, code, name, side,
-               price, qty, commission, stamp_tax)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (account_id, order_id, code, name, side, price, qty,
-             commission, stamp_tax),
-        )
+                    price, qty, commission, stamp_tax, trade_date=None):
+        # 回放/历史结算：traded_at 记「模拟交易日」而不是真实时间，
+        # 否则按成交日判断的规则（卖出冷静期等）在回放里全部失真。
+        stamp = f"{str(trade_date)[:10]} 15:00:00" if trade_date else None
+        if stamp:
+            cur = conn.execute(
+                """INSERT INTO trades (account_id, order_id, code, name, side,
+                   price, qty, commission, stamp_tax, traded_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (account_id, order_id, code, name, side, price, qty,
+                 commission, stamp_tax, stamp),
+            )
+        else:
+            cur = conn.execute(
+                """INSERT INTO trades (account_id, order_id, code, name, side,
+                   price, qty, commission, stamp_tax)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (account_id, order_id, code, name, side, price, qty,
+                 commission, stamp_tax),
+            )
         return make_trade(
             conn.execute("SELECT * FROM trades WHERE id=?",
                          (cur.lastrowid,)).fetchone())

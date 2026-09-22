@@ -63,7 +63,21 @@ def run_daily_decision(profile_id: Optional[int] = None, trigger: str = "manual"
                           error="", finished_at=None)
     dec_row = store.get_decision(pid, trade_date) or {}
     decision_id = dec_row.get("id")
-    _emit(progress, "构建决策上下文（账户/持仓/市场/候选/新闻/记忆）…", 10)
+
+    # 挂单超时：先把挂了太久没成交的限价单撤掉，再让模型看到"干净的委托本"
+    # （借鉴 PA_Agent 的 pending 过期；陈旧挂单会占额度、也会让模型误以为已经在下单）
+    if not dry_run:
+        try:
+            from .discipline import expire_pending_orders
+            expired = expire_pending_orders(TradeEngine(), pid, int(profile["account_id"]), trade_date)
+        except Exception as e:
+            expired = []
+            _emit(progress, f"挂单超时检查跳过：{e}")
+        if expired:
+            store.upsert_decision(pid, trade_date, expired=expired)
+            _emit(progress, f"挂单超时：系统撤销 {len(expired)} 笔陈旧挂单", 12)
+
+    _emit(progress, "构建决策上下文（账户/持仓/市场/候选/新闻/记忆）…", 14)
 
     try:
         ctx = ctx_mod.build_daily_context(profile, with_candidates=with_candidates,

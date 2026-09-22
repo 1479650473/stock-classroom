@@ -101,6 +101,9 @@ def ensure_schema() -> None:
             con.execute("ALTER TABLE trader_decision ADD COLUMN review TEXT DEFAULT '{}'")
         if "rejections" not in cols:
             con.execute("ALTER TABLE trader_decision ADD COLUMN rejections TEXT DEFAULT '[]'")
+        if "expired" not in cols:
+            # 系统撤销的超时挂单（挂单超时规则），与 rejections（纪律拦截）分开记录
+            con.execute("ALTER TABLE trader_decision ADD COLUMN expired TEXT DEFAULT '[]'")
         pcols = {r[1] for r in con.execute("PRAGMA table_info(trader_profile)")}
         if "model" not in pcols:
             con.execute("ALTER TABLE trader_profile ADD COLUMN model TEXT DEFAULT ''")

@@ -401,6 +401,13 @@ def run_replay_batch(run_id: int, days: int = MAX_BATCH,
     for i, d in enumerate(dates, 1):
         # 1) 先按当日价撮合历史挂单
         _settle_pending(engine, account_id, d)
+        # 挂单超时：与实盘同一套规则（历史日 as-of）
+        expired_today: list = []
+        try:
+            from .discipline import expire_pending_orders
+            expired_today = expire_pending_orders(engine, pid, account_id, d)
+        except Exception:
+            expired_today = []
         # 2) 建决策记录
         store.upsert_decision(pid, d, status="running", trigger="replay",
                               error="", finished_at=None)
@@ -454,6 +461,7 @@ def run_replay_batch(run_id: int, days: int = MAX_BATCH,
             plan=agent.tools.plan,
             executions=agent.tools.executions, trace=result.get("trace") or [],
             rejections=agent.tools.rejections,
+            expired=expired_today,
             nav_after=nav_after, total_assets_after=float(s2.get("total_assets", 0) or 0),
             error=result.get("error") or "", finished_at=datetime.now().isoformat(timespec="seconds"))
         for n in result.get("notes") or []:

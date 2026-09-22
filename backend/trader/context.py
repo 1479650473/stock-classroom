@@ -262,10 +262,18 @@ def build_memory_block(profile_id: int, positions: List[dict], limit: int = 8,
 
 
 def _rules_block(profile_id: int, as_of: Optional[str] = None) -> list:
-    """当前生效的纪律规则（自省结论 → 系统强制执行，模型必须知道）。"""
+    """当前生效的纪律规则（自省结论 → 系统强制执行，模型必须知道）。
+
+    系统恒定规则也一并告诉模型（不是模型可改的），否则它会反复试探同一个被拒动作。
+    """
     try:
-        from .discipline import active_rules, describe_rules
-        return [x["text"] for x in describe_rules(active_rules(int(profile_id), as_of))]
+        from .discipline import active_rules, describe_rules, protection_rules
+        out = [x["text"] for x in describe_rules(active_rules(int(profile_id), as_of))]
+        p = protection_rules(int(profile_id), as_of)
+        out.append(f"系统恒定规则：卖出后 {int(p.get('sell_reentry_cooldown') or 0)} 个交易日内"
+                   f"不得买回同一只；限价挂单 {int(p.get('pending_expiry_days') or 0)} 个交易日"
+                   f"未成交将由系统撤销；浮亏 {float(p.get('stop_loss_pct') or 0):g}% 触发兜底止损")
+        return out
     except Exception:
         return []
 

@@ -65,6 +65,7 @@ interface StreamDay {
   review?: { self_critique: string; lessons: string[]; style: string; rules?: string[]; trigger?: string }
   protection?: StreamOrder[]
   rejections?: { code?: string; side?: string; qty?: number; message?: string }[]
+  expired?: { code?: string; name?: string; side?: string; qty?: number; days?: number; detail?: string }[]
   status: 'running' | 'settled'
 }
 const liveDays = ref<StreamDay[]>([])
@@ -259,6 +260,7 @@ function startLive(jobId: string) {
             error: String(f.error || ''),
           }
           d.rejections = (f.rejections as StreamDay['rejections']) || []
+          d.expired = (f.expired as StreamDay['expired']) || []
           d.status = 'settled'
         }
         refreshLiveDetail()
@@ -716,6 +718,13 @@ watch([current, navSeries], async () => { await Promise.resolve(); chart.draw() 
                       <span v-for="(o, i) in day.protection" :key="'pr' + i" class="order__name">
                         {{ o.name || o.code }} · {{ o.detail || o.reason || '兜底止损' }}</span>
                     </div>
+                    <div v-if="day.expired?.length" class="rejects">
+                      <div class="block__title">挂单超时（系统自动撤销）</div>
+                      <div v-for="(x, i) in day.expired" :key="'ex' + i" class="rejrow">
+                        <span class="rejrow__code">{{ x.side === 'buy' ? '买入' : '卖出' }} {{ x.code }} {{ x.qty }}股</span>
+                        <span class="rejrow__msg">{{ x.detail || ('挂了 ' + (x.days || 0) + ' 个交易日未成交') }}</span>
+                      </div>
+                    </div>
                     <div v-if="day.rejections?.length" class="rejects">
                       <div class="block__title">被纪律规则拦截的委托（系统强制拒绝）</div>
                       <div v-for="(r, i) in day.rejections" :key="'rj' + i" class="rejrow">
@@ -849,6 +858,13 @@ watch([current, navSeries], async () => { await Promise.resolve(); chart.draw() 
                   <div class="acct">
                     <span>总资产 {{ fmtMoney(d.total_assets_after) }}</span>
                     <span>持仓 {{ (((d.context as Record<string, unknown>)?.positions as unknown[]) || []).length }} 只</span>
+                  </div>
+                  <div v-if="d.expired?.length" class="rejects">
+                    <div class="block__title">挂单超时（系统自动撤销）</div>
+                    <div v-for="(x, i) in d.expired" :key="'ex' + i" class="rejrow">
+                      <span class="rejrow__code">{{ x.side === 'buy' ? '买入' : '卖出' }} {{ x.code }} {{ x.qty }}股</span>
+                      <span class="rejrow__msg">{{ x.detail || ('挂了 ' + (x.days || 0) + ' 个交易日未成交') }}</span>
+                    </div>
                   </div>
                   <div v-if="d.rejections?.length" class="rejects">
                     <div class="block__title">被纪律规则拦截的委托（系统强制拒绝）</div>
