@@ -88,6 +88,13 @@ Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
   换用 `mid_small` 头后覆盖升至 57%，但相关性仍为 **-0.208**；换到 LLM 的持有周期（10/20 日）相关在
   -0.02~+0.56 之间噪声波动（分组 n 极小，不足下结论）→ **"域匹配"提高了覆盖率，没有恢复评审价值**；
   结论不变：小模型只输出**它自己的名单**（供参考/对照），不评判 LLM 的名单。
+  **A/B：空头端当候选池过滤器（在模型自己的域内，三配置 K=20/50、H=5/10，654 天）** ——
+  对照臂 A=固定因子组合 TopK（本域已验证更强的多头选择器，也是 LLM 候选池的现实代理）：
+  ① 过滤臂 B（A 剔除模型当日后 10%）B−A = **-0.007/+0.002/-0.003%**（零效果）—— 方向对（被剔者 -0.180% vs 池均 +0.148%）
+  但**平均只删 0.7/50 个名字**，且对照池 50 个里已有 16.4 个同时在模型前 10%（两选择器多头高度一致）；
+  ② 正向结合臂 F（组合∩模型前 10%，"双重认可"）F−A = **-0.047/-0.092/-0.091%**（三配置一致为负，反而更差，
+  与"模型多头弱于组合"自洽）；③ oracle 上界 ±4~8%/5日说明真机会在"选得更好"，但小模型不给这份增量信息。
+  → 最终定位：**独立扫描器**，任何"拿它改造另一个选择器"的用法都无证据支持。证据 `data/experiments/ab_short_filter_k*.json`。
 - **小模型协同**：工具 `sys1_candidates(top)`（小模型从流动性前 400 只里挑横截面最强的当起点）+ `get_sys1_view(codes)`（查关注票的"跑赢等权池"概率 + 全场分位信号）；SYSTEM 里写明"排序可信、择时不可信，参考不是指令"。API `/api/trader/sys1`（时序实验）与 `/api/trader/sys1_xsec`（横截面成绩，带 `codes=` 可现算）。
 - **API**: `/api/trader/{profiles,overview,state,profile,decisions,memory,run,run-all,news,selection,performance,rules,outlook}`（state/decisions/memory/run 按 `profile_id`；`selection` 支持 `date=` 按历史日 as-of 审计选股口径、`weights=` 覆盖评分口径；`performance` 返回战绩明细；`rules` 返回生效纪律规则与兜底保护参数）。
 - **自我提升闭环**: 模型上下文有「你的战绩」（真实胜率/回撤/盈亏比/连势），先看数据再决定是否改变打法；每 3 个交易日 / 回撤≥8% / **单笔平仓亏损≥5%** 触发强制自省，把战绩+逐日决策原文交给 LLM，产出 `self_critique`/`lessons`/`style`/**`rules`**，存 `trader_decision.review` 并写入 `kind='lesson'/'style'/'rule'` 长期记忆。前端「战绩与自我提升」面板 + 每日「选股依据·候选池」「自我复盘」卡片。
