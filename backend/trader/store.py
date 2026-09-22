@@ -101,6 +101,9 @@ def ensure_schema() -> None:
             con.execute("ALTER TABLE trader_decision ADD COLUMN review TEXT DEFAULT '{}'")
         if "rejections" not in cols:
             con.execute("ALTER TABLE trader_decision ADD COLUMN rejections TEXT DEFAULT '[]'")
+        if "coherence" not in cols:
+            # 决策自洽性提示（说法 vs 动作），仅供参考与复盘
+            con.execute("ALTER TABLE trader_decision ADD COLUMN coherence TEXT DEFAULT '[]'")
         if "gates" not in cols:
             # 每日决策的编号闸门结论（系统判定的部分落库，便于回看与审计）
             con.execute("ALTER TABLE trader_decision ADD COLUMN gates TEXT DEFAULT '{}'")
@@ -144,7 +147,8 @@ def _decision_to_dict(row: sqlite3.Row) -> dict:
     for k, default in (("context", {}), ("candidates", {}), ("review", {}), ("news", []),
                        ("plan", []), ("executions", []), ("trace", []), ("rejections", []),
                        # 2026-09-23 新增：闸门结论 / 方向预测 / 预测打分 / 超时撤销的挂单
-                       ("gates", {}), ("outlook", {}), ("outlook_score", {}), ("expired", [])):
+                       ("gates", {}), ("outlook", {}), ("outlook_score", {}), ("expired", []),
+                       ("coherence", [])):
         d[k] = _loads(d.get(k), default)
     return d
 

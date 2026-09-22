@@ -29,6 +29,13 @@ const error = ref('')
 const memKind = ref<'style' | 'thesis' | 'lesson' | 'note'>('style')
 const outlook = ref<TraderOutlookStats | null>(null)
 
+/** 最新决策的自洽性提示 */
+const latestCoherence = computed(() => {
+  const d = decisions.value[0] as unknown as { coherence?: { level?: string; kind?: string; msg: string }[] } | undefined
+  const list = d?.coherence || []
+  return Array.isArray(list) ? list : []
+})
+
 /** 最新决策里的编号闸门（系统判定的部分） */
 const latestGateList = computed(() => {
   const d = decisions.value[0] as unknown as { gates?: { gates?: unknown[] } } | undefined
@@ -277,6 +284,15 @@ function toolLine(t: { tool: string; args?: Record<string, unknown>; error?: str
       </SectionCard>
 
       <!-- 今日/最近决策 -->
+      <!-- 自洽性提示：模型自己的说法与动作是否一致 -->
+      <SectionCard v-if="latestCoherence.length" title="自洽性提示"
+        desc="模型的说法与动作对不上时程序会点出来（提示而非拒绝，便于事后复盘）">
+        <div class="kv" v-for="(c, i) in latestCoherence" :key="i">
+          <span class="kv__k">{{ c.kind === 'outlook_vs_orders' ? '预测 vs 委托' : c.kind === 'claim_vs_orders' ? '说法 vs 委托' : '其他' }}</span>
+          <span class="kv__v">{{ c.msg }}</span>
+        </div>
+      </SectionCard>
+
       <!-- 今日闸门：编号决策协议（系统判定的部分） -->
       <SectionCard v-if="latestGateList.length" title="今日闸门"
         desc="编号决策协议：能计算的部分由系统判定，模型只回答 [你] 的闸门（可审计）">

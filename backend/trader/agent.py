@@ -279,6 +279,7 @@ class TraderAgent:
             "thinking": d.get("thinking") or "",
             "reflection": d.get("reflection") or "",
             "outlook": d.get("outlook") or {},
+            "coherence": d.get("coherence") or [],
             "notes": self.tools.notes,
             "trace": self.tools.log,
         }

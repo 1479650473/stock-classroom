@@ -179,6 +179,7 @@ def run_daily_decision(profile_id: Optional[int] = None, trigger: str = "manual"
         thinking=result.get("thinking") or "", reflection=result.get("reflection") or "",
         outlook=result.get("outlook") or {},
         gates=(ctx.get("protocol") or {}),
+        coherence=result.get("coherence") or [],
         context=ctx, candidates=(ctx.get("candidates") or {}),
         news=(ctx.get("news") or {}), plan=plan, executions=executions,
         rejections=agent.tools.rejections, trace=result.get("trace") or [],

@@ -468,6 +468,8 @@ export interface TraderDecision {
   news: { market?: TraderNewsItem[]; stocks?: TraderStockNews[] }
   plan: TraderOrder[]; executions: TraderExecution[]
   rejections?: { code?: string; side?: string; qty?: number; message?: string }[]
+  /** 自洽性提示（说法 vs 动作，不阻塞） */
+  coherence?: { level?: string; kind?: string; msg: string }[]
   /** 编号决策协议：系统闸门结论 + 给模型的协议文本 */
   gates?: { gates?: { id: string; title: string; kind: string; status: string; note?: string; facts?: Record<string, unknown> }[]; text?: string; summary?: Record<string, unknown> }
   /** 系统撤销的超时挂单（挂单超时规则） */
