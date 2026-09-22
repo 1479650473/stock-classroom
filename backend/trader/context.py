@@ -216,22 +216,56 @@ def build_news_block(positions: List[dict], picks: List[dict],
 
 # ───────────────────────── 历史记忆 ─────────────────────────
 
-def build_memory_block(profile_id: int, positions: List[dict], limit: int = 8,
+def _ops_summary(plan: list, executions: list) -> str:
+    """把当日委托压成一行（复用：历史日子不需要逐笔明细）。"""
+    if not plan:
+        return "无操作"
+    parts = []
+    for i, o in enumerate(plan[:6]):
+        side = "买" if o.get("side") == "buy" else "卖"
+        name = o.get("name") or o.get("code")
+        res = ""
+        try:
+            e = (executions or [])[i] or {}
+            res = "✓" if e.get("ok") else ("✗" if e.get("detail") else "")
+        except Exception:
+            res = ""
+        parts.append(f"{side}{name}{res}")
+    return "、".join(parts) + ("…" if len(plan) > 6 else "")
+
+
+def build_memory_block(profile_id: int, positions: List[dict], limit: int = 10,
                        account_id: Optional[int] = None,
                        as_of: Optional[str] = None) -> dict:
-    decisions = store.list_decisions(profile_id, limit=limit)
+    """历史决策：**近 3 日详细 + 更早压缩成一行**（增量复用思路）。
+
+    每天都是一次全新对话，无法"只传增量"，所以省 token 的正确做法是压缩：
+    近期保留思考/复盘/委托（模型需要延续判断），远期只留"日期 + 净值 + 操作 + 复盘一句"，
+    该信息量足以让模型知道自己做过什么、结果如何，而 token 只占原来的 ~15%。
+    """
+    DETAIL_DAYS = 3
+    decisions = [d for d in store.list_decisions(profile_id, limit=limit)
+                 if d.get("status") == "done"]
     history = []
-    for d in decisions:
-        if d.get("status") != "done":
-            continue
-        history.append({
-            "date": d["trade_date"],
-            "thinking": (d.get("thinking") or "")[:600],
-            "reflection": (d.get("reflection") or "")[:300],
-            "orders": d.get("plan") or [],
-            "executions": d.get("executions") or [],
-            "nav_after": d.get("nav_after"),
-        })
+    for i, d in enumerate(decisions):
+        if i < DETAIL_DAYS:
+            history.append({
+                "date": d["trade_date"],
+                "thinking": (d.get("thinking") or "")[:520],
+                "reflection": (d.get("reflection") or "")[:260],
+                "orders": d.get("plan") or [],
+                "executions": d.get("executions") or [],
+                "nav_after": d.get("nav_after"),
+                "outlook": (d.get("outlook") or {}).get("direction") if isinstance(d.get("outlook"), dict) else None,
+                "outlook_hit": (d.get("outlook_score") or {}).get("hit") if isinstance(d.get("outlook_score"), dict) else None,
+            })
+        else:
+            history.append({
+                "date": d["trade_date"],
+                "ops": _ops_summary(d.get("plan") or [], d.get("executions") or []),
+                "nav_after": d.get("nav_after"),
+                "reflection": (d.get("reflection") or "")[:90],
+            })
     mem = store.list_memory(profile_id, active_only=True, limit=80)
     theses = {}
     style = ""
@@ -251,13 +285,15 @@ def build_memory_block(profile_id: int, positions: List[dict], limit: int = 8,
             perf = {}
     return {
         "self_style": style,
+        "history_note": "近 3 个交易日逐条详细（含委托与结果）；更早的日子只给摘要"
+                        "（日期/操作/净值/复盘一句）——需要细节用工具查或问自己写下的记忆。",
         "recent_decisions": history,
         "holding_theses": held,
         "your_performance": perf,
         "discipline_rules": _rules_block(int(profile_id), as_of),
         "notes": [{"kind": m["kind"], "code": m.get("code") or "",
-                   "content": m["content"], "at": m["created_at"]}
-                  for m in mem if m["kind"] not in ("thesis", "style", "rule")][:20],
+                   "content": (m["content"] or "")[:220], "at": m["created_at"]}
+                  for m in mem if m["kind"] not in ("thesis", "style", "rule")][:12],
     }
 
 

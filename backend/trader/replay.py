@@ -240,9 +240,19 @@ def build_replay_context(profile: dict, as_of: str) -> dict:
                                 "说明": "screen_stocks 已按当天 as-of 截断，不会用到未来数据。"}}
     else:
         cands = _candidates_block(as_of, weights=weights, source=sel)
+    protocol_block = {}
+    try:
+        from . import protocol as protocol_mod
+        protocol_block = protocol_mod.build_gates(
+            int(profile["id"]), account_id, as_of,
+            positions=acct["positions"], account=acct["summary"],
+            regime=_regime_asof(as_of), data_latest=as_of)   # 回放：行情"最新"就是当日
+    except Exception:
+        protocol_block = {}
     return {
         "generated_at": as_of,
         "mode": "replay",
+        "protocol": protocol_block,
         "account": acct["summary"],
         "positions": acct["positions"],
         "pending_orders": acct["pending_orders"],

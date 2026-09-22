@@ -138,7 +138,9 @@ def _loads(v: Any, default):
 def _decision_to_dict(row: sqlite3.Row) -> dict:
     d = dict(row)
     for k, default in (("context", {}), ("candidates", {}), ("review", {}), ("news", []),
-                       ("plan", []), ("executions", []), ("trace", []), ("rejections", [])):
+                       ("plan", []), ("executions", []), ("trace", []), ("rejections", []),
+                       # 2026-09-23 新增：闸门结论 / 方向预测 / 预测打分 / 超时撤销的挂单
+                       ("gates", {}), ("outlook", {}), ("outlook_score", {}), ("expired", [])):
         d[k] = _loads(d.get(k), default)
     return d
 
