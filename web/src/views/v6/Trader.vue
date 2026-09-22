@@ -11,9 +11,9 @@ import { useToastStore } from '@/stores/toast'
 import { useJobsStore } from '@/stores/jobs'
 import {
   getTraderState, getTraderDecisions, getTraderMemory, toggleTraderMemory,
-  updateTraderProfile, runTrader, getTraderOutlook,
+  updateTraderProfile, runTrader, getTraderOutlook, getSys1Xsec,
 } from '@/api'
-import type { TraderState, TraderDecision, TraderMemory, TraderOutlookStats } from '@/api'
+import type { TraderState, TraderDecision, TraderMemory, TraderOutlookStats, Sys1XsecReport } from '@/api'
 
 const toast = useToastStore()
 const jobs = useJobsStore()
@@ -28,6 +28,26 @@ const loading = ref(true)
 const error = ref('')
 const memKind = ref<'style' | 'thesis' | 'lesson' | 'note'>('style')
 const outlook = ref<TraderOutlookStats | null>(null)
+const sys1 = ref<Sys1XsecReport | null>(null)
+const sys1Scanning = ref(false)
+
+/** 小模型的样本外成绩（静态，进页面就取） */
+async function loadSys1() {
+  sys1.value = await getSys1Xsec(false).catch(() => null)
+}
+/** 现场扫描流动性池（约 15~30s） */
+async function scanSys1() {
+  sys1Scanning.value = true
+  try {
+    const r = await getSys1Xsec(true, 20)
+    if (r.scan?.error) toast.error('扫描失败：' + r.scan.error)
+    sys1.value = { ...(sys1.value || ({} as Sys1XsecReport)), ...r, scan: r.scan }
+  } catch (e) {
+    toast.error('扫描失败')
+  } finally {
+    sys1Scanning.value = false
+  }
+}
 
 /** 最新决策的自洽性提示 */
 const latestCoherence = computed(() => {
@@ -93,6 +113,7 @@ async function loadLists() {
     memory.value = m.items
     styleMem.value = s.items[0] || null
     if (props.profileId) outlook.value = await getTraderOutlook(props.profileId, 60).catch(() => null)
+    loadSys1()
   } catch {
     /* 列表失败不阻塞主视图 */
   }
@@ -492,6 +513,68 @@ function toolLine(t: { tool: string; args?: Record<string, unknown>; error?: str
               </div>
             </div>
           </div>
+        </div>
+      </SectionCard>
+
+      <!-- 小模型（System 1 横截面头）：池内扫描器 —— 与 LLM 分工不同域 -->
+      <SectionCard v-if="sys1 && !sys1.hint" title="小模型（System 1）· 池内横截面扫描"
+        desc="专门训练的小模型给「未来 5 日跑赢等权池」的概率。它池内排序有效，但**不评判**这个交易员的选择（实测负相关）">
+        <div class="metrics" style="padding:0; background:none; border:none">
+          <StatTile label="Top10% 组 5 日超额"
+            :value="sys1.deciles?.['top10%'] ? (sys1.deciles['top10%'].mean_excess_pct > 0 ? '+' : '') + sys1.deciles['top10%'].mean_excess_pct + '%' : '—'"
+            :hint="`${sys1.deciles?.['top10%']?.positive_days_pct ?? '—'}% 的交易日为正`" />
+          <StatTile label="同期固定因子组合"
+            :value="sys1.baseline_composite ? (sys1.baseline_composite.mean_excess_pct > 0 ? '+' : '') + sys1.baseline_composite.mean_excess_pct + '%' : '—'"
+            hint="对照：谁更能排序" />
+          <StatTile label="AUC" :value="sys1.test?.auc_calibrated ?? '—'" hint="0.5=瞎猜，0.52 说明只有微弱排序力" />
+          <StatTile label="ECE（校准后）" :value="sys1.test?.ece_calibrated ?? '—'"
+            :hint="`原始 ${sys1.test?.ece_raw ?? '—'} —— 校准过才敢当概率用`" />
+        </div>
+        <div class="kv" style="margin-top:10px">
+          <span class="kv__k">分位分层</span>
+          <span class="kv__v">
+            <span v-for="(v, k) in (sys1.signal_rule?.bands || {})" :key="k" style="margin-right:12px">
+              {{ k }}：<b :class="(v.mean_excess_pct ?? 0) >= 0 ? 'up' : 'down'">{{ (v.mean_excess_pct ?? 0) > 0 ? '+' : '' }}{{ v.mean_excess_pct }}%</b>
+            </span>
+            <span v-if="sys1.signal_rule?.top_minus_bottom_pct != null">
+              （多空价差 {{ sys1.signal_rule.top_minus_bottom_pct }}%/5日，单调 ✓）
+            </span>
+          </span>
+        </div>
+        <div class="kv">
+          <span class="kv__k">使用边界</span>
+          <span class="kv__v">
+            ✗ 不用它否决交易员的选择（历史买入样本上分位与 5 日结果相关 <b>-0.29</b>）；
+            ✗ 不当风险预警（与后续 20 日回撤相关 +0.02）；
+            ⚠ 交易员的选票 65% 在它参照系之外 —— <b>两者不同域，它是独立扫描器</b>
+          </span>
+        </div>
+        <div class="toolbar" style="margin-top:10px">
+          <button class="ui-btn" :disabled="sys1Scanning" @click="scanSys1">
+            {{ sys1Scanning ? '扫描中…（约 15~30 秒）' : '现场扫描流动性池（600 只）' }}
+          </button>
+          <span v-if="sys1.scan?.as_of" class="muted" style="margin-left:8px">
+            截至 {{ sys1.scan.as_of }}｜{{ sys1.scan.universe || '' }}
+          </span>
+        </div>
+        <div v-if="sys1.scan?.rows?.length" class="muted" style="margin-top:8px">
+          排序依据 raw 概率（校准值是阶梯函数，顶部会并列成同一个数）；「池内分位」才是可比的强弱位置。
+        </div>
+        <div v-if="sys1.scan?.rows?.length" class="table-wrap" style="margin-top:4px">
+          <table class="tbl">
+            <thead><tr><th>代码</th><th>名称</th><th class="num">池内分位</th><th class="num">跑赢概率</th></tr></thead>
+            <tbody>
+              <tr v-for="r in sys1.scan.rows" :key="r.code">
+                <td class="mono">{{ r.code }}</td>
+                <td>{{ r.name || '—' }}</td>
+                <td class="num">{{ r.pct_in_universe != null ? r.pct_in_universe + '%' : '—' }}</td>
+                <td class="num">{{ (r.p_beat_pool * 100).toFixed(1) }}%</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div v-else-if="sys1.scan && !sys1.scan.error" class="muted" style="margin-top:8px">
+          扫描完成，本批没有落在"看多"分位的标的（或池内数据不足）。
         </div>
       </SectionCard>
 

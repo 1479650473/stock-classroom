@@ -386,6 +386,19 @@ def sys1_xsec_report():
     out = {"meta": d.get("meta"), "test": d.get("test"), "deciles": d.get("deciles"),
            "signal_rule": d.get("signal_rule"), "baseline_composite": d.get("baseline_composite"),
            "note": d.get("note")}
+    if (request.args.get("scan") or "").strip() in ("1", "true", "yes"):
+        # 现场扫描流动性池（约 15~30s，前端需要加载态）
+        try:
+            from ...trader import sys1_xsec as X
+            from ...alpha import panel as P
+            top = int_arg(request.args.get("top"), 20, 1, 100)
+            uni = P.pick_universe(limit=600, as_of=date.today().isoformat())
+            live = X.predict(uni)
+            rows = [r for r in (live.get("rows") or []) if r.get("signal") == "看多"][:top]
+            out["scan"] = {"as_of": live.get("as_of"), "universe": f"流动性前 {len(uni)} 只",
+                           "rows": rows, "note": live.get("note")}
+        except Exception as e:
+            out["scan"] = {"error": str(e)[:200]}
     codes = (request.args.get("codes") or "").strip()
     if codes:
         try:
