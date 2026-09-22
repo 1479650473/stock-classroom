@@ -220,7 +220,7 @@ class TraderTools:
             pass
         return out
 
-    def get_sys1_view(self, codes: list = None) -> dict:
+    def get_sys1_view(self, codes: list = None, domain: str = "") -> dict:
         """小模型（System 1 横截面）对指定股票的"未来 N 日跑赢等权池"**校准概率**。
 
         它的定位是**独立扫描器，不是评审员**（三个实验的结论）：
@@ -238,42 +238,55 @@ class TraderTools:
         cs = [str(c).strip() for c in (codes or []) if str(c).strip()]
         if not cs:
             return {"error": "请给出 codes（如 [\"600036\",\"000001\"]）"}
-        out = X.predict(cs, as_of=self.trade_date or _dt.date.today().isoformat())
+        tag = "mid_small" if str(domain or "").strip() == "mid_small" else ""
+        out = X.predict(cs, as_of=self.trade_date or _dt.date.today().isoformat(), tag=tag)
         if out.get("error"):
             return out
-        meta = {}
+        meta = {"域": "中小盘（流动性排名 601~1800）" if tag else "流动池（前 600）",
+                "注": ("中小盘域里固定因子组合的多头更强（+0.432%/5日 vs 模型 +0.237%），"
+                       "模型的强项在空头端（最差 10% 组 -0.718%/5日）—— 更适合当『回避参考』") if tag else ""}
         try:
             import json as _json, os as _os
             from ..api.paths import DATA_DIR as _DD
-            _p = _os.path.join(str(_DD), "sys1_xsec.json")
+            _p = _os.path.join(str(_DD), f"sys1_xsec{('_' + tag) if tag else ''}.json")
             if _os.path.exists(_p):
                 _d = _json.load(open(_p, encoding="utf-8"))
-                meta = {"样本外Top10%超额": (_d.get("deciles") or {}).get("top10%", {}).get("mean_excess_pct"),
+                meta.update({"样本外Top10%超额": (_d.get("deciles") or {}).get("top10%", {}).get("mean_excess_pct"),
                         "分位单调性": {k: v.get("mean_excess_pct") for k, v in
                                        ((_d.get("signal_rule") or {}).get("bands") or {}).items()},
                         "AUC": (_d.get("test") or {}).get("auc_calibrated"),
-                        "说明": "看多=当日这批里前 10%；中间 80% 无信号；它是统计参考不是指令"}
+                        "说明": "看多=当日这批里前 10%；中间 80% 无信号；它是统计参考不是指令"})
         except Exception:
             pass
         return {"as_of": out.get("as_of"), "小模型": out.get("rows"),
                 "参照系": out.get("reference"), "样本外成绩": meta, "note": out.get("note")}
 
-    def sys1_candidates(self, top: int = 20) -> dict:
-        """让小模型从**当前流动性池**里挑出它最看好的 top 只（可按需当起点，再自己核实）。"""
+    def sys1_candidates(self, top: int = 20, domain: str = "") -> dict:
+        """让小模型从**当前池子**里挑出它最看好的 top 只（可按需当起点，再自己核实）。
+
+        domain: ""=流动池（前 600 只大票）/ "mid_small"=中小盘域（排名 601~1800）
+        —— 你的选票 57% 落在中小盘域，那里用 mid_small 头；注意中小盘域里
+        **固定因子组合的多头更强**（+0.432%/5日 vs 模型 +0.237%），模型的强项在**空头端**（-0.718%）。
+        """
         from . import sys1_xsec as X
         from ..alpha import panel as P
         import datetime as _dt
+        tag = "mid_small" if str(domain or "").strip() == "mid_small" else ""
         as_of = self.trade_date or _dt.date.today().isoformat()
         try:
-            uni = P.pick_universe(limit=400, as_of=as_of)
+            _m = X._load(tag) or {}
+            _meta = _m.get("meta") or {}
+            uni = P.pick_universe(limit=int(_meta.get("codes") or 600),
+                                  skip=int(_meta.get("pool_skip") or 0), as_of=as_of)
         except Exception as e:
             return {"error": f"取池失败: {str(e)[:80]}"}
-        out = X.predict(uni, as_of=as_of)
+        out = X.predict(uni, as_of=as_of, tag=tag)
         if out.get("error"):
             return out
         rows = [r for r in (out.get("rows") or []) if r.get("signal") == "看多"][: int(top or 20)]
-        return {"as_of": out.get("as_of"), "池": f"流动性前 {len(uni)} 只", "数量": len(rows),
-                "候选": rows,
+        return {"as_of": out.get("as_of"),
+                "池": ("中小盘域（排名 601~1800）" if tag else "流动性前") + f" {len(uni)} 只",
+                "域": tag or "liquid", "数量": len(rows), "候选": rows,
                 "note": "这是小模型的**横截面排序**结果（不是买入清单）："
                         "它只回答'这批里谁相对强'，买不买、买多少仍由你决定并说明理由。"}
 
@@ -601,7 +614,9 @@ TOOL_SPECS = [
                         "它最适合当独立扫描器：看一眼流动池内的相对强弱。"),
         "parameters": {"type": "object", "properties": {
             "codes": {"type": "array", "items": {"type": "string"},
-                      "description": "要评估的股票代码列表，如 [\"600036\", \"000001\"]"}},
+                      "description": "要评估的股票代码列表，如 [\"600036\", \"000001\"]"},
+            "domain": {"type": "string", "enum": ["liquid", "mid_small"],
+                       "description": "用哪个域的头：liquid=流动池（前 600 大票，默认）、mid_small=中小盘域（排名 601~1800）。你的选票多在中小盘域，评价中小票时用 mid_small"}},
             "required": ["codes"]}}},
     {"type": "function", "function": {
         "name": "sys1_candidates",
@@ -609,7 +624,9 @@ TOOL_SPECS = [
                         "适合在你自己没有思路时当**起点**：拿到名单后仍需你用结构/基本面核实并说明理由。"
                         "注意它不择时（预测大盘方向的能力已被证伪），只做横截面排序。"),
         "parameters": {"type": "object", "properties": {
-            "top": {"type": "integer", "description": "取前几只（默认 20）"}},
+            "top": {"type": "integer", "description": "取前几只（默认 20）"},
+            "domain": {"type": "string", "enum": ["liquid", "mid_small"],
+                       "description": "liquid=流动池（前 600 大票，默认）；mid_small=中小盘域（排名 601~1800，你更常在这里选股）"}},
             "required": []}}},
     {"type": "function", "function": {
         "name": "submit_decision",

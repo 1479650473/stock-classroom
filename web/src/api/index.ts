@@ -583,14 +583,17 @@ export interface Sys1XsecReport {
     bands?: Record<string, { mean_excess_pct: number; positive_days_pct: number | null; n_days: number }> }
   baseline_composite?: { mean_excess_pct: number; positive_days_pct: number }
   note?: string
+  tag?: string
   scan?: { as_of?: string; universe?: string; rows?: { code: string; name?: string
     p_beat_pool: number; raw: number; pct_in_universe?: number; signal: string }[]
     note?: string; error?: string }
   hint?: string
 }
 /** 小模型（System 1）：池内横截面排序的样本外成绩；scan=true 时现场扫描流动性池（约 15~30s） */
-export const getSys1Xsec = (scan = false, top = 20) =>
-  api.get<Sys1XsecReport>('/api/trader/sys1_xsec', scan ? { scan: 1, top } : {}, { ttl: scan ? 0 : 120_000 })
+export const getSys1Xsec = (scan = false, top = 20, tag = '', fresh = false) =>
+  api.get<Sys1XsecReport>('/api/trader/sys1_xsec',
+    { ...(tag ? { tag } : {}), ...(scan ? { scan: 1, top } : {}) },
+    { ttl: scan ? 0 : 120_000, fresh })
 /** 方向预测校准：每日"次日净值方向 + 置信度"的命中率和 Brier 分数 */
 export const getTraderOutlook = (profile_id: number, days = 60) =>
   api.get<TraderOutlookStats>('/api/trader/outlook', { profile_id, days }, { ttl: 30_000 })

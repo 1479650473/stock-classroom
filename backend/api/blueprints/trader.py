@@ -381,9 +381,14 @@ def sys1_xsec_report():
     p = _os.path.join(str(_DD), "sys1_xsec.json")
     if not _os.path.exists(p):
         return ok({"hint": "尚未训练：python -m backend.trader.sys1_xsec"})
+    _tag = (request.args.get("tag") or "").strip().replace("/", "").replace("..", "")[:32]
+    if _tag:
+        p = _os.path.join(str(_DD), f"sys1_xsec_{_tag}.json")
+        if not _os.path.exists(p):
+            return err(404, "unknown_domain", f"没有这个域的头：{_tag}", retriable=False)
     with open(p, encoding="utf-8") as f:
         d = _json.load(f)
-    out = {"meta": d.get("meta"), "test": d.get("test"), "deciles": d.get("deciles"),
+    out = {"tag": _tag, "meta": d.get("meta"), "test": d.get("test"), "deciles": d.get("deciles"),
            "signal_rule": d.get("signal_rule"), "baseline_composite": d.get("baseline_composite"),
            "note": d.get("note")}
     if (request.args.get("scan") or "").strip() in ("1", "true", "yes"):
@@ -392,8 +397,12 @@ def sys1_xsec_report():
             from ...trader import sys1_xsec as X
             from ...alpha import panel as P
             top = int_arg(request.args.get("top"), 20, 1, 100)
-            uni = P.pick_universe(limit=600, as_of=date.today().isoformat())
-            live = X.predict(uni)
+            _m = X._load(_tag) or {}
+            _md = _m.get("meta") or {}
+            uni = P.pick_universe(limit=int(_md.get("codes") or 600),
+                                  skip=int(_md.get("pool_skip") or 0),
+                                  as_of=date.today().isoformat())
+            live = X.predict(uni, tag=_tag)
             rows = [r for r in (live.get("rows") or []) if r.get("signal") == "看多"][:top]
             out["scan"] = {"as_of": live.get("as_of"), "universe": f"流动性前 {len(uni)} 只",
                            "rows": rows, "note": live.get("note")}

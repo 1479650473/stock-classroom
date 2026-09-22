@@ -127,15 +127,35 @@ def _cache_put(key: str, value: List[str]) -> None:
         pass
 
 
+_BJ_CODES_CACHE: Optional[set] = None
+
+
+def _bj_codes() -> set:
+    """stock_list 里 board='bj' 的代码集合（本项目北交所代码不带前缀）。"""
+    global _BJ_CODES_CACHE
+    if _BJ_CODES_CACHE is None:
+        con = sqlite3.connect(KLINE_DB)
+        try:
+            _BJ_CODES_CACHE = {str(r[0]) for r in
+                               con.execute("SELECT code FROM stock_list WHERE board='bj'")}
+        finally:
+            con.close()
+    return _BJ_CODES_CACHE
+
+
 def pick_universe(limit: int = 400, min_amount: float = 5e7, lookback_days: int = 120,
-                  exclude_st: bool = True, as_of: Optional[str] = None) -> List[str]:
+                  exclude_st: bool = True, as_of: Optional[str] = None,
+                  skip: int = 0, include_bj: bool = False) -> List[str]:
     """按成交额挑流动性最好的 limit 只（默认剔除 ST/退市）。
 
     as_of 非空时，只用 **该日之前** 的成交额排序，并要求股票在该日之前已有行情
     （避免用未来流动性选池造成的选择偏误与前视）。
-    结果按 (as_of, limit, min_amount) 做磁盘缓存 —— 成交额聚合要扫全库，约 20 秒。
+    `skip=N` 跳过流动性最好的 N 只 —— 用于**分域建模**（如取中小盘域：skip=600, limit=1200）。
+    `include_bj=True` 时把北交所纳入（注意：本项目 stock_list 里北交所代码**不带 bj 前缀**，
+    board='bj' 标识；kline_daily 里的写法由调用方自行确认）。
+    结果按 (as_of, limit, min_amount, skip, bj) 做磁盘缓存 —— 成交额聚合要扫全库，约 20 秒。
     """
-    ckey = f"{as_of or 'live'}|{limit}|{int(min_amount)}|{lookback_days}"
+    ckey = f"{as_of or 'live'}|{limit}|{int(min_amount)}|{lookback_days}|{skip}|{int(include_bj)}"
     hit = _cache_get(ckey)
     if hit:
         return list(hit)
@@ -144,7 +164,10 @@ def pick_universe(limit: int = 400, min_amount: float = 5e7, lookback_days: int 
         rows = con.execute(
             "SELECT code, name, status FROM stock_list WHERE status='active' ORDER BY code").fetchall()
         names = {str(c): str(n or "") for c, n, _ in rows}
+        codes_all = list(names)
         codes = [c for c in names if c[:2] in ("60", "00", "30", "68")]
+        if include_bj:
+            codes += [c for c in codes_all if c in _bj_codes()]
         if exclude_st:
             codes = [c for c in codes if "ST" not in names[c].upper()]
         if as_of:
@@ -165,7 +188,8 @@ def pick_universe(limit: int = 400, min_amount: float = 5e7, lookback_days: int 
                 [lo] + codes):
             amt[str(code)] = float(s or 0)
         ranked = sorted(codes, key=lambda c: -amt.get(c, 0))
-        out = [c for c in ranked if amt.get(c, 0) >= min_amount][:limit]
+        eligible = [c for c in ranked if amt.get(c, 0) >= min_amount] or ranked
+        out = eligible[skip:skip + limit] if skip else eligible[:limit]
         out = out or ranked[:limit]
         _cache_put(ckey, out)
         return out

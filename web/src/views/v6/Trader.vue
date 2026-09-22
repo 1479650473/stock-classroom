@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
+import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import StatTile from '@/components/ui/StatTile.vue'
 import EmptyGuide from '@/components/ui/EmptyGuide.vue'
 import LoadingBlock from '@/components/ui/LoadingBlock.vue'
@@ -30,16 +31,24 @@ const memKind = ref<'style' | 'thesis' | 'lesson' | 'note'>('style')
 const outlook = ref<TraderOutlookStats | null>(null)
 const sys1 = ref<Sys1XsecReport | null>(null)
 const sys1Scanning = ref(false)
+const sys1Domain = ref<'' | 'mid_small'>('')
 
 /** 小模型的样本外成绩（静态，进页面就取） */
-async function loadSys1() {
-  sys1.value = await getSys1Xsec(false).catch(() => null)
+async function loadSys1(fresh = false) {
+  sys1.value = await getSys1Xsec(false, 20, sys1Domain.value, fresh).catch(() => null)
+}
+/** 切换域（流动池 / 中小盘） */
+async function switchSys1Domain(d: '' | 'mid_small') {
+  if (sys1Domain.value === d) return
+  sys1Domain.value = d
+  sys1.value = null
+  await loadSys1(true)          // 切域必须绕过 TTL 缓存（同名 URL 可能缓存了另一个域的数据）
 }
 /** 现场扫描流动性池（约 15~30s） */
 async function scanSys1() {
   sys1Scanning.value = true
   try {
-    const r = await getSys1Xsec(true, 20)
+    const r = await getSys1Xsec(true, 20, sys1Domain.value)
     if (r.scan?.error) toast.error('扫描失败：' + r.scan.error)
     sys1.value = { ...(sys1.value || ({} as Sys1XsecReport)), ...r, scan: r.scan }
   } catch (e) {
@@ -550,6 +559,10 @@ function toolLine(t: { tool: string; args?: Record<string, unknown>; error?: str
           </span>
         </div>
         <div class="toolbar" style="margin-top:10px">
+          <SegmentedControl :model-value="sys1Domain" :options="[
+            { value: '', label: '流动池（前 600）' },
+            { value: 'mid_small', label: '中小盘（601~1800）' }]"
+            @update:model-value="(v) => switchSys1Domain(v as '' | 'mid_small')" />
           <button class="ui-btn" :disabled="sys1Scanning" @click="scanSys1">
             {{ sys1Scanning ? '扫描中…（约 15~30 秒）' : '现场扫描流动性池（600 只）' }}
           </button>

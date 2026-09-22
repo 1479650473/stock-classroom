@@ -44,6 +44,17 @@ from ..alpha import panel as P                        # noqa: E402
 MODEL_PATH = os.path.join(str(DATA_DIR), "sys1_xsec.pkl")
 META_PATH = os.path.join(str(DATA_DIR), "sys1_xsec.json")
 
+
+def _paths(tag: str = "") -> Tuple[str, str]:
+    """分域头：tag='' 为默认（流动池），其它 tag 存 `sys1_xsec_<tag>.pkl/json`。
+
+    为什么分域：实测 LLM 操盘手的选票 65% 在流动池参照系之外（偏好中小盘），
+    一个池内模型评判不了另一个域的选择 —— 所以按域各训一个头，评测时才对齐。
+    """
+    t = f"_{tag}" if tag else ""
+    return (os.path.join(str(DATA_DIR), f"sys1_xsec{t}.pkl"),
+            os.path.join(str(DATA_DIR), f"sys1_xsec{t}.json"))
+
 TRAIN_END = "2022-12-31"
 CAL_END = "2023-12-31"
 ABSTAIN_LO, ABSTAIN_HI = 0.45, 0.55
@@ -51,9 +62,14 @@ ABSTAIN_LO, ABSTAIN_HI = 0.45, 0.55
 
 # ───────────────────────── 数据 ─────────────────────────
 
-def _dataset(codes: int, start: str, end: str, horizon: int) -> Tuple[Dict, List[str], np.ndarray, np.ndarray]:
-    """构造 (特征 dict, 日期, 特征名, 面板 fields, 目标 dict)。"""
-    uni = P.pick_universe(limit=int(codes), as_of=start)
+def _dataset(codes: int, start: str, end: str, horizon: int,
+             pool_skip: int = 0, include_bj: bool = False) -> Tuple[Dict, List[str], np.ndarray, np.ndarray]:
+    """构造 (特征 dict, 日期, 特征名, 面板 fields, 目标 dict)。
+
+    `pool_skip` 跳过流动性最好的 N 只 → 中小盘域；`include_bj` 纳入北交所。
+    """
+    uni = P.pick_universe(limit=int(codes), as_of=start, skip=int(pool_skip),
+                          include_bj=bool(include_bj))
     pan = P.load_panel(uni, start, end)
     fields = pan["fields"]                      # type: ignore[assignment]
     dates: List[str] = pan["dates"]             # type: ignore[assignment]
@@ -139,12 +155,14 @@ def _ece(p: np.ndarray, y: np.ndarray, bins: int = 5) -> float:
 # ───────────────────────── 训练 ─────────────────────────
 
 def train(codes: int = 300, start: str = "2016-01-01", end: str = "2026-09-30",
-          horizon: int = 5, save: bool = True) -> dict:
+          horizon: int = 5, save: bool = True, pool_skip: int = 0,
+          include_bj: bool = False, tag: str = "") -> dict:
     from sklearn.ensemble import HistGradientBoostingClassifier
     from sklearn.isotonic import IsotonicRegression
 
     t0 = time.time()
-    ds, dates, names, excess, mask = _dataset(codes, start, end, horizon)
+    ds, dates, names, excess, mask = _dataset(codes, start, end, horizon,
+                                              pool_skip=pool_skip, include_bj=include_bj)
     lo_tr, lo_cal = _split_idx(dates, TRAIN_END, CAL_END)
     print(f"面板 {codes} 只 × {len(dates)} 日 | 特征 {len(names)} | horizon {horizon} 日 | "
           f"训练 ≤{TRAIN_END}（{lo_tr} 天）/ 校准 ≤{CAL_END} / 测试其后", flush=True)
@@ -171,7 +189,8 @@ def train(codes: int = 300, start: str = "2016-01-01", end: str = "2026-09-30",
 
     base_rate = float(yte_b.mean())
     res: Dict[str, object] = {
-        "meta": {"codes": codes, "days": len(dates), "features": len(names),
+        "meta": {"codes": codes, "pool_skip": int(pool_skip), "include_bj": bool(include_bj),
+                 "tag": tag, "days": len(dates), "features": len(names),
                  "train_end": TRAIN_END, "cal_end": CAL_END,
                  "test_from": dates[lo_cal], "test_to": dates[-1],
                  "horizon": horizon, "train_n": int(len(Xtr)), "cal_n": int(len(Xcal)),
@@ -306,12 +325,13 @@ def train(codes: int = 300, start: str = "2016-01-01", end: str = "2026-09-30",
         res["baseline_error"] = str(e)[:150]
 
     if save:
-        with open(MODEL_PATH, "wb") as f:
+        mp, xp = _paths(tag)
+        with open(mp, "wb") as f:
             pickle.dump({"model": clf, "iso": iso, "names": names, "meta": res["meta"]}, f)
-        with open(META_PATH, "w", encoding="utf-8") as f:
+        with open(xp, "w", encoding="utf-8") as f:
             json.dump(res, f, ensure_ascii=False, indent=1)
-        res["saved"] = {"model": MODEL_PATH, "meta": META_PATH}
-        print("已保存:", MODEL_PATH, "与", META_PATH, flush=True)
+        res["saved"] = {"model": mp, "meta": xp}
+        print("已保存:", mp, "与", xp, flush=True)
     return res
 
 
@@ -325,17 +345,19 @@ def _fmt(d: str) -> str:
 _CACHE: Dict[str, object] = {}
 
 
-def _load():
-    if "m" not in _CACHE:
-        if not os.path.exists(MODEL_PATH):
+def _load(tag: str = ""):
+    key = f"m:{tag}"
+    if key not in _CACHE:
+        mp, _ = _paths(tag)
+        if not os.path.exists(mp):
             return None
-        with open(MODEL_PATH, "rb") as f:
-            _CACHE["m"] = pickle.load(f)
-    return _CACHE["m"]
+        with open(mp, "rb") as f:
+            _CACHE[key] = pickle.load(f)
+    return _CACHE[key]
 
 
 def predict(codes: List[str], as_of: Optional[str] = None, lookback_days: int = 400,
-            universe_ref: bool = True) -> dict:
+            universe_ref: bool = True, tag: str = "") -> dict:
     """对给定代码出「未来 N 日跑赢等权池」的**校准概率** + 截面分位信号。
 
     两个实现细节（都是实测踩出来的）：
@@ -343,9 +365,9 @@ def predict(codes: List[str], as_of: Optional[str] = None, lookback_days: int = 
         直接用校准值排序会退化成随机序；
       · **代码数 <20 时用全场（流动性前 400）当参照系**：只给 3 只票时在 3 个值里取分位没有意义。
     """
-    m = _load()
+    m = _load(tag)
     if not m:
-        return {"error": "尚未训练：先跑 python -m backend.trader.sys1_xsec"}
+        return {"error": f"尚未训练（tag={tag or '默认'}）：先跑 python -m backend.trader.sys1_xsec"}
     as_of = (as_of or "").replace("-", "")[:8]
     if not as_of:
         import datetime as _dt
@@ -353,9 +375,12 @@ def predict(codes: List[str], as_of: Optional[str] = None, lookback_days: int = 
     start = _shift(as_of, lookback_days)
     codes = [str(c) for c in codes][:400]
     ref_codes: List[str] = []
+    _meta = (m.get("meta") or {})
     if universe_ref and len(codes) < 20:
         try:
-            ref_codes = [c for c in P.pick_universe(limit=400, as_of=as_of) if c not in codes]
+            _lim = int(_meta.get("codes") or 400)
+            _skip = int(_meta.get("pool_skip") or 0)
+            ref_codes = [c for c in P.pick_universe(limit=_lim, skip=_skip, as_of=as_of) if c not in codes]
         except Exception:
             ref_codes = []
     all_codes = list(dict.fromkeys(codes + ref_codes))
@@ -419,8 +444,13 @@ def main() -> None:
     ap.add_argument("--end", default="2026-09-30")
     ap.add_argument("--horizon", type=int, default=5)
     ap.add_argument("--no-save", action="store_true")
+    ap.add_argument("--pool-skip", type=int, default=0,
+                    help="跳过流动性最好的 N 只（分域建模，如 600 = 中小盘域）")
+    ap.add_argument("--include-bj", action="store_true", help="池子纳入北交所")
+    ap.add_argument("--tag", default="", help="分域头标签（如 mid_small）→ sys1_xsec_<tag>.pkl")
     args = ap.parse_args()
-    r = train(args.codes, args.start, args.end, args.horizon, save=not args.no_save)
+    r = train(args.codes, args.start, args.end, args.horizon, save=not args.no_save,
+              pool_skip=args.pool_skip, include_bj=args.include_bj, tag=args.tag)
     if r.get("error"):
         print("失败:", r["error"]); return
     t = r["test"]
