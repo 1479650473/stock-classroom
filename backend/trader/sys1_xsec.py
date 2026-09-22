@@ -190,7 +190,7 @@ def train(codes: int = 300, start: str = "2016-01-01", end: str = "2026-09-30",
                  "**排序用 raw 概率、分位做信号**（实测：① 保序回归是阶梯函数，用校准值排序会并列退化；"
                  "② 绝对概率带 [0.45,0.55] 是错的用法——实测'有信号'组超额反而更低，"
                  "因为横截面模型只对排序负责，不对绝对水平负责）。" %
-                 (horizon, TRAIN_END, CAL_END, ABSTAIN_LO, ABSTAIN_HI)),
+                 (horizon, TRAIN_END, CAL_END)),
     }
 
     # 弃权带 + 分位超额（用测试期逐日截面）
