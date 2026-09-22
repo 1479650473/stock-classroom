@@ -185,6 +185,17 @@ class TraderTools:
             except Exception:
                 pass
         try:
+            from . import bars as _bars
+            import datetime as _dt2
+            as_of2 = self.trade_date or _dt2.date.today().isoformat()
+            bd = _bars.compute(code, as_of2)
+            if bd.get("ok"):
+                out["棒级"] = {"last": bd.get("last"), "follow_through": bd.get("follow_through"),
+                              "streak": bd.get("streak")}
+                out["棒级说明"] = _bars.render(bd, "")
+        except Exception:
+            pass
+        try:
             from . import structure as _st
             import datetime as _dt
             as_of = self.trade_date or _dt.date.today().isoformat()

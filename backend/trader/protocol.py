@@ -179,11 +179,22 @@ def build_gates(profile_id: int, account_id: int, as_of: str,
             struct = st_mod.compute_cached(code, as_of)
         except Exception:
             struct = {}
+        bar_line = ""
+        try:
+            from . import bars as bars_mod
+            bd = bars_mod.compute(code, as_of, n=30)
+            if bd.get("ok"):
+                L = bd.get("last") or {}
+                bar_line = (f"最新棒 {L.get('direction')}/{L.get('kind')}、"
+                            f"收盘位置 {L.get('close_pos')}、信号棒跟随 {bd.get('follow_through')}")
+        except Exception:
+            bar_line = ""
         row = {"code": code, "name": p.get("name") or code, "qty": p.get("qty"),
                "浮亏%": round(pnl_pct, 2) if pnl_pct is not None else None,
                "距峰值%": round(from_peak, 2) if from_peak is not None else None,
                "持有交易日": held, "系统标记": flags,
                "结构": st_mod.render(struct, "") if struct.get("ok") else "结构数据不足",
+               "棒级": bar_line,
                "你的逻辑": (p.get("thesis") or "")[:80]}
         rows.append(row)
         if flags:
@@ -281,6 +292,8 @@ def build_gates(profile_id: int, account_id: int, as_of: str,
                                  f"持有{r['持有交易日']}日" + (f" ⚠{('；'.join(r['系统标记']))}" if r["系统标记"] else ""))
                     if r.get("结构"):
                         lines.append(f"      {r['结构']}")
+                    if r.get("棒级"):
+                        lines.append(f"      棒级：{r['棒级']}")
         else:
             lines.append(f"· {g['id']} {g['title']}[你] {g['note']}")
     if blocked:
