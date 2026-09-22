@@ -338,6 +338,27 @@ def build_memory_block(profile_id: int, positions: List[dict], limit: int = 10,
                 "说明": "ECE 越低越好；校准后明显低于原始 = 你系统性过度自信。"
                         "置信度区分度弱时别拿它当行动门槛（Laya 的教训：模型读不懂输入时置信度不会报警）。",
             }
+        # 小模型基线研究（sys1_market.json）：专门训练的小模型也预测不准明日方向 —— 用于约束自信
+        try:
+            import json as _json, os as _os
+            from ..api.paths import DATA_DIR as _DD
+            _p = _os.path.join(str(_DD), "sys1_market.json")
+            if _os.path.exists(_p):
+                _d = _json.load(open(_p, encoding="utf-8"))
+                _h = (_d.get("models") or {}).get("hgb") or {}
+                _lo = (_d.get("models") or {}).get("logistic") or {}
+                calib["小模型基线"] = {
+                    "说明": "我们专门训练的小模型（13 个指数/广度/北向特征）预测【次日大盘方向】的样本外成绩："
+                            "它不是交易信号，而是校准你自己的参照 —— 连它都做不到的事，你的高置信同样可疑。",
+                    "测试区间": f"{( _d.get('meta') or {}).get('test_from')}~{( _d.get('meta') or {}).get('test_to')}",
+                    "逻辑回归命中": f"{_lo.get('hit_rate')}%",
+                    "HGB命中": f"{_h.get('hit_rate')}%",
+                    "多数类基线": f"{(_d.get('baselines') or {}).get('majority_class_share')}%",
+                    "结论": "次日方向接近随机：小模型命中不如'永远猜多数类'；弃权门控也换不来命中率。"
+                            "所以：别对明日方向给高置信，它的用途是校准你的判断力而非下注。",
+                }
+        except Exception:
+            pass
     except Exception:
         calib = {}
     return {

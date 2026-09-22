@@ -349,6 +349,25 @@ def outlook_stats():
     return ok(out)
 
 
+@bp.route("/sys1", methods=["GET"])
+def sys1_report():
+    """小模型（System 1）基线研究：次日大盘方向预测的样本外成绩与校准。
+
+    用途不是信号，而是**校准参照**：连专门训练的小模型都赢不了"多数类"基线，
+    说明"明日方向"这类判断本身信息量极低——对它的高置信预测要打折看。
+    """
+    import json as _json
+    import os as _os
+    from ..paths import DATA_DIR as _DD
+    p = _os.path.join(str(_DD), "sys1_market.json")
+    if not _os.path.exists(p):
+        return ok({"hint": "尚未运行：python -m backend.trader.sys1"})
+    with open(p, encoding="utf-8") as f:
+        d = _json.load(f)
+    return ok({"meta": d.get("meta"), "baselines": d.get("baselines"),
+               "models": d.get("models"), "latest": d.get("latest"), "note": d.get("note")})
+
+
 @bp.route("/performance", methods=["GET"])
 def performance():
     """交易员战绩：胜率/盈亏比/回撤/最近已平仓交易（自我提升的依据）。"""
