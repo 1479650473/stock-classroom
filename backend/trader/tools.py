@@ -244,7 +244,8 @@ class TraderTools:
             return out
         meta = {"域": "中小盘（流动性排名 601~1800）" if tag else "流动池（前 600）",
                 "注": ("中小盘域里固定因子组合的多头更强（+0.432%/5日 vs 模型 +0.237%），"
-                       "模型的强项在空头端（最差 10% 组 -0.718%/5日）—— 更适合当『回避参考』") if tag else ""}
+                       "模型的强项在空头端（最差 10% 组 -0.718%/5日）—— 但实测：在历史真买入样本上它的"
+                       "低分位组反而更好，**不要用它否决你自己的持仓/候选**，只当独立视角") if tag else ""}
         try:
             import json as _json, os as _os
             from ..api.paths import DATA_DIR as _DD

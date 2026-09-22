@@ -404,7 +404,9 @@ def sys1_xsec_report():
                                   as_of=date.today().isoformat())
             live = X.predict(uni, tag=_tag)
             rows = [r for r in (live.get("rows") or []) if r.get("signal") == "看多"][:top]
-            out["scan"] = {"as_of": live.get("as_of"), "universe": f"流动性前 {len(uni)} 只",
+            _sk, _tk = int(_md.get("pool_skip") or 0), len(uni)
+            _lab = (f"流动性排名 {_sk + 1}~{_sk + _tk}" if _sk else f"流动性前 {_tk} 只")
+            out["scan"] = {"as_of": live.get("as_of"), "universe": _lab,
                            "rows": rows, "note": live.get("note")}
         except Exception as e:
             out["scan"] = {"error": str(e)[:200]}
