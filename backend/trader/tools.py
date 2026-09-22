@@ -356,8 +356,16 @@ class TraderTools:
         norm = outlook_mod.normalize_outlook(outlook) if outlook else {}
         if norm:
             self.decision["outlook"] = norm
-        tip = (outlook_mod.CN.get(norm.get("direction"), "") + f" {norm.get('confidence'):g}%") if norm             else "（未给预测，建议每次都给：系统会按真实净值打分）"
-        return {"状态": "今日决策已记录", "委托数": len(self.plan), "预测": tip}
+
+        # 校验（schema + 取值 + 一致性）：不过就把问题作为工具结果返回，模型可补齐后重新提交
+        from . import protocol as protocol_mod
+        problems = protocol_mod.validate_decision(self.decision)
+        if problems:
+            return {"error": "决策未通过校验，请补齐后重新调用 submit_decision",
+                    "问题": problems}
+        tip = (outlook_mod.CN.get(norm.get("direction"), "") + f" {norm.get('confidence'):g}%")
+        return {"状态": "今日决策已记录", "委托数": len(self.plan), "预测": tip,
+                "闸门": "已完成 M4/M7 的说明" if len(self.decision.get("thinking") or "") >= 200 else "建议更详细"}
 
     # ── 调度 ──
     _RESERVED = ("execute", "decision", "notes", "log", "plan", "executions",

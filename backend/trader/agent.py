@@ -231,22 +231,35 @@ class TraderAgent:
             # 强制结束（无 LLM 回复时也要留下记录），失败重试一次
             emit("强制操盘手给出最终决策…")
             spec = [t for t in TOOL_SPECS if t["function"]["name"] == "submit_decision"]
-            for _try in range(2):
+            from . import protocol as protocol_mod
+            for _try in range(3):
                 try:
                     llm = self._client()
                     result = llm.chat_with_tools(
                         messages, spec, max_tokens=2000,
                         tool_choice={"type": "function",
                                      "function": {"name": "submit_decision"}})
+                    got = None
                     for tc in result.get("tool_calls") or []:
                         try:
-                            self.tools.decision = json.loads(tc["function"]["arguments"] or "{}")
+                            got = json.loads(tc["function"]["arguments"] or "{}")
                         except Exception:
                             pass
-                    if self.tools.decision is not None:
+                    if got:
+                        self.tools.decision = got
+                    # 校验：不合法就把问题回灌给模型，让它补齐再提交（修复重试）
+                    problems = protocol_mod.validate_decision(self.tools.decision)
+                    if not problems:
                         break
+                    emit("决策未通过校验，追加一轮修正…")
+                    event({"event": "warning", "message": "决策校验未通过：" + "；".join(problems)[:200]})
+                    messages.append({"role": "user",
+                                     "content": ("你刚才的 submit_decision 未通过校验：\n- "
+                                                 + "\n- ".join(problems)
+                                                 + "\n请按上面的问题补齐后**重新调用 submit_decision**"
+                                                   "（只提交修正后的完整内容）。")})
                 except Exception as e:
-                    emit(f"最终决策失败({_try + 1}/2): {str(e)[:120]}")
+                    emit(f"最终决策失败({_try + 1}/3): {str(e)[:120]}")
                     event({"event": "warning", "message": f"最终决策调用失败：{str(e)[:150]}"})
 
         narration = "".join(narration_parts).strip()

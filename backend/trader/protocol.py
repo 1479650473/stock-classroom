@@ -37,6 +37,35 @@ GATE_DEFS = [
 ]
 
 
+MIN_THINKING = 40
+
+
+def validate_decision(d: Optional[dict]) -> list:
+    """校验 submit_decision 的载荷（借鉴 PA_Agent 的 json_validator：语法/必填/取值/一致性）。
+
+    返回问题列表（空 = 通过）。问题会作为工具错误回给模型，让它补齐后重新提交（修复重试）。
+    """
+    problems: list = []
+    if not isinstance(d, dict):
+        return ["未收到决策对象：请重新调用 submit_decision，并给全 thinking / reflection / outlook。"]
+    thinking = str(d.get("thinking") or "").strip()
+    if len(thinking) < MIN_THINKING:
+        problems.append(f"thinking 太短（{len(thinking)} 字，至少 {MIN_THINKING}）：请按闸门编号写清"
+                        f"【G1 风险闸门】【G2 持仓处置】【M4 选股依据】【M7 下单执行】的结论。")
+    o = d.get("outlook")
+    if not isinstance(o, dict) or not o:
+        problems.append("缺少 outlook（对次一交易日账户净值方向的预测）："
+                        "请给 outlook={direction: up|down|flat, confidence: 0-100, reason: ...}。")
+    else:
+        from . import outlook as outlook_mod
+        norm = outlook_mod.normalize_outlook(o)
+        if not norm:
+            problems.append("outlook 不合法：direction 只能是 up/down/flat，confidence 为 0-100 数字。")
+        elif not str(o.get("reason") or o.get("依据") or "").strip():
+            problems.append("outlook 缺少 reason（一句话依据）：预测要有依据，方便事后对账。")
+    return problems
+
+
 def _fmt_money(v) -> str:
     try:
         n = float(v)
