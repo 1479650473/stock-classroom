@@ -509,9 +509,11 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
         try:
             import subprocess as _sp
             _chip_script = os.path.join(ROOT, 'scripts', 'rebuild_chip.py')
-            _r = _sp.run([sys.executable, _chip_script, '--days', '250'],
-                         cwd=ROOT, capture_output=True, text=True, timeout=5400)
-            _tail = (_r.stdout or '')[-300:]
+            _chip_log = os.path.join(LOGDIR, 'step_chip.log')
+            with open(_chip_log, 'w', encoding='utf-8', errors='replace') as _lf:
+                _r = _sp.run([sys.executable, _chip_script, '--days', '250'],
+                             cwd=ROOT, stdout=_lf, stderr=_sp.STDOUT, timeout=5400)
+            _tail = ''
             out['steps']['chip'] = 'ok' if _r.returncode == 0 else 'rc=%s %s' % (_r.returncode, _tail[:150])
             lg.info('  筹码分布: %s', out['steps']['chip'] if _r.returncode == 0 else out['steps']['chip'])
         except Exception as e:
@@ -521,8 +523,10 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
         try:
             import subprocess as _sp
             _md_script = os.path.join(ROOT, 'scripts', 'rebuild_market_daily.py')
-            _r = _sp.run([sys.executable, _md_script, '--days', '5'],
-                         cwd=ROOT, capture_output=True, text=True, timeout=900)
+            _md_log = os.path.join(LOGDIR, 'step_market_daily.log')
+            with open(_md_log, 'w', encoding='utf-8', errors='replace') as _lf:
+                _r = _sp.run([sys.executable, _md_script, '--days', '5'],
+                             cwd=ROOT, stdout=_lf, stderr=_sp.STDOUT, timeout=900)
             out['steps']['market_daily'] = 'ok' if _r.returncode == 0 else 'rc=%s' % _r.returncode
             lg.info('  大盘情绪(涨停/跌停家数): %s', out['steps']['market_daily'])
         except Exception as e:
@@ -532,8 +536,10 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
         try:
             import subprocess as _sp
             _h_script = os.path.join(ROOT, 'scripts', 'rebuild_holder.py')
-            _r = _sp.run([sys.executable, _h_script, '--recent', '2'],
-                         cwd=ROOT, capture_output=True, text=True, timeout=1800)
+            _h_log = os.path.join(LOGDIR, 'step_holder.log')
+            with open(_h_log, 'w', encoding='utf-8', errors='replace') as _lf:
+                _r = _sp.run([sys.executable, _h_script, '--recent', '2'],
+                             cwd=ROOT, stdout=_lf, stderr=_sp.STDOUT, timeout=1800)
             out['steps']['holder'] = 'ok' if _r.returncode == 0 else 'rc=%s' % _r.returncode
             lg.info('  股东户数/基金持仓: %s', out['steps']['holder'])
         except Exception as e:
