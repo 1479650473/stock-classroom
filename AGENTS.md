@@ -178,6 +178,8 @@ Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
 | Backend | `backend/data_manager.py` | `rebuild_period_kline`(周K/月K聚合: kline_weekly 293万行+kline_monthly 70万行) + `get_period_kline`; update_daily ⑭步增量 |
 | Backend | `industry_pe` 表 + `/api/market/industry-pe` | **行业市盈率**(巨潮证监会行业分类 120 行业, 加权/中位/算术平均, 日频); update_daily ⑯步 |
 | Scripts | `scripts/rebuild_chip.py` | **筹码分布全市场**(250天, 多进程每进程独立V8); `update_chip_all`; update_daily ⑰步每日重算 |
+| Backend | `holder_count`/`fund_hold` 表 + `/api/holder` `/api/fund-hold` | **股东户数/基金持仓**(季度 2015-2026, 46期); `scripts/rebuild_holder.py`; update_daily ⑲步 |
+| Backend | `board_list`/`board_daily` 表 + `/api/market/board/{list,kline}` | **概念/行业板块指数**(同花顺 374概念+90行业, 全历史 81万行, 数据当天有); `scripts/rebuild_board.py`; update_daily ⑳步 |
 | Desktop | `dev.py`（根目录） | **一键开发环境**：后端+前端一起起，先检查 5000 是否被桌面版冻结后端占用（`--kill` 可停），`--port/--api-only/--web-only` |
 | Desktop | `web/src-tauri/src/lib.rs` | 桌面壳：闪屏→主窗口、系统托盘、单实例、窗口记忆、开机自启、系统通知、`SC_DATA_DIR` 注入、后端日志落盘、端口复用检测 |
 | Desktop | `web/public/splash.html` | 启动闪屏（品牌 + 进度条 + 三段状态），纯 HTML 随包分发 |
