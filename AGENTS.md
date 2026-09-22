@@ -69,6 +69,9 @@ Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
 | `selection.py` | 选股链路审计: `build_snapshot(ref_date, top_n, with_events)` 输出股票池来源/生效与未生效过滤/评分卡窗口与五组权重/筛选漏斗/候选及分项得分；`compact_note()` 给模型看的候选池说明。候选池随决策落库，事后可核对 |
 | `protocol.py` | **编号决策协议 + 确定性闸门**（借鉴 PA_Agent 决策树）：G0 数据可用性 / G1 风险闸门（能否开仓·额度·上限·冷静期）/ G2 持仓处置（逐票浮亏·距峰值·**结构**·系统标记）/ **G2b 挂单前提** / G3 市场环境（regime+沪深300结构）/ M4 选股依据·M7 下单执行（模型答）/ G5 标的合规 / G6 资金与仓位 / G8 收盘兜底；`validate_decision()` 校验模型输出（thinking 长度/outlook 合法性） |
 | `structure.py` | **价格结构特征**（程序算的客观事实，借鉴 market_features）：区间位置与区位、区间宽度×ATR、距上下沿×ATR、波段结构（HH+HL / LH+LL / 区间）、自极点回撤×ATR、**突破质量**（none/wick_probe/close_breakout/failed/testing/surviving/broke_down）、重叠率与**铁丝网分数**、距 MA20×ATR；`compute_cached()` 进程内缓存 |
+| `bars.py` | **K 线几何特征**（棒级，判买入/卖出时点）：形态分类（inside/outside/doji/trend bull-bear）、实体与影线占比、收盘位置、与前棒重叠、**微双底 MDB/微双顶 MDT**、内-外-内 IOI、相对 EMA20 跳空棒、对前 5 棒区间突破、**信号棒跟随 follow-through**（yes/failed/no）、**H1/H2/L1/L2 计数**（含"信号棒偏弱"标记） |
+| `routing.py` | **结构分类路由**（借鉴 pattern_routing + Al Brooks 策略手册）：把程序事实归成 上升回踩/上升突破/区间上沿/区间下沿/区间中部粘滞/下降破位/突破失败/急涨/不明 九类，每类附「常见处理/主要风险」；提示里写入手册的量化规律（影线试探失败率 70~80%、存活突破约 60% 走到区间高度、铁丝网优先级高于入场信号）；接入上下文、`screen_stocks` 标签、`get_stock_factors` |
+| `coherence.py` | **决策自洽性校验**（借鉴 coherence_checks）：预测 vs 委托方向、说法 vs 实际委托、买单是否在 thinking 里被提到、账户事实粗交叉；**提示而非拒绝**，随决策落库并前端展示 |
 | `continuity.py` | **决策连续性**（借鉴 decision_continuity）：挂单前提失效判定（买单市价高于挂单价 ≥3×ATR 或结构跌破箱体下沿 → "前提已变"，只提示不强制撤）+ 上轮立场关系（首单/同向/反手/延续等待，A股"反手"=清仓后又买回） |
 | `outlook.py` | **每日方向预测 + 自动打分校准**（借鉴 PA_Agent 的"未来走势预期"，闭环化）：模型给 `outlook={direction,confidence,reason}` → 次日用真实净值结算（±0.3% 算平）→ 命中率/**方向性命中率（排除看平）**/置信度分桶/Brier；`score_pending()` 在 daily 与 replay 里自动补分 |
 | `performance.py` | 战绩与自我提升: `performance_block()` 按 FIFO 配对成交算胜率/盈亏比/平均持有/连势/累计收益/最大回撤/日胜率；`performance_summary_text()` 注入上下文；`review_trader()` 强制自省产出 self_critique/lessons/style/**rules(纪律规则)** |
