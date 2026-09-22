@@ -63,7 +63,8 @@ def _trading_days_from(start: str, limit: int = 60) -> list:
             cal = [str(x) for x in json.load(f)]
     except Exception:
         cal = []
-    days = [d for d in cal if d >= start]
+    s8 = str(start or "")[:10].replace("-", "")
+    days = [d for d in cal if str(d).replace("-", "")[:8] >= s8]
     return days[:limit]
 
 
@@ -265,11 +266,18 @@ def _account_of(profile_id: int) -> Optional[int]:
 
 
 def _trading_gap(d1: str, d2: str) -> Optional[int]:
-    """两个日期之间隔了几个交易日（不含起始日、含结束日），用于冷静期与挂单龄。"""
-    a, b = str(d1 or "")[:10], str(d2 or "")[:10]
+    """两个日期之间隔了几个交易日（不含起始日、含结束日），用于冷静期与挂单龄。
+
+    注意：库里存在两种日期写法（`YYYYMMDD` 与 `YYYY-MM-DD`），这里先统一成无分隔符再比较，
+    否则 `"2026-09-23" < "20260922"` 这类字符串比较会得出错误结论（闸门静默失效）。
+    """
+    def _norm(x) -> str:
+        return str(x or "")[:10].replace("-", "").strip()
+
+    a, b = _norm(d1), _norm(d2)
     if not a or not b or b < a:
         return None
-    days = _trading_days_from(a, limit=120)
+    days = [str(d).replace("-", "")[:8] for d in _trading_days_from(str(d1)[:10], limit=150)]
     return len([d for d in days if a < d <= b])
 
 
@@ -277,11 +285,13 @@ def last_sell_date(account_id: int, code: str, as_of: str = "") -> str:
     """该账户对某只股票最近一次卖出的日期（<= as_of，取成交记录里的模拟交易日）。"""
     try:
         con = sqlite3.connect(str(SIM_DB))
+        as_of10 = str(as_of or "")[:10]
         row = con.execute(
-            "SELECT MAX(substr(traded_at,1,10)) FROM trades "
+            "SELECT MAX(replace(substr(traded_at,1,10),'-','')) FROM trades "
             "WHERE account_id=? AND code=? AND side='sell' "
-            "AND (?='' OR substr(traded_at,1,10)<=?)",
-            (int(account_id), str(code), str(as_of)[:10], str(as_of)[:10])).fetchone()
+            "AND (?='' OR replace(substr(traded_at,1,10),'-','')<=?)",
+            (int(account_id), str(code), as_of10.replace("-", ""),
+             as_of10.replace("-", ""))).fetchone()
         con.close()
         return str((row or [""])[0] or "")
     except Exception:
@@ -313,9 +323,10 @@ def check_buy(profile_id: int, code: str, ratio_after: float = 0.0,
                 if gap is not None and gap <= cool:
                     tightened = next((r for r in rules if r["kind"] == "sell_reentry_cooldown"), None)
                     src = "纪律规则" if tightened else "系统默认冷静期"
+                    sold_h = f"{sold[:4]}-{sold[4:6]}-{sold[6:8]}" if len(sold) == 8 else sold
                     return {"rule": tightened or {"kind": "sell_reentry_cooldown", "value": cool},
                             "message": f"{src}：{code} 卖出后需冷静 {cool} 个交易日"
-                                       f"（上次卖出 {sold}，距今 {gap} 个交易日）"}
+                                       f"（上次卖出 {sold_h}，距今 {gap} 个交易日）"}
     except Exception:
         pass
 

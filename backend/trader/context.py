@@ -307,6 +307,27 @@ def build_daily_context(profile: dict, with_candidates: bool = True,
                   if with_news else {"market": [], "stocks": []})
     memory = build_memory_block(int(profile["id"]), acct["positions"],
                                 account_id=int(profile["account_id"]))
+    # 编号决策协议（系统闸门已判定，模型只回答 [你] 的闸门）
+    protocol_block = {}
+    try:
+        from . import protocol as protocol_mod
+        latest = ""
+        try:
+            import sqlite3 as _sq
+            from ..api.paths import KLINE_DB as _KDB
+            _c = _sq.connect(str(_KDB))
+            latest = str(_c.execute("SELECT MAX(date) FROM kline_daily").fetchone()[0] or "")
+            _c.close()
+        except Exception:
+            latest = ""
+        protocol_block = protocol_mod.build_gates(
+            int(profile["id"]), int(profile["account_id"]),
+            str((profile.get("meta") or {}).get("as_of") or __import__("datetime").date.today().isoformat()),
+            positions=acct["positions"], account=acct["summary"],
+            regime=(market or {}).get("regime") if isinstance(market, dict) else {},
+            data_latest=latest)
+    except Exception as _e:
+        protocol_block = {}
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "profile": {
@@ -322,5 +343,6 @@ def build_daily_context(profile: dict, with_candidates: bool = True,
         "candidates": cands,
         "news": news_block,
         "memory": memory,
+        "protocol": protocol_block,
         "prices": acct["prices"],
     }

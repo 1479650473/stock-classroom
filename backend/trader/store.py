@@ -101,6 +101,9 @@ def ensure_schema() -> None:
             con.execute("ALTER TABLE trader_decision ADD COLUMN review TEXT DEFAULT '{}'")
         if "rejections" not in cols:
             con.execute("ALTER TABLE trader_decision ADD COLUMN rejections TEXT DEFAULT '[]'")
+        if "gates" not in cols:
+            # 每日决策的编号闸门结论（系统判定的部分落库，便于回看与审计）
+            con.execute("ALTER TABLE trader_decision ADD COLUMN gates TEXT DEFAULT '{}'")
         if "outlook" not in cols:
             # 每日方向预测（次日净值方向 + 置信度），供自动打分校准
             con.execute("ALTER TABLE trader_decision ADD COLUMN outlook TEXT DEFAULT '{}'")

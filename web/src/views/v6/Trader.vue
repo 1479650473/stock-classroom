@@ -28,6 +28,23 @@ const loading = ref(true)
 const error = ref('')
 const memKind = ref<'style' | 'thesis' | 'lesson' | 'note'>('style')
 const outlook = ref<TraderOutlookStats | null>(null)
+
+/** 最新决策里的编号闸门（系统判定的部分） */
+const latestGateList = computed(() => {
+  const d = decisions.value[0] as unknown as { gates?: { gates?: unknown[] } } | undefined
+  const list = (d?.gates?.gates || []) as { id: string; title: string; kind: string; status: string; note?: string; facts?: Record<string, unknown> }[]
+  return Array.isArray(list) ? list : []
+})
+
+/** 闸门事实压成一行摘要（数字多的字段只取前几个键值） */
+function summarizeFacts(facts?: Record<string, unknown>): string {
+  if (!facts) return ''
+  return Object.entries(facts)
+    .filter(([, v]) => v !== null && v !== undefined && v !== '' && typeof v !== 'object')
+    .slice(0, 5)
+    .map(([k, v]) => `${k}=${v}`)
+    .join(' · ')
+}
 const expanded = ref<Record<string, boolean>>({})
 const settingsOpen = ref(false)
 const saving = ref(false)
@@ -260,6 +277,19 @@ function toolLine(t: { tool: string; args?: Record<string, unknown>; error?: str
       </SectionCard>
 
       <!-- 今日/最近决策 -->
+      <!-- 今日闸门：编号决策协议（系统判定的部分） -->
+      <SectionCard v-if="latestGateList.length" title="今日闸门"
+        desc="编号决策协议：能计算的部分由系统判定，模型只回答 [你] 的闸门（可审计）">
+        <div class="gates">
+          <div v-for="g in latestGateList" :key="g.id" class="gate" :class="'gate--' + g.status">
+            <span class="gate__id">{{ g.id }}</span>
+            <span class="gate__title">{{ g.title }}</span>
+            <span class="gate__kind">{{ g.kind === 'code' ? '系统' : '你' }}</span>
+            <span class="gate__note">{{ g.note || summarizeFacts(g.facts) }}</span>
+          </div>
+        </div>
+      </SectionCard>
+
       <!-- 预测校准：每日"次日净值方向 + 置信度" vs 真实结果 -->
       <SectionCard v-if="outlook && outlook.n > 0" title="预测校准"
         desc="它每天给出的「次日方向 + 置信度」与真实净值对账 —— 比总收益更能区分运气与能力">
