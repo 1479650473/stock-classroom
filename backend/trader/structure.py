@@ -27,6 +27,9 @@ from ..api.paths import KLINE_DB
 
 LOOKBACK = 60          # 区间包络回看
 BARBWIRE_THRESHOLD = 0.62
+#: 紧凑度（最近 10 根区间宽度 ÷ 平均波段高度）阈值：按本库 200 只 A 股日线实测的 p25/p50
+COMPACT_TIGHT = 0.98
+COMPACT_MID = 1.32
 
 
 def _bars(code: str, as_of: str, n: int = 120) -> list:
@@ -153,6 +156,22 @@ def compute(code: str, as_of: str, lookback: int = LOOKBACK) -> dict:
             bq = "testing"                         # 贴着上沿，可能在回测
         elif last[4] < bl:
             bq = "broke_down"
+    # 紧凑度 = 区间宽度 / 平均波段高度（PA_Agent 判铁丝网的主口径：<25% 铁丝网，25~35% 过渡区）
+    # 紧凑度 = **最近 10 根**的区间宽度 / 平均波段高度
+    # （PA_Agent 判铁丝网的主口径：<25% 铁丝网、25~35% 过渡区。
+    #   注意要用"最近"的区间 —— 60 日包络宽度反映不了当前的粘滞程度。）
+    compact_ratio = None
+    try:
+        last10 = bars[-10:]
+        r10 = max(b[2] for b in last10) - min(b[3] for b in last10)
+        prices = [s["price"] for s in swings] if len(swings) >= 3 else []
+        legs = [abs(prices[i] - prices[i - 1]) for i in range(1, len(prices))]
+        avg_leg = (sum(legs) / len(legs)) if legs else (2 * atr if atr else 0)
+        if avg_leg and avg_leg > 0 and r10 > 0:
+            compact_ratio = round(r10 / avg_leg, 3)
+    except Exception:
+        compact_ratio = None
+
     # 重叠 / 铁丝网
     ovs = [o for o in (_overlap(bars[i], bars[i - 1]) for i in range(len(bars) - 10, len(bars))) if o is not None]
     overlap10 = round(sum(ovs) / len(ovs), 3) if ovs else None
@@ -182,7 +201,13 @@ def compute(code: str, as_of: str, lookback: int = LOOKBACK) -> dict:
             "breakout_quality": bq,
             "overlap_mean_10": overlap10,
             "barbwire_score": barbwire,
-            "barbwire": barbwire >= BARBWIRE_THRESHOLD,
+            "compact_ratio": compact_ratio,
+            # 阈值按本库实测分布定（200 只 A 股日线：p25=0.98、p50=1.32），
+            # 不照搬原文的 0.25/0.35 —— 那是期货/外汇 tick 口径，量纲不同不可直接用。
+            "compact_zone": ("紧凑/粘滞（<p25）" if (compact_ratio or 9) < COMPACT_TIGHT
+                             else ("过渡区（p25~p50，只等突破）" if (compact_ratio or 9) < COMPACT_MID
+                                   else "正常波动")),
+            "barbwire": (barbwire >= BARBWIRE_THRESHOLD) or ((compact_ratio or 9) < COMPACT_TIGHT),
             "gap_ma20_atr": gap_ma20}
 
 
@@ -198,6 +223,8 @@ def render(d: dict, name: str = "") -> str:
     if d.get("pullback_atr"):
         parts.append(f"自高点回撤 {d['pullback_atr']}×ATR")
     parts.append(f"突破质量 {d['breakout_quality']}")
+    if d.get("compact_ratio") is not None:
+        parts.append(f"紧凑度 {d['compact_ratio']}（{d.get('compact_zone')}）")
     if d.get("barbwire"):
         parts.append(f"铁丝网/粘滞（分数 {d['barbwire_score']}）")
     if d.get("gap_ma20_atr") is not None:

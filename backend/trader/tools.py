@@ -185,6 +185,15 @@ class TraderTools:
             except Exception:
                 pass
         try:
+            from . import routing as _routing
+            import datetime as _dt3
+            rc = _routing.classify_code(code, self.trade_date or _dt3.date.today().isoformat())
+            if rc.get("ok"):
+                out["结构分类"] = rc.get("label")
+                out["结构分类提示"] = rc.get("note")
+        except Exception:
+            pass
+        try:
             from . import bars as _bars
             import datetime as _dt2
             as_of2 = self.trade_date or _dt2.date.today().isoformat()
@@ -393,8 +402,25 @@ class TraderTools:
             return {"error": "决策未通过校验，请补齐后重新调用 submit_decision",
                     "问题": problems}
         tip = (outlook_mod.CN.get(norm.get("direction"), "") + f" {norm.get('confidence'):g}%")
-        return {"状态": "今日决策已记录", "委托数": len(self.plan), "预测": tip,
-                "闸门": "已完成 M4/M7 的说明" if len(self.decision.get("thinking") or "") >= 200 else "建议更详细"}
+        # 自洽性检查（说法 vs 动作）：提示而非拒绝，但会在同一次决策里回给模型，便于它当场解释或修正
+        issues = []
+        try:
+            from . import coherence as coh_mod
+            acct = {}
+            try:
+                acct = self.engine.get_summary(self.account_id) or {}
+            except Exception:
+                acct = {}
+            issues = coh_mod.check(self.decision, self.plan, acct)
+            if issues:
+                self.decision["coherence"] = issues
+        except Exception:
+            issues = []
+        out = {"状态": "今日决策已记录", "委托数": len(self.plan), "预测": tip,
+               "闸门": "已完成 M4/M7 的说明" if len(self.decision.get("thinking") or "") >= 200 else "建议更详细"}
+        if issues:
+            out["一致性问题（提示，不阻塞）"] = [x["msg"] for x in issues]
+        return out
 
     # ── 调度 ──
     _RESERVED = ("execute", "decision", "notes", "log", "plan", "executions",

@@ -159,13 +159,58 @@ def compute(code: str, as_of: str, n: int = 40) -> dict:
                 break
         else:
             break
+    legs = leg_counts(bars)
     return {"ok": True, "as_of": as_of, "atr14": round(atr, 3) if atr else None,
+            "leg_counts": legs,
             "ema20": round(ema20, 3) if ema20 else None,
             "last": seq[-1] if seq else {}, "prev": seq[-2] if len(seq) > 1 else {},
             "recent": seq[-6:],
             "follow_through": ft, "streak": streak,
             "note": ("follow_through=yes 表示信号棒之后收盘继续同向（跟随确认）；"
                      "failed 表示反向吞掉信号棒（信号失效）")}
+
+
+def leg_counts(bars: list) -> dict:
+    """H1/H2/L1/L2 计数（借鉴 PA_Agent 文件19）：以"突破前一棒极点"为触发。
+
+    上涨背景：High1 = 第一腿回撤后第一根突破前棒高点的做多触发；High2 = 第二腿之后再次触发。
+    下跌背景对称。H3/L3 常演变为楔形，不宜当 H2 用（这里只给到计数，判断留给模型）。
+    """
+    if len(bars) < 12:
+        return {"label": "", "note": ""}
+    # 最近 12 根里找"极点"作为起点
+    tail = bars[-12:]
+    hi_i = max(range(len(tail)), key=lambda i: tail[i][2])
+    lo_i = min(range(len(tail)), key=lambda i: tail[i][3])
+    def _count_from(start: int, up: bool) -> tuple:
+        n, weak = 0, False
+        for i in range(start + 1, len(tail)):
+            o, h, l, c = tail[i][1], tail[i][2], tail[i][3], tail[i][4]
+            prev = tail[i - 1]
+            rng = h - l
+            if up:
+                trig = h > prev[2] and c > o
+            else:
+                trig = l < prev[3] and c < o
+            if trig:
+                n += 1
+                body = abs(c - o) / rng if rng > 0 else 0
+                wick = ((h - max(o, c)) / rng if up else (min(o, c) - l) / rng) if rng > 0 else 0
+                weak = body < 0.4 or wick > 0.4
+        return n, weak
+    # 谁更近：从高点回撤（找 H 计数）还是从低点反弹（找 L 计数）
+    if hi_i > lo_i:
+        n, weak = _count_from(hi_i, up=True)
+        if n:
+            return {"label": f"H{min(n, 3)}", "count": n, "weak": weak,
+                    "note": f"自最近高点回撤后的第 {n} 次突破前棒高点"
+                            + ("（信号棒偏弱：实体小/上影长，按资料宜等 H2 或更明确信号）" if weak else "")}
+        return {"label": "回撤中（尚未出现做多触发）", "count": 0, "weak": False, "note": ""}
+    n, weak = _count_from(lo_i, up=False)
+    if n:
+        return {"label": f"L{min(n, 3)}", "count": n, "weak": weak,
+                "note": f"自最近低点反弹后的第 {n} 次跌破前棒低点"}
+    return {"label": "反弹中（尚未出现做空触发）", "count": 0, "weak": False, "note": ""}
 
 
 def render(d: dict, name: str = "") -> str:
@@ -187,6 +232,9 @@ def render(d: dict, name: str = "") -> str:
     if L.get("breakout_prev5") != "none":
         parts.append({"up": "突破前5棒高点", "down": "跌破前5棒低点", "both": "同时突破上下沿"}[L["breakout_prev5"]])
     parts.append(f"信号棒跟随 {d.get('follow_through')}")
+    lc = d.get("leg_counts") or {}
+    if lc.get("label"):
+        parts.append(str(lc["label"]))
     if abs(int(d.get("streak") or 0)) >= 2:
         parts.append(f"{'连阳' if d['streak'] > 0 else '连阴'} {abs(d['streak'])} 根")
     return f"{name} 棒级：" + "；".join(str(x) for x in parts)

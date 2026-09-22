@@ -305,9 +305,29 @@ def build_memory_block(profile_id: int, positions: List[dict], limit: int = 10,
             continuity["上一轮净值"] = done[0].get("nav_after")
     except Exception:
         continuity = {}
+    routing_block = {}
+    try:
+        from . import routing as routing_mod
+        idx = routing_mod.classify_code("sh000300", str(as_of or __import__("datetime").date.today().isoformat()))
+        holds = []
+        for p in positions or []:
+            c = str(p.get("code") or "")
+            if not c:
+                continue
+            try:
+                r = routing_mod.classify_code(c, str(as_of or __import__("datetime").date.today().isoformat()))
+                holds.append({"code": c, "name": p.get("name") or c,
+                              "分类": r.get("label"), "提示": (r.get("note") or "")[:120]})
+            except Exception:
+                continue
+        routing_block = {"大盘分类": idx.get("label"), "大盘提示": (idx.get("note") or "")[:140],
+                         "持仓分类": holds, "参考表": routing_mod.TABLE_TEXT}
+    except Exception:
+        routing_block = {}
     return {
         "self_style": style,
         "continuity": continuity,
+        "structure_routing": routing_block,
         "history_note": "近 3 个交易日逐条详细（含委托与结果）；更早的日子只给摘要"
                         "（日期/操作/净值/复盘一句）——需要细节用工具查或问自己写下的记忆。",
         "regime_bucket": {"当前环境": cur_regime or "未知",

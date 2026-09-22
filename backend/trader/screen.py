@@ -215,6 +215,17 @@ def screen(as_of: Optional[str] = None, filters: Optional[Dict[str, Any]] = None
     key = sort_by if sort_by in DIMENSIONS else "circ_mv"
     rows.sort(key=lambda r: r.get(key, 0.0), reverse=not ascending)
     top = rows[: max(1, min(int(limit or 20), 100))]
+    # 附"结构分类"（区间上沿/上升回踩/破位下跌…）：筛选按数值排序，但挑哪只可以看结构状态
+    try:
+        from . import routing as routing_mod
+        for r in top:
+            try:
+                rc = routing_mod.classify_code(str(r.get("code")), str(ref)[:10])
+                r["结构分类"] = rc.get("label")
+            except Exception:
+                r["结构分类"] = ""
+    except Exception:
+        pass
     return {"as_of": ref, "total_matched": len(rows), "sort_by": key,
             "ascending": bool(ascending), "filters": {k: v for k, v in fl.items() if v is not None},
             "unknown_filters": unknown,
