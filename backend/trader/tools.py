@@ -220,6 +220,58 @@ class TraderTools:
             pass
         return out
 
+    def get_sys1_view(self, codes: list = None) -> dict:
+        """小模型（System 1 横截面）对指定股票的"未来 N 日跑赢等权池"**校准概率**。
+
+        它的定位是**参考，不是指令**：样本外 Top10% 的 5 日平均超额 +0.195%（固定因子组合 +0.148%），
+        且分位数分层单调（p≤10% 组 -0.601%）—— 说明它有排序能力，但**没有择时能力**
+        （见 /api/trader/sys1：预测"明日大盘方向"命中 35% vs 多数类基线 38.9%）。
+        信号口径是**截面分位**：它内部只对"这批票里谁更强"负责。
+        """
+        from . import sys1_xsec as X
+        import datetime as _dt
+        cs = [str(c).strip() for c in (codes or []) if str(c).strip()]
+        if not cs:
+            return {"error": "请给出 codes（如 [\"600036\",\"000001\"]）"}
+        out = X.predict(cs, as_of=self.trade_date or _dt.date.today().isoformat())
+        if out.get("error"):
+            return out
+        meta = {}
+        try:
+            import json as _json, os as _os
+            from ..api.paths import DATA_DIR as _DD
+            _p = _os.path.join(str(_DD), "sys1_xsec.json")
+            if _os.path.exists(_p):
+                _d = _json.load(open(_p, encoding="utf-8"))
+                meta = {"样本外Top10%超额": (_d.get("deciles") or {}).get("top10%", {}).get("mean_excess_pct"),
+                        "分位单调性": {k: v.get("mean_excess_pct") for k, v in
+                                       ((_d.get("signal_rule") or {}).get("bands") or {}).items()},
+                        "AUC": (_d.get("test") or {}).get("auc_calibrated"),
+                        "说明": "看多=当日这批里前 10%；中间 80% 无信号；它是统计参考不是指令"}
+        except Exception:
+            pass
+        return {"as_of": out.get("as_of"), "小模型": out.get("rows"),
+                "参照系": out.get("reference"), "样本外成绩": meta, "note": out.get("note")}
+
+    def sys1_candidates(self, top: int = 20) -> dict:
+        """让小模型从**当前流动性池**里挑出它最看好的 top 只（可按需当起点，再自己核实）。"""
+        from . import sys1_xsec as X
+        from ..alpha import panel as P
+        import datetime as _dt
+        as_of = self.trade_date or _dt.date.today().isoformat()
+        try:
+            uni = P.pick_universe(limit=400, as_of=as_of)
+        except Exception as e:
+            return {"error": f"取池失败: {str(e)[:80]}"}
+        out = X.predict(uni, as_of=as_of)
+        if out.get("error"):
+            return out
+        rows = [r for r in (out.get("rows") or []) if r.get("signal") == "看多"][: int(top or 20)]
+        return {"as_of": out.get("as_of"), "池": f"流动性前 {len(uni)} 只", "数量": len(rows),
+                "候选": rows,
+                "note": "这是小模型的**横截面排序**结果（不是买入清单）："
+                        "它只回答'这批里谁相对强'，买不买、买多少仍由你决定并说明理由。"}
+
     def get_candidates(self, top: int = 10) -> dict:
         src = str(getattr(self, "scoring", "scorecard") or "scorecard")
         if self.trade_date:
@@ -535,6 +587,24 @@ TOOL_SPECS = [
             "kind": {"type": "string", "enum": ["thesis", "style", "lesson", "note", "market"]},
             "code": {"type": "string", "description": "相关股票代码（thesis 填）"}},
             "required": ["content"]}}},
+    {"type": "function", "function": {
+        "name": "get_sys1_view",
+        "description": ("小模型（System 1 横截面模型）对指定股票给出的「未来 5 日跑赢等权池」**校准概率**"
+                        "与截面分位信号。样本外：Top10% 组 5 日平均超额 +0.195%（固定因子组合 +0.148%），"
+                        "分位分层单调（后 10% 组 -0.601%）。它是**统计参考不是指令**，"
+                        "信号口径为截面分位（看多=这批前 10%，中间 80% 无信号）。"),
+        "parameters": {"type": "object", "properties": {
+            "codes": {"type": "array", "items": {"type": "string"},
+                      "description": "要评估的股票代码列表，如 [\"600036\", \"000001\"]"}},
+            "required": ["codes"]}}},
+    {"type": "function", "function": {
+        "name": "sys1_candidates",
+        "description": ("让小模型从当前**流动性池**（约 400 只）里按其横截面概率挑出最看好的若干只。"
+                        "适合在你自己没有思路时当**起点**：拿到名单后仍需你用结构/基本面核实并说明理由。"
+                        "注意它不择时（预测大盘方向的能力已被证伪），只做横截面排序。"),
+        "parameters": {"type": "object", "properties": {
+            "top": {"type": "integer", "description": "取前几只（默认 20）"}},
+            "required": []}}},
     {"type": "function", "function": {
         "name": "submit_decision",
         "description": ("结束今日决策并记录你的思考与复盘。交易已通过 place_order 完成，"

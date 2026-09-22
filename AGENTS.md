@@ -71,6 +71,8 @@ Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
 | `structure.py` | **价格结构特征**（程序算的客观事实，借鉴 market_features）：区间位置与区位、区间宽度×ATR、距上下沿×ATR、波段结构（HH+HL / LH+LL / 区间）、自极点回撤×ATR、**突破质量**（none/wick_probe/close_breakout/failed/testing/surviving/broke_down）、重叠率与**铁丝网分数**、距 MA20×ATR；`compute_cached()` 进程内缓存 |
 | `bars.py` | **K 线几何特征**（棒级，判买入/卖出时点）：形态分类（inside/outside/doji/trend bull-bear）、实体与影线占比、收盘位置、与前棒重叠、**微双底 MDB/微双顶 MDT**、内-外-内 IOI、相对 EMA20 跳空棒、对前 5 棒区间突破、**信号棒跟随 follow-through**（yes/failed/no）、**H1/H2/L1/L2 计数**（含"信号棒偏弱"标记） |
 | `routing.py` | **结构分类路由**（借鉴 pattern_routing + Al Brooks 策略手册）：把程序事实归成 上升回踩/上升突破/区间上沿/区间下沿/区间中部粘滞/下降破位/突破失败/急涨/不明 九类，每类附「常见处理/主要风险」；提示里写入手册的量化规律（影线试探失败率 70~80%、存活突破约 60% 走到区间高度、铁丝网优先级高于入场信号）；接入上下文、`screen_stocks` 标签、`get_stock_factors` |
+| `sys1.py` | **System 1 实验（时序）**：次日大盘方向预测（13 特征：指数动量/位置/均线距离/ATR/波动/量比/全市场广度/北向），逻辑回归+HGB，**时间序列样本外**（训练≤2021、测试 2022+ 1143 天）。结论：**小模型命中 34~35% vs 多数类基线 38.9% —— 谁都做不好**；HGB 原始 ECE 0.306（温度 3.0 后才 0.115）；弃权门控几乎换不来命中率。产出接进模型上下文当**认知护栏**（"连小模型都做不到，你的高置信同样可疑"） |
+| `sys1_xsec.py` | **System 1 横截面头（有赢面那个）**：预测「未来 N 日跑赢等权池」的概率，39 因子 + HGB + **三段切分**（训练≤2022/校准 2023/测试 2024+）；保序回归校准（ECE 0.019→0.010）；实测**排序用 raw 概率**（保序是阶梯函数会并列退化）、**信号口径必须是截面分位**（绝对概率带 [0.45,0.55] 实测反向：有信号组超额更低）。样本外 654 天：Top10% 组 5 日超额 **+0.265%**（56.9% 日子为正）vs 固定因子组合 +0.148%；分位分层单调（+0.265/+0.139/+0.039/-0.188/-0.389）→ **排序可信、择时不可信**。持久化 `data/sys1_xsec.pkl` |
 | `coherence.py` | **决策自洽性校验**（借鉴 coherence_checks）：预测 vs 委托方向、说法 vs 实际委托、买单是否在 thinking 里被提到、账户事实粗交叉；**提示而非拒绝**，随决策落库并前端展示 |
 | `continuity.py` | **决策连续性**（借鉴 decision_continuity）：挂单前提失效判定（买单市价高于挂单价 ≥3×ATR 或结构跌破箱体下沿 → "前提已变"，只提示不强制撤）+ 上轮立场关系（首单/同向/反手/延续等待，A股"反手"=清仓后又买回） |
 | `calibration.py` | **预测校准**（借鉴 Laya 的 RLCD/temperature scaling）：ECE、可靠性曲线、温度拟合（一维逻辑回归，校准后 ECE）、**区分度**（高/低置信组命中率之差，<5pp 则明说"别拿置信度当门槛"）、**门槛建议**（lift <10pp 不建议硬门槛）；样本 <20 条标注不可下结论。设计原则来自 Laya 的教训：**置信度不是概率（要拟合），且模型读不懂输入时置信度不会报警 → 输入校验必须放在模型之前**（我们的 G0/G1/G3 正是如此） |
@@ -81,6 +83,7 @@ Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
 - **规则归系统**: 本金固定与 A 股规则**不写进提示词**，由 TradeEngine 强制执行，违规返回错误让模型自行调整（像用券商软件）。
 - **风格自定**: 无预设人设；AI 把自我认知写入 `kind='style'` 长期记忆（同类只保留最新 active），持仓逻辑 `kind='thesis'`，另有 `lesson`/`note`/`market`。
 - **触发**: `update_daily.py` 第⑨步（对每个 enabled 档案逐个跑）+ `/api/trader/run`（单交易员）/ `/api/trader/run-all`（全部启用）。
+- **小模型协同**：工具 `sys1_candidates(top)`（小模型从流动性前 400 只里挑横截面最强的当起点）+ `get_sys1_view(codes)`（查关注票的"跑赢等权池"概率 + 全场分位信号）；SYSTEM 里写明"排序可信、择时不可信，参考不是指令"。API `/api/trader/sys1`（时序实验）与 `/api/trader/sys1_xsec`（横截面成绩，带 `codes=` 可现算）。
 - **API**: `/api/trader/{profiles,overview,state,profile,decisions,memory,run,run-all,news,selection,performance,rules,outlook}`（state/decisions/memory/run 按 `profile_id`；`selection` 支持 `date=` 按历史日 as-of 审计选股口径、`weights=` 覆盖评分口径；`performance` 返回战绩明细；`rules` 返回生效纪律规则与兜底保护参数）。
 - **自我提升闭环**: 模型上下文有「你的战绩」（真实胜率/回撤/盈亏比/连势），先看数据再决定是否改变打法；每 3 个交易日 / 回撤≥8% / **单笔平仓亏损≥5%** 触发强制自省，把战绩+逐日决策原文交给 LLM，产出 `self_critique`/`lessons`/`style`/**`rules`**，存 `trader_decision.review` 并写入 `kind='lesson'/'style'/'rule'` 长期记忆。前端「战绩与自我提升」面板 + 每日「选股依据·候选池」「自我复盘」卡片。
 - **自省变硬约束（两层）**: ①下单路径 —— 生效规则由 `discipline.check_buy()` 在 `place_order/preview_order` 前检查，违规直接拒绝并返回券商式原因（模型只能调整）；②持仓保护 —— 每日决策后 `enforce_protection()` 对未平仓持仓做兜底止损/移动止损，模型不卖的由系统卖（回放与实盘 `run_daily_decision` 同一套）。规则可带有效期（默认 5 交易日）自动过期，且只能比系统兜底更严。

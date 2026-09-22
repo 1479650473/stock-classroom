@@ -368,6 +368,35 @@ def sys1_report():
                "models": d.get("models"), "latest": d.get("latest"), "note": d.get("note")})
 
 
+@bp.route("/sys1_xsec", methods=["GET"])
+def sys1_xsec_report():
+    """小模型（System 1 横截面头）的样本外成绩；带 codes= 时顺便现算这几只票的概率。
+
+    它是**统计参考不是指令**：样本外 Top10% 的 5 日平均超额 +0.265%（同期固定因子组合 +0.148%），
+    分位分层单调（后 10% 组 -0.389%）。信号口径是截面分位（看多=前 10%，中间 80% 无信号）。
+    """
+    import json as _json
+    import os as _os
+    from ..paths import DATA_DIR as _DD
+    p = _os.path.join(str(_DD), "sys1_xsec.json")
+    if not _os.path.exists(p):
+        return ok({"hint": "尚未训练：python -m backend.trader.sys1_xsec"})
+    with open(p, encoding="utf-8") as f:
+        d = _json.load(f)
+    out = {"meta": d.get("meta"), "test": d.get("test"), "deciles": d.get("deciles"),
+           "signal_rule": d.get("signal_rule"), "baseline_composite": d.get("baseline_composite"),
+           "note": d.get("note")}
+    codes = (request.args.get("codes") or "").strip()
+    if codes:
+        try:
+            from ...trader import sys1_xsec as X
+            cs = [c.strip() for c in codes.split(",") if c.strip()][:100]
+            out["live"] = X.predict(cs)
+        except Exception as e:
+            out["live"] = {"error": str(e)[:150]}
+    return ok(out)
+
+
 @bp.route("/performance", methods=["GET"])
 def performance():
     """交易员战绩：胜率/盈亏比/回撤/最近已平仓交易（自我提升的依据）。"""
