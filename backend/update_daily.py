@@ -434,6 +434,12 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
                 _mkt['sector_board'] = cache_sector_board_from_akshare()
             except Exception as e:
                 _mkt['sector_board'] = 'err: %s' % str(e)[:50]
+            # 实时快照缓存(stock_cache.db stock_spot, 前端实时行情回退用)
+            try:
+                from data_manager import cache_spot_from_akshare
+                _mkt['spot'] = cache_spot_from_akshare()
+            except Exception as e:
+                _mkt['spot'] = 'err: %s' % str(e)[:50]
             out['steps']['market_data'] = _mkt
             lg.info('  收盘后市场数据: %s', _mkt)
         except Exception as e:

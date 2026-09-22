@@ -796,66 +796,75 @@ def _get_cache_db():
 
 
 def cache_spot_from_akshare():
-    """Cache A-share spot data from AKShare into stock_spot table"""
+    """缓存全市场实时快照到 stock_spot(东财优先, 反爬时回退新浪直连)."""
     import akshare as ak
-    import pandas as pd
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    rows = []
+    # ① 东财实时快照
     try:
         df = ak.stock_zh_a_spot_em()
-        if df is None or df.empty:
-            log.warning("AKShare spot empty, skipping cache")
-            return 0
-        col_map = {
-            "代码": "code", "名称": "name",
-            "最新价": "price", "涨跌幅": "change_pct",
-            "涨跌额": "change_amount", "成交量": "volume",
-            "成交额": "amount", "振幅": "amplitude",
-            "最高": "high", "最低": "low",
-            "今开": "open", "昨收": "pre_close",
-            "换手率": "turnover", "市盈率-动态": "pe",
-            "市净率": "pb", "总市值": "total_mv",
-            "流通市值": "circ_mv",
-        }
-        df = df.rename(columns=col_map)
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        rows = []
-        for _, row in df.iterrows():
-            try:
-                rows.append((
-                    str(row.get("code", "")),
-                    str(row.get("name", "")),
-                    float(row.get("price", 0) or 0),
-                    float(row.get("open", 0) or 0),
-                    float(row.get("high", 0) or 0),
-                    float(row.get("low", 0) or 0),
-                    int(float(row.get("volume", 0) or 0)),
-                    float(row.get("amount", 0) or 0),
-                    float(row.get("change_pct", 0) or 0),
-                    float(row.get("change_amount", 0) or 0),
-                    float(row.get("turnover", 0) or 0),
-                    float(row.get("pe", 0) or 0),
-                    float(row.get("pb", 0) or 0),
-                    float(row.get("total_mv", 0) or 0),
-                    float(row.get("circ_mv", 0) or 0),
-                    now,
-                ))
-            except (ValueError, TypeError):
-                continue
-        conn = _get_cache_db()
-        conn.executemany(
-            """INSERT OR REPLACE INTO stock_spot
-            (code, name, price, open, high, low, volume, amount,
-             change_pct, change_amount, turnover, pe, pb, total_mv, circ_mv, updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            rows,
-        )
-        conn.commit()
-        conn.close()
-        count = len(rows)
-        log.info("cached %d spots at %s", count, now)
-        return count
+        if df is not None and not df.empty:
+            col_map = {
+                "代码": "code", "名称": "name",
+                "最新价": "price", "涨跌幅": "change_pct",
+                "涨跌额": "change_amount", "成交量": "volume",
+                "成交额": "amount", "振幅": "amplitude",
+                "最高": "high", "最低": "low",
+                "今开": "open", "昨收": "pre_close",
+                "换手率": "turnover", "市盈率-动态": "pe",
+                "市净率": "pb", "总市值": "total_mv",
+                "流通市值": "circ_mv",
+            }
+            df = df.rename(columns=col_map)
+            for _, row in df.iterrows():
+                try:
+                    rows.append((
+                        str(row.get("code", "")), str(row.get("name", "")),
+                        float(row.get("price", 0) or 0), float(row.get("open", 0) or 0),
+                        float(row.get("high", 0) or 0), float(row.get("low", 0) or 0),
+                        int(float(row.get("volume", 0) or 0)), float(row.get("amount", 0) or 0),
+                        float(row.get("change_pct", 0) or 0), float(row.get("change_amount", 0) or 0),
+                        float(row.get("turnover", 0) or 0), float(row.get("pe", 0) or 0),
+                        float(row.get("pb", 0) or 0), float(row.get("total_mv", 0) or 0),
+                        float(row.get("circ_mv", 0) or 0), now,
+                    ))
+                except (ValueError, TypeError):
+                    continue
     except Exception as e:
-        log.warning("cache spot failed: %s", str(e)[:80])
+        log.warning("cache spot(东财) failed: %s", str(e)[:60])
+    # ② 新浪直连回退(无 pe/pb/市值)
+    if not rows:
+        try:
+            conn = get_kline_db()
+            codes = [(str(r[0]), str(r[1])) for r in conn.execute(
+                "SELECT code, name FROM stock_list WHERE status='active'")]
+            conn.close()
+            quotes = fetch_realtime_prices(codes)
+            for q in quotes:
+                rows.append((
+                    str(q.get("code", "")), str(q.get("name", "")),
+                    float(q.get("price", 0) or 0), float(q.get("open", 0) or 0),
+                    float(q.get("high", 0) or 0), float(q.get("low", 0) or 0),
+                    int(q.get("volume", 0) or 0), float(q.get("amount", 0) or 0),
+                    float(q.get("change_pct", 0) or 0), 0.0,
+                    float(q.get("turnover", 0) or 0), 0.0, 0.0, 0.0, 0.0, now,
+                ))
+        except Exception as e:
+            log.warning("cache spot(新浪) failed: %s", str(e)[:60])
+    if not rows:
         return 0
+    conn = _get_cache_db()
+    conn.executemany(
+        """INSERT OR REPLACE INTO stock_spot
+        (code, name, price, open, high, low, volume, amount,
+         change_pct, change_amount, turnover, pe, pb, total_mv, circ_mv, updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        rows,
+    )
+    conn.commit()
+    conn.close()
+    log.info("cached %d spots at %s", len(rows), now)
+    return len(rows)
 
 def cache_sectors_from_akshare():
     """Cache industry/concept sector data from AKShare"""
