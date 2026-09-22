@@ -173,10 +173,17 @@ def build_gates(profile_id: int, account_id: int, as_of: str,
             held = disc._trading_gap(str(p.get("last_buy_date") or as_of), as_of)
         except Exception:
             held = None
+        struct = {}
+        try:
+            from . import structure as st_mod
+            struct = st_mod.compute_cached(code, as_of)
+        except Exception:
+            struct = {}
         row = {"code": code, "name": p.get("name") or code, "qty": p.get("qty"),
                "浮亏%": round(pnl_pct, 2) if pnl_pct is not None else None,
                "距峰值%": round(from_peak, 2) if from_peak is not None else None,
                "持有交易日": held, "系统标记": flags,
+               "结构": st_mod.render(struct, "") if struct.get("ok") else "结构数据不足",
                "你的逻辑": (p.get("thesis") or "")[:80]}
         rows.append(row)
         if flags:
@@ -187,9 +194,37 @@ def build_gates(profile_id: int, account_id: int, as_of: str,
                   "note": ("以下持仓已触发系统保护条件，收盘会被强制卖出（你也可以现在自己卖）："
                            + " / ".join(must_handle)) if must_handle else ""})
 
+    # ── G2b 挂单前提（限价单是"当时的想法"，几根 K 线后前提可能已变） ──
+    pend_assess = []
+    try:
+        from . import continuity as cont_mod
+        pend_assess = cont_mod.assess_pending(account.get("pending_orders") or [], as_of,
+                                              price_fn=price_fn)
+    except Exception:
+        pend_assess = []
+    stale = [x for x in pend_assess if not x.get("建议保留")]
+    gates.append({"id": "G2b", "title": "挂单前提", "kind": "code",
+                  "status": "warn" if stale else "info",
+                  "facts": {"在途委托": len(pend_assess), "前提可能已变": len(stale),
+                            "评估": pend_assess},
+                  "note": ("以下挂单的前提可能已变，建议撤单或说明继续保留的理由："
+                           + "；".join(f"{x['code']} {x['note']}" for x in stale)) if stale else ""})
+
     # ── G3 市场环境 ──
+    idx_struct, idx_text = {}, ""
+    try:
+        from . import structure as st_mod
+        idx_struct = st_mod.compute_cached("sh000300", as_of)
+        idx_text = st_mod.render(idx_struct, "沪深300") if idx_struct.get("ok") else ""
+    except Exception:
+        idx_struct, idx_text = {}, ""
+    g3_facts = dict(regime or {})
+    if idx_struct.get("ok"):
+        g3_facts["沪深300结构"] = {k: idx_struct.get(k) for k in
+                                   ("position", "zone", "swing_structure", "breakout_quality",
+                                    "dist_high_atr", "dist_low_atr", "gap_ma20_atr", "barbwire")}
     gates.append({"id": "G3", "title": "市场环境", "kind": "code", "status": "info",
-                  "facts": regime or {}, "note": ""})
+                  "facts": g3_facts, "note": idx_text})
 
     # ── M4 选股依据（模型） ──
     gates.append({"id": "M4", "title": "选股依据", "kind": "model",
@@ -235,10 +270,17 @@ def build_gates(profile_id: int, account_id: int, as_of: str,
                 else f"持仓 {len(g['facts'].get('明细') or [])} 只"
             lines.append(f"· {g['id']} {g['title']}[系统·{g['status']}] {facts}"
                          + (f" —— {g['note']}" if g["note"] else ""))
+            if g["id"] == "G2b" and g["facts"].get("评估"):
+                for x in g["facts"]["评估"]:
+                    lines.append(f"    - 挂单 {x['code']} {x['side']} @{x['price']} "
+                                 f"市价 {x['市价']} → {'可保留' if x['建议保留'] else '前提已变'}"
+                                 + (f"（{x['note']}）" if x["note"] else ""))
             if g["title"] == "持仓处置" and g["facts"].get("明细"):
                 for r in g["facts"]["明细"]:
                     lines.append(f"    - {r['code']} {r['name']} 浮亏{r['浮亏%']}% 距峰值{r['距峰值%']}% "
                                  f"持有{r['持有交易日']}日" + (f" ⚠{('；'.join(r['系统标记']))}" if r["系统标记"] else ""))
+                    if r.get("结构"):
+                        lines.append(f"      {r['结构']}")
         else:
             lines.append(f"· {g['id']} {g['title']}[你] {g['note']}")
     if blocked:

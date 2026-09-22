@@ -171,7 +171,11 @@ class TraderTools:
         return _s.screen(self.trade_date, filters, sort_by, ascending, limit)
 
     def get_stock_factors(self, code: str) -> dict:
-        """单只股票的可用指标（流通市值/涨跌幅/换手/振幅/波动/位置/ST代理）。"""
+        """单只股票的可用指标（市值/涨跌幅/换手/振幅/波动/位置/ST代理）+ **价格结构特征**。
+
+        结构特征（区间位置、波段结构、突破质量、回撤×ATR、粘滞度）由程序按 as-of 计算，
+        属于"客观事实"——你直接引用即可，不需要自己数 K 线。
+        """
         from . import screen as _s
         out = _s.factors_of(code, self.trade_date)
         if out.get("name") == "" and not out.get("error"):
@@ -180,6 +184,20 @@ class TraderTools:
                 out["name"] = _name_of(code)
             except Exception:
                 pass
+        try:
+            from . import structure as _st
+            import datetime as _dt
+            as_of = self.trade_date or _dt.date.today().isoformat()
+            d = _st.compute_cached(code, as_of)
+            if d.get("ok"):
+                out["结构"] = {k: d.get(k) for k in
+                              ("position", "zone", "range_high", "range_low", "range_width_atr",
+                               "dist_high_atr", "dist_low_atr", "swing_structure", "pullback_atr",
+                               "breakout_quality", "overlap_mean_10", "barbwire_score", "barbwire",
+                               "gap_ma20_atr")}
+                out["结构说明"] = _st.render(d, "")
+        except Exception:
+            pass
         return out
 
     def get_candidates(self, top: int = 10) -> dict:

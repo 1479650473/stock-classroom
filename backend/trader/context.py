@@ -293,8 +293,21 @@ def build_memory_block(profile_id: int, positions: List[dict], limit: int = 10,
     same = [n for n in notes_all if cur_regime and n["regime"] == cur_regime]
     other = [n for n in notes_all if not (cur_regime and n["regime"] == cur_regime)]
     notes_sorted = (same + other)[:12]
+    # 上轮立场关系（首单/同向/反手/延续等待）：提示模型别来回横跳
+    continuity = {}
+    try:
+        from . import continuity as cont_mod
+        done = [d for d in store.list_decisions(profile_id, limit=4) if d.get("status") == "done"]
+        if done:
+            continuity = cont_mod.relation_of(done[0], done[1] if len(done) > 1 else None)
+            continuity["上一轮操作"] = [f"{o.get('side')}{o.get('name') or o.get('code')}"
+                                       for o in (done[0].get("plan") or [])][:6]
+            continuity["上一轮净值"] = done[0].get("nav_after")
+    except Exception:
+        continuity = {}
     return {
         "self_style": style,
+        "continuity": continuity,
         "history_note": "近 3 个交易日逐条详细（含委托与结果）；更早的日子只给摘要"
                         "（日期/操作/净值/复盘一句）——需要细节用工具查或问自己写下的记忆。",
         "regime_bucket": {"当前环境": cur_regime or "未知",
