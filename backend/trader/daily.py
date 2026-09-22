@@ -31,6 +31,21 @@ def _emit(progress, msg: str, pct: Optional[int] = None):
         pass
 
 
+def _cur_regime(ctx: Optional[dict]) -> str:
+    """当前市场环境（写记忆时打桶用）。"""
+    try:
+        m = (ctx or {}).get("market") or {}
+        if isinstance(m, dict):
+            r = m.get("regime")
+            if isinstance(r, dict):
+                return str(r.get("regime") or r.get("regime_cn") or "")[:20]
+            if r:
+                return str(r)[:20]
+    except Exception:
+        pass
+    return ""
+
+
 def run_daily_decision(profile_id: Optional[int] = None, trigger: str = "manual",
                        force: bool = False, dry_run: bool = False,
                        with_candidates: bool = True, with_news: bool = True,
@@ -128,7 +143,8 @@ def run_daily_decision(profile_id: Optional[int] = None, trigger: str = "manual"
     for n in result.get("notes") or []:
         if n.get("content"):
             store.add_memory(pid, n["content"], kind=n.get("kind", "note"),
-                             code=n.get("code") or "", decision_id=decision_id)
+                             code=n.get("code") or "", decision_id=decision_id,
+                             regime=_cur_regime(ctx))
 
     # 收盘兜底保护：模型不卖的，系统按纪律规则强制卖（止损/移动止损）
     if not dry_run:
@@ -208,9 +224,9 @@ def _maybe_review(pid: int, trade_date: str, profile: dict,
         _emit(progress, rev["error"])
         return rev
     for lesson in rev.get("lessons") or []:
-        store.add_memory(pid, lesson, kind="lesson")
+        store.add_memory(pid, lesson, kind="lesson", regime=_cur_regime(ctx))
     if rev.get("style"):
-        store.add_memory(pid, rev["style"], kind="style")
+        store.add_memory(pid, rev["style"], kind="style", regime=_cur_regime(ctx))
     rules = rev.get("rules") or []
     if rules:
         try:

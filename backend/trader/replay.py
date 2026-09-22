@@ -192,38 +192,39 @@ def _candidates_block(as_of: str, top_n: int = 12, weights=None, source: str = "
 
 def _memory_block(profile_id: int, positions: list, account_id: int = 0,
                   as_of: Optional[str] = None) -> dict:
-    decisions = store.list_decisions(profile_id, limit=6)
+    """回放记忆块：委托给 context.build_memory_block（同一套压缩 + regime 分桶）。
+
+    早期这里是复制粘贴的第二份实现（未压缩、无分桶），两条路径的行为会漂移 —— 统一掉。
+    """
+    from . import context as ctx_mod
+    regime = ""
+    try:
+        r = _regime_asof(as_of) if as_of else {}
+        regime = str((r or {}).get("regime_cn") or (r or {}).get("regime") or "")[:20]
+    except Exception:
+        regime = ""
+    try:
+        blk = ctx_mod.build_memory_block(
+            int(profile_id), positions or [], account_id=int(account_id) or None,
+            as_of=as_of, regime=regime)
+    except Exception as e:
+        return {"self_style": "", "recent_decisions": [], "holding_theses": [],
+                "your_performance": {}, "notes": [], "error": str(e)[:120]}
+    # 回放需要 as-of 截断：只保留 <= as_of 的决策（实盘路径无需）
     if as_of:
-        decisions = [d for d in decisions if (d.get("trade_date") or "") <= as_of]
-    history = [{"date": d["trade_date"], "thinking": (d.get("thinking") or "")[:500],
-                "reflection": (d.get("reflection") or "")[:200],
-                "orders": d.get("plan") or [], "executions": d.get("executions") or [],
-                "nav_after": d.get("nav_after")}
-               for d in decisions if d.get("status") == "done"]
-    mem = store.list_memory(profile_id, active_only=True, limit=80)
-    theses, style, stages, notes = {}, "", [], []
-    for m in mem:
-        if m["kind"] == "thesis" and m.get("code") and m["code"] not in theses:
-            theses[m["code"]] = m["content"]
-        elif m["kind"] == "style" and not style:
-            style = m["content"]
-        elif m["kind"] == "stage":
-            stages.append({"content": m["content"], "at": m["created_at"]})
-        elif m["kind"] not in ("thesis", "style"):
-            notes.append({"kind": m["kind"], "code": m.get("code") or "",
-                          "content": m["content"], "at": m["created_at"]})
-    held = [{"code": p["code"], "name": p["name"], "thesis": theses.get(p["code"], "")}
-            for p in positions]
-    perf = {}
-    if account_id:
-        try:
-            from .performance import performance_block
-            perf = performance_block(int(profile_id), int(account_id), as_of=as_of)
-        except Exception:
-            perf = {}
-    return {"self_style": style, "recent_decisions": history, "holding_theses": held,
-            "your_performance": perf,
-            "stage_summaries": stages[:3], "notes": notes[:20]}
+        blk["recent_decisions"] = [d for d in (blk.get("recent_decisions") or [])
+                                   if str(d.get("date") or "") <= str(as_of)]
+    return blk
+
+
+def _replay_regime(ctx: Optional[dict]) -> str:
+    """回放：从上下文里取当日 regime（写记忆打桶用）。"""
+    try:
+        m = (ctx or {}).get("market") or {}
+        r = (m.get("regime") or {}) if isinstance(m, dict) else {}
+        return str(r.get("regime_cn") or r.get("regime") or "")[:20]
+    except Exception:
+        return ""
 
 
 def build_replay_context(profile: dict, as_of: str) -> dict:
@@ -485,7 +486,8 @@ def run_replay_batch(run_id: int, days: int = MAX_BATCH,
         for n in result.get("notes") or []:
             if n.get("content"):
                 store.add_memory(pid, n["content"], kind=n.get("kind", "note"),
-                                 code=n.get("code") or "", decision_id=decision_id)
+                                 code=n.get("code") or "", decision_id=decision_id,
+                                 regime=_replay_regime(ctx))
         done += 1
         # 5b) 当日结算事件（前端据此刷新净值/持仓/曲线 + 渲染结算卡片）
         pos_rows = engine.get_positions(account_id)
@@ -525,9 +527,11 @@ def run_replay_batch(run_id: int, days: int = MAX_BATCH,
                     _event(progress, {"event": "warning", "date": d, "message": rev["error"]})
                 else:
                     for lesson in rev.get("lessons") or []:
-                        store.add_memory(pid, lesson, kind="lesson", decision_id=decision_id)
+                        store.add_memory(pid, lesson, kind="lesson", decision_id=decision_id,
+                                         regime=_replay_regime(ctx))
                     if rev.get("style"):
-                        store.add_memory(pid, rev["style"], kind="style", decision_id=decision_id)
+                        store.add_memory(pid, rev["style"], kind="style", decision_id=decision_id,
+                                         regime=_replay_regime(ctx))
                     rules = rev.get("rules") or []
                     if rules:
                         from .discipline import save_rules

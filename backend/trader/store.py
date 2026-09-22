@@ -112,6 +112,10 @@ def ensure_schema() -> None:
         if "expired" not in cols:
             # 系统撤销的超时挂单（挂单超时规则），与 rejections（纪律拦截）分开记录
             con.execute("ALTER TABLE trader_decision ADD COLUMN expired TEXT DEFAULT '[]'")
+        mcols = {r[1] for r in con.execute("PRAGMA table_info(trader_memory)")}
+        if "regime" not in mcols:
+            # 经验按市场环境分桶（牛/熊/震荡）：检索时优先注入"当前同类环境"下的经验
+            con.execute("ALTER TABLE trader_memory ADD COLUMN regime TEXT DEFAULT ''")
         pcols = {r[1] for r in con.execute("PRAGMA table_info(trader_profile)")}
         if "model" not in pcols:
             con.execute("ALTER TABLE trader_profile ADD COLUMN model TEXT DEFAULT ''")
@@ -287,7 +291,8 @@ def upsert_decision(profile_id: int, trade_date: str, **fields) -> dict:
 # ───────────────────────── memory ─────────────────────────
 
 def add_memory(profile_id: int, content: str, kind: str = "note",
-               code: str = "", decision_id: Optional[int] = None) -> int:
+               code: str = "", decision_id: Optional[int] = None,
+               regime: str = "") -> int:
     con = get_conn()
     try:
         # thesis=当前持仓逻辑；style=当前自我认知 —— 同类只保留最新一条 active，历史保留
@@ -303,9 +308,9 @@ def add_memory(profile_id: int, content: str, kind: str = "note",
                     "WHERE profile_id=? AND kind='style' AND active=1",
                     (profile_id,))
         cur = con.execute(
-            "INSERT INTO trader_memory (profile_id, kind, code, content, decision_id) "
-            "VALUES (?,?,?,?,?)",
-            (profile_id, kind, code, content, decision_id))
+            "INSERT INTO trader_memory (profile_id, kind, code, content, decision_id, regime) "
+            "VALUES (?,?,?,?,?,?)",
+            (profile_id, kind, code, content, decision_id, str(regime or "")[:20]))
         con.commit()
         return cur.lastrowid
     finally:

@@ -236,7 +236,8 @@ def _ops_summary(plan: list, executions: list) -> str:
 
 def build_memory_block(profile_id: int, positions: List[dict], limit: int = 10,
                        account_id: Optional[int] = None,
-                       as_of: Optional[str] = None) -> dict:
+                       as_of: Optional[str] = None,
+                       regime: str = "") -> dict:
     """历史决策：**近 3 日详细 + 更早压缩成一行**（增量复用思路）。
 
     每天都是一次全新对话，无法"只传增量"，所以省 token 的正确做法是压缩：
@@ -283,17 +284,28 @@ def build_memory_block(profile_id: int, positions: List[dict], limit: int = 10,
             perf = performance_block(int(profile_id), int(account_id), as_of=as_of)
         except Exception:
             perf = {}
+    # 经验分桶：当前环境下的经验优先（熊市里最该看的是熊市教训，不是牛市心得）
+    cur_regime = str(regime or "")[:20]
+    notes_all = [{"kind": m["kind"], "code": m.get("code") or "",
+                  "content": (m["content"] or "")[:220], "at": m["created_at"],
+                  "regime": m.get("regime") or ""}
+                 for m in mem if m["kind"] not in ("thesis", "style", "rule")]
+    same = [n for n in notes_all if cur_regime and n["regime"] == cur_regime]
+    other = [n for n in notes_all if not (cur_regime and n["regime"] == cur_regime)]
+    notes_sorted = (same + other)[:12]
     return {
         "self_style": style,
         "history_note": "近 3 个交易日逐条详细（含委托与结果）；更早的日子只给摘要"
                         "（日期/操作/净值/复盘一句）——需要细节用工具查或问自己写下的记忆。",
+        "regime_bucket": {"当前环境": cur_regime or "未知",
+                          "同环境经验条数": len(same),
+                          "说明": "经验已按市场环境分桶：标 regime 的条目是写下时所处的环境，"
+                                  "同环境经验排在最前，跨环境经验参考价值较低。"},
         "recent_decisions": history,
         "holding_theses": held,
         "your_performance": perf,
         "discipline_rules": _rules_block(int(profile_id), as_of),
-        "notes": [{"kind": m["kind"], "code": m.get("code") or "",
-                   "content": (m["content"] or "")[:220], "at": m["created_at"]}
-                  for m in mem if m["kind"] not in ("thesis", "style", "rule")][:12],
+        "notes": notes_sorted,
     }
 
 
@@ -341,8 +353,14 @@ def build_daily_context(profile: dict, with_candidates: bool = True,
                  if with_candidates else {"picks": [], "events": []})
     news_block = (build_news_block(acct["positions"], cands.get("picks", []))
                   if with_news else {"market": [], "stocks": []})
+    _reg = ""
+    try:
+        _r = (market or {}).get("regime") if isinstance(market, dict) else {}
+        _reg = str((_r.get("regime_cn") or _r.get("regime")) if isinstance(_r, dict) else _r or "")[:20]
+    except Exception:
+        _reg = ""
     memory = build_memory_block(int(profile["id"]), acct["positions"],
-                                account_id=int(profile["account_id"]))
+                                account_id=int(profile["account_id"]), regime=_reg)
     # 编号决策协议（系统闸门已判定，模型只回答 [你] 的闸门）
     protocol_block = {}
     try:

@@ -480,6 +480,8 @@ export interface TraderDecision {
 export interface TraderMemory {
   id: number; profile_id: number; kind: string; code: string
   content: string; active: number; created_at: string; decision_id?: number
+  /** 写下这条经验时的市场环境（牛/熊/震荡），用于按环境分桶检索 */
+  regime?: string
 }
 export interface TraderReplayMeta {
   source_profile_id: number; source_name: string; start_date: string

@@ -479,6 +479,7 @@ function toolLine(t: { tool: string; args?: Record<string, unknown>; error?: str
           <div v-for="m in memory" :key="m.id" class="mem__item" :class="{ 'is-off': !m.active }">
             <div class="mem__head">
               <span v-if="m.code" class="mem__code">{{ m.code }}</span>
+              <span v-if="m.regime" class="memregime" :title="`写下这条经验时的市场环境：${m.regime}`">{{ m.regime }}</span>
               <span class="mem__time">{{ m.created_at }}</span>
               <button class="mem__toggle" @click="toggleMem(m)">{{ m.active ? '停用' : '恢复' }}</button>
             </div>
@@ -617,4 +618,16 @@ textarea.ui-input { resize: vertical; font-family: inherit; }
 .hard__list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
 .hard__list li { font-size: var(--fs-sm); line-height: 1.6; color: var(--text); }
 .hard__note { margin: 10px 0 0; font-size: var(--fs-xs); color: var(--text-faint); line-height: 1.6; }
+
+/* 记忆条目的市场环境标签（经验按环境分桶） */
+.memregime {
+  flex: none;
+  padding: 0 6px;
+  height: 18px;
+  line-height: 18px;
+  border-radius: var(--radius-pill);
+  background: var(--gold-dim);
+  color: var(--gold);
+  font-size: 10px;
+}
 </style>
