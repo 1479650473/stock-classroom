@@ -83,6 +83,7 @@ Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
 - **规则归系统**: 本金固定与 A 股规则**不写进提示词**，由 TradeEngine 强制执行，违规返回错误让模型自行调整（像用券商软件）。
 - **风格自定**: 无预设人设；AI 把自我认知写入 `kind='style'` 长期记忆（同类只保留最新 active），持仓逻辑 `kind='thesis'`，另有 `lesson`/`note`/`market`。
 - **触发**: `update_daily.py` 第⑨步（对每个 enabled 档案逐个跑）+ `/api/trader/run`（单交易员）/ `/api/trader/run-all`（全部启用）。
+- **小模型协同实验结论（3 个，含 2 个负结论，别重复踩）**：取交易员账户 181 笔真实买入逐笔检验「小模型当第二意见」——① ✓ 它池内排序有效（600 只池 Top10% 组 5 日超额 +0.231% vs 固定因子组合 +0.208%，分层单调）；② ✗ **不能用它评审 LLM 的选择**（它的分位与 LLM 买入的 5 日结果相关 **-0.291**，最看好组 -2.24% vs 最不看好组 +2.85%）；③ ✗ **不能当风险预警**（与后续 20 日回撤相关 +0.02）；④ 覆盖不足：LLM 选票 65.7% 在它参照系外（LLM 偏好池外中小票）。→ 归因：**两者不同域不同风格**（LLM=池外+动量/主题；小模型=池内+短周期反转/小市值），互相评审必然错配。定位=**独立扫描器/候选来源**，不是评分器。证据 `data/experiments/llm_picks_vs_sys1.json`。
 - **小模型协同**：工具 `sys1_candidates(top)`（小模型从流动性前 400 只里挑横截面最强的当起点）+ `get_sys1_view(codes)`（查关注票的"跑赢等权池"概率 + 全场分位信号）；SYSTEM 里写明"排序可信、择时不可信，参考不是指令"。API `/api/trader/sys1`（时序实验）与 `/api/trader/sys1_xsec`（横截面成绩，带 `codes=` 可现算）。
 - **API**: `/api/trader/{profiles,overview,state,profile,decisions,memory,run,run-all,news,selection,performance,rules,outlook}`（state/decisions/memory/run 按 `profile_id`；`selection` 支持 `date=` 按历史日 as-of 审计选股口径、`weights=` 覆盖评分口径；`performance` 返回战绩明细；`rules` 返回生效纪律规则与兜底保护参数）。
 - **自我提升闭环**: 模型上下文有「你的战绩」（真实胜率/回撤/盈亏比/连势），先看数据再决定是否改变打法；每 3 个交易日 / 回撤≥8% / **单笔平仓亏损≥5%** 触发强制自省，把战绩+逐日决策原文交给 LLM，产出 `self_critique`/`lessons`/`style`/**`rules`**，存 `trader_decision.review` 并写入 `kind='lesson'/'style'/'rule'` 长期记忆。前端「战绩与自我提升」面板 + 每日「选股依据·候选池」「自我复盘」卡片。
