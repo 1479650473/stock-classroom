@@ -39,20 +39,37 @@ def _c(ym: str) -> str:
 
 
 def build_folds(dates: List[str], train_months: int = 24, test_months: int = 6,
-                folds: int = 5) -> List[Tuple[int, int, int]]:
-    """返回 [(train_lo, train_hi, test_hi)]：训练 [lo, hi)，测试 [hi, test_hi)。"""
+                folds: int = 5, gap_days: int = 5, include_tail: bool = True
+                ) -> List[Tuple[int, int, int]]:
+    """返回 [(train_lo, train_hi, test_hi)]：训练 [lo, hi-gap)，测试 [hi, test_hi)。
+
+    2026-09-24 审计（对照 AlphaMaster 的 walk-forward 说明）：
+      · 训练窗是**滚动固定长度**（不是 expanding）→ 早期折的 val 不会落进后续折的 train ✓
+      · 测试窗等长（各折 test_months）→ 均值不会被某个特别大的折主导 ✓
+      · 新增 `gap_days`（默认 5 个交易日）：训练段末尾与测试段起始之间留隔离带。
+        原因：标签是"未来 N 日收益"，不留 gap 时训练集最后几天的标签会延伸进测试段（多日持有期最多
+        渗透 N 天）→ 边界轻微泄漏。5 天覆盖我们最长的持有期口径。
+      · 新增 `include_tail`（默认 True）：原实现里**最新一段永远不会被测到**（最后一折的 test_end 超出
+        数据末尾 → 该折被丢弃），即"最近 6 个月"没有任何样本外证据。现在允许末折延伸到数据末尾
+        （长度可短于其它折；汇总时同时给"按折均值"和"按天数加权均值"两种口径，避免短折失真）。
+    """
     out: List[Tuple[int, int, int]] = []
     last_ym = f"{dates[-1][:4]}-{dates[-1][4:6]}"
     for k in range(folds):
         test_start_ym = month_add(last_ym, -test_months * (k + 1))
         train_start_ym = month_add(test_start_ym, -train_months)
         test_end_ym = month_add(test_start_ym, test_months)
-        tr_lo = next((i for i, d in enumerate(dates) if d[:6] >= _c(train_start_ym)), None)
+        tr_lo = next((i for i, d in enumerate(dates) if d[:6] >= _c(train_start_ym)), 0)
         tr_hi = next((i for i, d in enumerate(dates) if d[:6] >= _c(test_start_ym)), None)
         te_hi = next((i for i, d in enumerate(dates) if d[:6] >= _c(test_end_ym)), None)
-        if tr_lo is None or tr_hi is None or te_hi is None:
+        if tr_hi is None:
             continue
-        if tr_hi - tr_lo < 200 or te_hi - tr_hi < 40:
+        if k == 0 and include_tail:
+            te_hi = len(dates)                     # 最新一折延伸到数据末尾（否则最近约 1 个月永远测不到）
+        elif te_hi is None:
+            continue
+        tr_hi = max(tr_lo + 200, tr_hi - max(0, int(gap_days)))
+        if tr_hi - tr_lo < 200 or te_hi - tr_hi < 20:
             continue
         out.append((tr_lo, tr_hi, te_hi))
     return list(reversed(out))

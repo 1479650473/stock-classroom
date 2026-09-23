@@ -145,17 +145,21 @@ def _bj_codes() -> set:
 
 def pick_universe(limit: int = 400, min_amount: float = 5e7, lookback_days: int = 120,
                   exclude_st: bool = True, as_of: Optional[str] = None,
-                  skip: int = 0, include_bj: bool = False) -> List[str]:
+                  skip: int = 0, include_bj: bool = False,
+                  strict_as_of: bool = True) -> List[str]:
     """按成交额挑流动性最好的 limit 只（默认剔除 ST/退市）。
 
     as_of 非空时，只用 **该日之前** 的成交额排序，并要求股票在该日之前已有行情
     （避免用未来流动性选池造成的选择偏误与前视）。
     `skip=N` 跳过流动性最好的 N 只 —— 用于**分域建模**（如取中小盘域：skip=600, limit=1200）。
+    `strict_as_of=True`（默认）把成交额统计的上界也限制在 as_of 之前；设为 False 复现修复前行为
+    （旧行为会用"今天"的成交额选历史池，含前视，实测两者只重叠 41%）。
     `include_bj=True` 时把北交所纳入（注意：本项目 stock_list 里北交所代码**不带 bj 前缀**，
     board='bj' 标识；kline_daily 里的写法由调用方自行确认）。
     结果按 (as_of, limit, min_amount, skip, bj) 做磁盘缓存 —— 成交额聚合要扫全库，约 20 秒。
     """
-    ckey = f"{as_of or 'live'}|{limit}|{int(min_amount)}|{lookback_days}|{skip}|{int(include_bj)}"
+    ckey = (f"{as_of or 'live'}|{limit}|{int(min_amount)}|{lookback_days}|{skip}|"
+            f"{int(include_bj)}|{int(strict_as_of)}")
     hit = _cache_get(ckey)
     if hit:
         return list(hit)
@@ -183,9 +187,17 @@ def pick_universe(limit: int = 400, min_amount: float = 5e7, lookback_days: int 
         lo = min(cal)
         ph = ",".join("?" for _ in codes)
         amt = {}
-        for code, s in con.execute(
+        # ⚠ 2026-09-24 修复：原来只限下界 → **用了"今天"的成交额去选历史日的池**（前视）。
+        # 现在默认 strict_as_of=True，把区间上界也限制在 as_of 之前。
+        if as_of and strict_as_of:
+            cur = con.execute(
+                f"SELECT code, SUM(amount) FROM kline_daily WHERE date>=? AND date<? AND code IN ({ph}) "
+                f"GROUP BY code", [lo, end_s] + codes)
+        else:
+            cur = con.execute(
                 f"SELECT code, SUM(amount) FROM kline_daily WHERE date>=? AND code IN ({ph}) GROUP BY code",
-                [lo] + codes):
+                [lo] + codes)
+        for code, s in cur:
             amt[str(code)] = float(s or 0)
         ranked = sorted(codes, key=lambda c: -amt.get(c, 0))
         eligible = [c for c in ranked if amt.get(c, 0) >= min_amount] or ranked

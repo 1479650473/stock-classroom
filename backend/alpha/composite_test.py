@@ -47,10 +47,17 @@ def main() -> None:
     ap.add_argument("--components", default="", help='覆盖组合成分，如 "-RET1,-RET5,-HIGH60_GAP,-LOG_AMT20"')
     ap.add_argument("--spread", action="store_true", help="额外输出多空分位价差（市场中性口径）")
     ap.add_argument("--out", default=os.path.join(str(DATA_DIR), "alpha_composite.json"))
+    ap.add_argument("--pool-lookahead", action="store_true",
+                    help="复现修复前行为：用今天的成交额选历史池（含前视，仅供对照）")
+    ap.add_argument("--gap-days", type=int, default=5,
+                    help="训练段与测试段之间的隔离交易日（默认 5，覆盖多日持有期标签渗透）")
+    ap.add_argument("--no-tail", action="store_true",
+                    help="不把最新一折延伸到数据末尾（旧行为：最近约 1 个月无样本外覆盖）")
     args = ap.parse_args()
 
     t0 = time.time()
-    codes = P.pick_universe(limit=args.codes, as_of=args.start)
+    codes = P.pick_universe(limit=args.codes, as_of=args.start,
+                            strict_as_of=not args.pool_lookahead)
     pan = P.load_panel(codes, args.start, args.end)
     fields = pan["fields"]  # type: ignore[assignment]
     dates: List[str] = pan["dates"]  # type: ignore[assignment]
@@ -102,10 +109,13 @@ def main() -> None:
         a, sh = _spread(lambda t: combo[:, t])
         print("\n多空分位价差（前20% - 后20%，市场中性）：年化 {:.1%} | 夏普 {:+.2f}".format(a, sh))
 
-    folds = build_folds(dates, args.train_months, args.test_months, args.folds)
+    folds = build_folds(dates, args.train_months, args.test_months, args.folds,
+                        gap_days=args.gap_days, include_tail=not args.no_tail)
     print(f"\n10 折样本外（每折只评估测试窗口，train 仅用于展示基准）：")
     rows = []
+    warp = []
     for fi, (lo, hi, te) in enumerate(folds, 1):
+        warp.append(te - hi)
         bench_tr = np.concatenate([np.zeros(lo, dtype=np.float32), bench[lo:]])
         bench_oo = np.concatenate([np.zeros(hi, dtype=np.float32), bench[hi:]])
         nzf = (lambda s: P.neutralize_apply(s, nz)) if nz else None
@@ -132,6 +142,16 @@ def main() -> None:
                             "neutralized": bool(args.neutralize), "top_k": args.topk, "hold": args.hold,
                             "elapsed_sec": round(time.time() - t0, 1)},
                    "full": {k: round(float(v), 5) for k, v in full.items()},
+                   "summary": {
+                       "n_folds": len(rows),
+                       "oos_ex_mean": round(float(np.mean(ex)), 4),
+                       "oos_ex_median": round(float(np.median(ex)), 4),
+                       "oos_ex_positive_folds": int(sum(1 for x in ex if x > 0)),
+                       "oos_ex_dayweighted": round(float(np.average(
+                           ex, weights=[max(1, _w) for _w in warp]),), 4),
+                       "oos_ic_mean": round(float(np.mean(ic)), 5),
+                       "folds_cfg": {"gap_days": args.gap_days, "include_tail": not args.no_tail},
+                   },
                    "folds": rows}, f, ensure_ascii=False, indent=1)
     print(f"报告：{args.out}（用时 {time.time() - t0:.0f}s）")
 
