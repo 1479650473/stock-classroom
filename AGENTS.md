@@ -102,6 +102,24 @@ Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
 - **评分口径可覆盖**: `factor_engine/config.py` 的 `WEIGHT_PRESETS`（`default` / `steady{trend18,momentum15,volume10,price10,stability30}`）+ `resolve_weights()`（预设名 / dict / `"trend:18,momentum:15"`）+ `load_config_with_weights()`（按目标满分等比缩放组内 condition 分值）。回放创建可带 `weights`（写入 `profile.meta.weights`），用于同一参数下的口径对照实验。
 - **纵向回放** (`replay.py`): 让交易员在过去数据里逐日无前视模拟。as-of 上下文（K线/regime/候选全部 `date<=D`，历史新闻不可回溯故标注不可用）；date-aware 工具按历史日成交/结算；游标存 `profile.meta.cursor`，每次最多 30 天可续跑；每 20 日 LLM 生成一次阶段总结（`kind='stage'`）压缩上下文；`distill_to_live()` 把回放风格/教训/笔记回流到源交易员。API `/api/trader/{replays,replay,replay/<id>/continue,replay/<id>/distill}`。前端 AI 页「AI 操盘手 → 纵向回放」。
 
+## LLM 操盘手 vs 机械组合（2026-09-23，结论：**不能判操盘手选股无用**）
+
+用已有 19 个回放档案、**从 `trader_decision.executions` 取模拟日期的买入**（trades.traded_at 对老回放是真实时间，会错位），
+按日配对比较（同一天：LLM 的买入 vs 组合 Top-K 的每只票），裁尾口径、相对中小盘域等权池：
+
+| 周期 | LLM 选票 | 机械组合 Top20 | LLM−组合 | LLM 胜率 |
+|---|---|---|---|---|
+| **5 日** | **+1.110%** | +0.503% | **+0.608%** | **57.5%** |
+| 10 日 | -0.068% | +0.038% | -0.106% | 45.3% |
+| 20 日 | -0.442% | -0.467% | +0.025% | 54.7% |
+
+- **5 日尺度上 LLM 不弱（点估计更好）但置信区间极宽（±17~20%）→ 样本不足以判定显著**；
+  10/20 日两者都归零/转负
+- **与组合 Top50 重叠 0%** → 两条腿**互补而非冗余**（LLM 不买组合前排的票）
+- 买入当天该股涨停的比例仅 **0.7%** → 它**不追板**（与"事件全是负期望"的注入相容）
+- 机械组合在**不同窗口间波动很大**（2022-04 窗 +2.3%/5日 ↔ 2026-04 窗 -3.8%/5日）→ 单窗口结论不可靠，必须长样本
+- → 因此**上纸面盘（B）**：同时积累"组合"与"操盘手"的前瞻记录，用不可回看的数据判定优劣
+
 ## 口径纪律（2026-09-23 更正，重要）
 
 **所有"平均超额"必须标注口径**：A 股中小盘 5 日持有期的超额分布**肥尾极重**（实测 2024+ 样本外
@@ -195,6 +213,7 @@ Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
 | `validate_known.py` / `diagnose_null.py` | 流程自检（已知因子方向）与零信号基准 |
 | `pipeline.py` / `store.py` / `import_reports.py` | API 与 CLI 共用的 mine/walk_forward 主流程 + `data/alpha.db`（alpha_run/alpha_formula）落库 |
 | `smb.py` | 规模因子（SMB 小−大）+ 月度「最小市值 N 只」策略；市值口径 = **成交额 ÷ 换手率**（免疫复权）；剔除规则全 as-of；`--include-bj` 把北交所纳入股票池（默认不含，含时自动跑一遍不含的对照组） |
+| `paper_portfolio.py` | **组合纸面盘（前向记录）**：用固定因子组合（K=20/H=10、中盘域、每日 1/H 分仓、单边 10bp 成本）**每天真实往前跑**，状态 `data/paper_portfolio.json`（持仓/分仓/净值历史），同日幂等；接进 `update_daily` ㉑ 步；API `/api/alpha/paper`。目的=把回测结论变成不可回看、不可调参的**前瞻**记录 |
 | `allocation.py` | **通用多腿组合构建器**：腿 = `smb` / `equal` / `etf:<code>` / `file:<path>`；输出相关矩阵、固定配比网格、自动配比（等权/逆波动/最小方差/最大夏普）；**滚动样本外**（`--rolling --window 36`）每月只用过去 N 月估权重 |
 
 **API**：`/api/alpha/{meta,mine,walkforward,runs,run/<id>,composite,zoo,composite_report,factor-analysis,smb,allocation}`（`allocation` 支持 `rolling=1&window=36`）、

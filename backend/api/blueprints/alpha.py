@@ -152,6 +152,16 @@ def factor_analysis():
     return ok(res)
 
 
+@bp.route("/paper", methods=["GET"])
+def paper_portfolio_status():
+    """组合纸面盘状态（K=20/H=10 中盘域，每日 1/H 分仓、单边 10bp 成本）。
+
+    为什么有它：所有组合结论都是回测；纸面盘每天按同一规则往前跑，积累**前瞻**记录。
+    """
+    from ...alpha.paper_portfolio import status as _st
+    return ok(_st())
+
+
 @bp.route("/smb", methods=["GET"])
 def smb():
     """规模因子（SMB）月度策略结果：主策略指标、成本曲线、多维度对比、最近持仓。"""

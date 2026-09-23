@@ -564,6 +564,20 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
             out['steps']['board'] = str(e)[:120]
             lg.warning('  板块指数失败: %s', str(e)[:80])
 
+        # ㉑ 组合纸面盘（K=20/H=10 中盘域，每日 1/H 分仓）—— 把回测结论变成前瞻记录，同日幂等
+        try:
+            from backend.alpha.paper_portfolio import run_once as _pp_run
+            _st = _pp_run()
+            _nav = (_st.get('nav_history') or [{}])[-1].get('nav')
+            out['steps']['paper_portfolio'] = {'nav': _nav,
+                                               'positions': len(_st.get('holdings') or {}),
+                                               'date': _st.get('last_date')}
+            lg.info('  组合纸面盘: %s 净值 %s 持仓 %s', _st.get('last_date'), _nav,
+                    len(_st.get('holdings') or {}))
+        except Exception as e:
+            out['steps']['paper_portfolio'] = str(e)[:120]
+            lg.warning('  组合纸面盘失败: %s', str(e)[:80])
+
     out['finished'] = datetime.now().isoformat(timespec='seconds')
     out['elapsed'] = round(time.time() - t0, 1)
     out['ok'] = True
