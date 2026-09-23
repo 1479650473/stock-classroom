@@ -199,6 +199,35 @@ def evaluate(sig: np.ndarray, target: np.ndarray, masks: Dict[str, np.ndarray],
     ic_ir = float(np.mean(ics) / (np.std(ics) + 1e-9))
     turn_mean = float(np.mean(turn))
 
+    # ── 成本压力测试（借鉴 AlphaMaster 的多目标奖励）：2× 成本下是否仍为正 ──
+    # 为什么：组合的唯一死因就是成本（实测 H=5 在 10bp 就见底）——"低费率下好看"不算结论。
+    daily_2x = daily_free - 2.0 * cost_one_way * turn
+    daily_2x = np.where(valid_day, daily_2x, 0.0)
+    eq2 = np.cumprod(1.0 + daily_2x)
+    ann_2x = float(eq2[-1] ** (TRADING_DAYS / max(1, idx_size)) - 1.0) if eq2[-1] > 0 else -1.0
+    ex_ann_2x = 0.0
+    if bench_daily is not None and bench_daily.size >= (sl.stop or bench_daily.size):
+        ex2 = daily_2x - bench_daily[idx]
+        eqe2 = np.cumprod(1.0 + ex2)
+        ex_ann_2x = float(eqe2[-1] ** (TRADING_DAYS / max(1, idx_size)) - 1.0) if eqe2[-1] > 0 else -1.0
+    cost_breakeven_bp = float(np.mean(daily_free - (bench_daily[idx] if bench_daily is not None else 0.0))
+                              / (2.0 * max(turn_mean, 1e-9)) * 1e4) if turn_mean > 0 else 0.0
+
+    # ── 敞口/集中度（借鉴 AlphaMaster 的 exposure / beta-neutral 惩罚）──
+    # 说明：我们做多头的组合，不做"因子中性"，但要知道**是不是靠押注某个方向赚钱**。
+    #  · pool_beta：组合日收益对池日收益的回归斜率（>1 = 加杠杆式暴露，<1 = 防守）
+    #  · top_weight_hhi：持仓权重集中度（HHI，等权时 ≈ 1/k）
+    #  · side_share：组合收益里"与池同向"的占比（越高越像 beta 搬运工）
+    pool_beta = 0.0
+    side_share = 0.0
+    if bench_daily is not None and bench_daily.size >= (sl.stop or bench_daily.size):
+        b = bench_daily[idx]
+        bv = float(np.var(b)) + 1e-12
+        pool_beta = float(np.cov(daily, b, bias=True)[0, 1] / bv)
+        both = ((daily > 0) & (b > 0)) | ((daily < 0) & (b < 0))
+        side_share = float(both.mean())
+    hhi = float(np.mean((W ** 2).sum(axis=0)))
+
     # 目标以因子预测力（IC_IR）为主，组合超额只做轻量正则：
     # 只用组合收益当目标会搜出“押中股票池 beta”的伪因子（实测过），IC 驱动的泛化更好。
     target_sortino = ex_sortino if bench_daily is not None else sortino
@@ -209,7 +238,11 @@ def evaluate(sig: np.ndarray, target: np.ndarray, masks: Dict[str, np.ndarray],
             "ann": ann, "sharpe": float(sharpe), "sortino": float(sortino), "maxdd": maxdd,
             "turnover": turn_mean, "void_ratio": float(void_ratio), "win_rate": win,
             "ex_ann": ex_ann, "ex_sharpe": float(ex_sharpe), "ex_sortino": float(ex_sortino),
-            "ex_maxdd": float(ex_dd), "n_days": float(idx_size)}
+            "ex_maxdd": float(ex_dd), "n_days": float(idx_size),
+            # 成本压力与敞口（2026-09-24 新增，借鉴 AlphaMaster 的多目标奖励）
+            "ann_2x_cost": ann_2x, "ex_ann_2x_cost": ex_ann_2x,
+            "cost_breakeven_bp": cost_breakeven_bp,
+            "pool_beta": pool_beta, "side_share": side_share, "weight_hhi": hhi}
 
 
 def bench_series(target: np.ndarray, masks: Dict[str, np.ndarray]) -> np.ndarray:

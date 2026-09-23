@@ -114,6 +114,9 @@ def main() -> None:
     print(f"\n10 折样本外（每折只评估测试窗口，train 仅用于展示基准）：")
     rows = []
     warp = []
+    rows2x: list[float] = []
+    betas: list[float] = []
+    sides: list[float] = []
     for fi, (lo, hi, te) in enumerate(folds, 1):
         warp.append(te - hi)
         bench_tr = np.concatenate([np.zeros(lo, dtype=np.float32), bench[lo:]])
@@ -123,13 +126,20 @@ def main() -> None:
                         bench_daily=bench_tr, hold=args.hold, neutralize_fn=nzf)
         oo = R.evaluate(combo, target, masks, slice(hi, te), top_k=args.topk,
                         bench_daily=bench_oo, hold=args.hold, neutralize_fn=nzf)
+        rows2x.append(float(oo.get("ex_ann_2x_cost") or 0.0))
+        betas.append(float(oo.get("pool_beta") or 0.0))
+        sides.append(float(oo.get("side_share") or 0.0))
         rows.append({"fold": fi, "train": f"{dates[lo]}~{dates[hi - 1]}", "test": f"{dates[hi]}~{dates[te - 1]}",
+                     "oos_ex_2x": round(float(oo.get("ex_ann_2x_cost") or 0.0), 4),
+                     "oos_pool_beta": round(float(oo.get("pool_beta") or 0.0), 3),
+                     "cost_breakeven_bp": round(float(oo.get("cost_breakeven_bp") or 0.0), 1),
                      "train_ex": round(tr["ex_ann"], 4), "oos_ex": round(oo["ex_ann"], 4),
                      "oos_sortino": round(oo["ex_sortino"], 3), "oos_ic": round(oo["ic"], 5),
                      "oos_dd": round(oo["maxdd"], 4), "oos_turnover": round(oo["turnover"], 3)})
         print(f"  折{fi:>2} {rows[-1]['test']} | 训练超额 {tr['ex_ann'] * 100:+6.1f}% | "
               f"样本外超额 {oo['ex_ann'] * 100:+6.1f}% | Sortino {oo['ex_sortino']:+.2f} | "
-              f"IC {oo['ic']:+.4f} | 回撤 {oo['maxdd'] * 100:5.1f}%")
+              f"IC {oo['ic']:+.4f} | 回撤 {oo['maxdd'] * 100:5.1f}% | "
+              f"2×成本超额 {float(oo.get('ex_ann_2x_cost') or 0) * 100:+6.1f}% | β {float(oo.get('pool_beta') or 0):+.2f}")
     ex = [r["oos_ex"] for r in rows]
     ic = [r["oos_ic"] for r in rows]
     print(f"\n汇总：样本外超额 均值 {np.mean(ex) * 100:+.1f}% / 中位 {np.median(ex) * 100:+.1f}%，"
@@ -150,6 +160,12 @@ def main() -> None:
                        "oos_ex_dayweighted": round(float(np.average(
                            ex, weights=[max(1, _w) for _w in warp]),), 4),
                        "oos_ic_mean": round(float(np.mean(ic)), 5),
+                       "oos_ex_mean_2x_cost": round(float(np.mean(rows2x)), 4) if rows2x else None,
+                       "oos_positive_folds_2x_cost": int(sum(1 for x in rows2x if x > 0)) if rows2x else None,
+                       "cost_gate": ("通过：2× 成本下均值仍为正" if rows2x and float(np.mean(rows2x)) > 0
+                                     else "不通过：2× 成本下均值为负（不要把该配置当成可交易）"),
+                       "pool_beta_mean": round(float(np.mean(betas)), 3) if betas else None,
+                       "side_share_mean": round(float(np.mean(sides)), 3) if sides else None,
                        "folds_cfg": {"gap_days": args.gap_days, "include_tail": not args.no_tail},
                    },
                    "folds": rows}, f, ensure_ascii=False, indent=1)
