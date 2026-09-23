@@ -574,6 +574,26 @@ export interface TraderOutlookStats {
   buckets: { label: string; n: number; hit_rate: number; avg_conf: number }[]
   by_direction: { direction: string; label: string; n: number; hit_rate: number }[]
 }
+/** 组合纸面盘（前向记录）：K=20/H=10 中盘域、每日 1/H 分仓、单边 10bp */
+export interface PaperPortfolio {
+  started: boolean
+  hint?: string
+  config?: Record<string, unknown>
+  last_date?: string
+  nav?: number
+  total_return_pct?: number
+  days?: number
+  positions?: number
+  created_at?: string
+  history?: { date: string; nav: number; positions?: number; opened?: number; closed?: number }[]
+  benchmark?: { code: string; name: string; nav: (number | null)[] }
+  holdings?: { code: string; name?: string; qty: number; buy_dates?: string[] }[]
+  log?: { date: string; opened?: string[]; closed?: string[]; nav?: number }[]
+  recent?: unknown[]
+}
+export const getPaperPortfolio = () =>
+  api.get<PaperPortfolio>('/api/alpha/paper', {}, { ttl: 60_000 })
+
 /** 小模型（System 1 横截面头）的样本外成绩 + 可选现场扫描 */
 export interface Sys1XsecReport {
   meta: { codes: number; test_from: string; test_to: string; test_n: number; horizon: number; features: number }

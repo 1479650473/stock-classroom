@@ -265,10 +265,53 @@ def status() -> dict:
         return {"started": False, "hint": "还没跑过：python -m backend.alpha.paper_portfolio"}
     hist = s.get("nav_history") or []
     nav = hist[-1]["nav"] if hist else 1.0
-    return {"started": True, "config": s["config"], "last_date": s.get("last_date"),
-            "nav": nav, "total_return_pct": round((nav - 1) * 100, 2),
-            "days": len(hist), "positions": len(s.get("holdings") or {}),
-            "recent": hist[-10:], "created_at": s.get("created_at")}
+    out = {"started": True, "config": s["config"], "last_date": s.get("last_date"),
+           "nav": nav, "total_return_pct": round((nav - 1) * 100, 2),
+           "days": len(hist), "positions": len(s.get("holdings") or {}),
+           "recent": hist[-10:], "created_at": s.get("created_at")}
+    # 完整的净值历史 + 基准（沪深300，同起点归一）—— 给前端画曲线用
+    try:
+        dates = [h["date"] for h in hist]
+        out["history"] = [{"date": h["date"], "nav": h["nav"],
+                           "positions": h.get("positions"), "opened": h.get("opened"),
+                           "closed": h.get("closed")} for h in hist]
+        if dates:
+            con = sqlite3.connect(str(KLINE_DB))
+            try:
+                # 取区间内全部指数收盘（指数可能比个股晚一天更新 → 前向填充）
+                rows = con.execute(
+                    "SELECT date, close FROM kline_daily WHERE code='sh000300' AND date<=? "
+                    "AND date>=? ORDER BY date",
+                    (dates[-1], _shift(dates[0], 20))).fetchall()
+            finally:
+                con.close()
+            px_all = [(str(d), float(c)) for d, c in rows if c]
+            px = {}
+            k = 0
+            cur = None
+            for d in dates:
+                while k < len(px_all) and px_all[k][0] <= d:
+                    cur = px_all[k][1]
+                    k += 1
+                if cur:
+                    px[d] = cur
+            base = None
+            bench = []
+            for d in dates:
+                v = px.get(d)
+                if v is None:
+                    bench.append(None)
+                    continue
+                if base is None:
+                    base = v
+                bench.append(round(v / base, 5))
+            out["benchmark"] = {"code": "sh000300", "name": "沪深300", "nav": bench}
+        # 持仓明细（带买入日）
+        out["holdings"] = [{"code": c, **v} for c, v in (s.get("holdings") or {}).items()]
+        out["log"] = (s.get("log") or [])[-20:]
+    except Exception as e:
+        out["error"] = str(e)[:120]
+    return out
 
 
 def main() -> None:

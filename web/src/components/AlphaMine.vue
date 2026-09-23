@@ -5,7 +5,7 @@
  *  - 滚动验证：多折「训练独立搜索 → 紧接测试段评估」，判断是否跨期稳定
  * 进度复用全局任务中心（jobs store），完成后自动刷新结果。
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import FormField from '@/components/ui/FormField.vue'
 import DataTable from '@/components/ui/DataTable.vue'
@@ -15,11 +15,12 @@ import Icon from '@/components/Icon.vue'
 import { useJobsStore } from '@/stores/jobs'
 import { useToastStore } from '@/stores/toast'
 import Tooltip from '@/components/ui/Tooltip.vue'
+import { useEChart, cssVar } from '@/composables/useEChart'
 import {
   getAlphaAllocation, getAlphaCompositeReport, getAlphaMeta, getAlphaRun, getAlphaRuns, getAlphaSmb, getAlphaZoo,
-  startAlphaMine, startAlphaWalkforward,
+  startAlphaMine, startAlphaWalkforward, getPaperPortfolio,
 } from '@/api'
-import type { AlphaAllocation, AlphaCompositeReport, AlphaFormula, AlphaRun, AlphaSmbResult, AlphaZooRow } from '@/api'
+import type { AlphaAllocation, AlphaCompositeReport, AlphaFormula, AlphaRun, AlphaSmbResult, AlphaZooRow, PaperPortfolio } from '@/api'
 
 const jobs = useJobsStore()
 const toast = useToastStore()
@@ -31,7 +32,44 @@ const current = ref<AlphaRun | null>(null)
 const openForm = ref(false)
 const meta = ref<{ defaults: Record<string, number | string>; features: string[]; operators: string[] } | null>(null)
 // 因子体检榜 + 组合验证（借鉴 Qbot 的因子体系，服务我们自己的体检台）
-const tab = ref<'mine' | 'zoo' | 'composite' | 'smb' | 'alloc'>('mine')
+const tab = ref<'mine' | 'zoo' | 'composite' | 'smb' | 'alloc' | 'paper'>('mine')
+// 组合纸面盘：把回测结论变成前瞻记录（K=20/H=10，中盘域，每日 1/H 分仓，单边 10bp）
+const paper = ref<PaperPortfolio | null>(null)
+const paperLoading = ref(false)
+const paperChartEl = ref<HTMLElement | null>(null)
+const { draw: drawPaperChart } = useEChart(paperChartEl, () => {
+  const h = paper.value?.history || []
+  const b = paper.value?.benchmark?.nav || []
+  return {
+    grid: { left: 46, right: 14, top: 16, bottom: 24 },
+    tooltip: { trigger: 'axis', valueFormatter: (v: unknown) => (v == null ? '—' : Number(v).toFixed(4)) },
+    legend: { show: true, right: 6, top: 0, itemWidth: 12, itemHeight: 8, textStyle: { fontSize: 11 } },
+    xAxis: { type: 'category', boundaryGap: false, data: h.map((x) => x.date.slice(4)),
+             axisLabel: { fontSize: 10 } },
+    yAxis: { type: 'value', scale: true, axisLabel: { fontSize: 10 },
+             splitLine: { lineStyle: { opacity: 0.25 } } },
+    series: [
+      { name: '组合净值', type: 'line', data: h.map((x) => x.nav), showSymbol: h.length < 40,
+        symbolSize: 5, lineStyle: { width: 2, color: cssVar('--accent', '#D4A574') },
+        itemStyle: { color: cssVar('--accent', '#D4A574') },
+        areaStyle: { color: cssVar('--accent', '#D4A574'), opacity: 0.12 } },
+      { name: paper.value?.benchmark?.name || '沪深300', type: 'line', data: b, showSymbol: false,
+        lineStyle: { width: 1, type: 'dashed', color: cssVar('--muted', '#8a8a8a') },
+        itemStyle: { color: cssVar('--muted', '#8a8a8a') } },
+    ],
+  } as Record<string, unknown>
+})
+
+async function loadPaper() {
+  paperLoading.value = true
+  try {
+    paper.value = await getPaperPortfolio()
+    await nextTick()
+    drawPaperChart()
+  } finally {
+    paperLoading.value = false
+  }
+}
 const smb = ref<AlphaSmbResult | null>(null)
 // 组合构建：多条腿（策略/ETF）
 const allocLegs = ref<string[]>(['smb', 'etf:511010', 'etf:511260'])
@@ -296,6 +334,66 @@ onMounted(async () => { await Promise.all([load(), loadMeta(), loadZoo(), loadCo
         <button class="subtab" :class="{ 'subtab--on': tab === 'composite' }" @click="tab = 'composite'">组合验证（已验证有效）</button>
         <button class="subtab" :class="{ 'subtab--on': tab === 'smb' }" @click="tab = 'smb'">规模因子 SMB（微盘）</button>
         <button class="subtab" :class="{ 'subtab--on': tab === 'alloc' }" @click="tab = 'alloc'; loadAlloc()">组合构建（多腿）</button>
+        <button class="subtab" :class="{ 'subtab--on': tab === 'paper' }" @click="tab = 'paper'; loadPaper()">组合纸面盘（前向记录）</button>
+      </div>
+
+      <!-- 组合纸面盘（前向记录）：把回测结论变成不可调参的真实前瞻记录 -->
+      <div v-if="tab === 'paper'" class="comp paper">
+        <p class="hint">
+          用已验证的固定因子组合（-RET1/-RET5/-HIGH60_GAP/-LOG_AMT20 等权 rank）每天真实往前跑：
+          <b>中盘域（流动性排名 601~1800）· K=20 · 持有 10 个交易日（每日 1/H 分仓）· 单边 10bp 成本</b>。
+          与回测的区别只有一个，但很关键：<b>不可回看、不可调参</b> —— 这是验证「净 +5%/年」是否真实存在的唯一办法。
+        </p>
+        <LoadingBlock v-if="paperLoading && !paper" />
+        <div v-else-if="paper && !paper.started" class="muted">{{ paper.hint }}</div>
+        <template v-else-if="paper">
+          <div class="sum">
+            <div class="sum__cell"><span class="k">净值</span><span class="v">{{ (paper.nav ?? 1).toFixed(4) }}</span></div>
+            <div class="sum__cell"><span class="k">累计收益</span>
+              <span class="v" :class="(paper.total_return_pct ?? 0) >= 0 ? 'up' : 'down'">
+                {{ (paper.total_return_pct ?? 0) >= 0 ? '+' : '' }}{{ (paper.total_return_pct ?? 0).toFixed(2) }}%
+              </span></div>
+            <div class="sum__cell"><span class="k">运行天数</span><span class="v">{{ paper.days ?? 0 }}</span></div>
+            <div class="sum__cell"><span class="k">持仓</span><span class="v">{{ paper.positions ?? 0 }} 只</span></div>
+            <div class="sum__cell"><span class="k">起点 / 最新</span>
+              <span class="v small">{{ (paper.created_at || '').slice(0, 8) }} ~ {{ paper.last_date || '' }}</span></div>
+          </div>
+          <div ref="paperChartEl" class="paper__chart"></div>
+          <p v-if="(paper.days ?? 0) < 20" class="hint">
+            记录刚起步（今年 {{ paper.days }} 天）：曲线会随每日 <code>update_daily</code> 自动增长，
+            跑满 1~2 周后再看才有意义（单日净值受个别持仓波动影响很大）。
+          </p>
+          <div class="paper__cols">
+            <div>
+              <div class="sub-title">当前持仓</div>
+              <table class="tbl">
+                <thead><tr><th>代码</th><th>名称</th><th class="num">股数</th><th>买入分仓</th></tr></thead>
+                <tbody>
+                  <tr v-for="h in (paper.holdings || [])" :key="h.code">
+                    <td class="mono">{{ h.code }}</td>
+                    <td>{{ h.name || '—' }}</td>
+                    <td class="num">{{ h.qty }}</td>
+                    <td class="mono small">{{ (h.buy_dates || []).join(' / ') }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div>
+              <div class="sub-title">最近操作</div>
+              <table class="tbl">
+                <thead><tr><th>日期</th><th>开仓</th><th>平仓</th><th class="num">净值</th></tr></thead>
+                <tbody>
+                  <tr v-for="r in (paper.log || []).slice().reverse()" :key="r.date">
+                    <td class="mono">{{ r.date }}</td>
+                    <td class="mono small">{{ (r.opened || []).join(' ') || '—' }}</td>
+                    <td class="mono small muted">{{ (r.closed || []).join(' ') || '—' }}</td>
+                    <td class="num">{{ r.nav != null ? Number(r.nav).toFixed(4) : '—' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </template>
       </div>
 
       <!-- 因子体检榜 -->
@@ -601,6 +699,9 @@ onMounted(async () => { await Promise.all([load(), loadMeta(), loadZoo(), loadCo
 
 <style scoped>
 .alpha { display: flex; flex-direction: column; gap: 12px; }
+.paper__chart { height: 260px; margin: 10px 0 6px; }
+.paper__cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 10px; }
+@media (max-width: 900px) { .paper__cols { grid-template-columns: 1fr; } }
 .subtabs { display: flex; gap: 6px; margin: 10px 0 4px; }
 .subtab { padding: 4px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel);
   color: var(--text-sub); font-size: var(--fs-xs); cursor: pointer; }
