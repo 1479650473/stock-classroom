@@ -46,6 +46,9 @@ DEFAULTS = {
     "K": 20,
     "H": 10,
     "cost_one_way": 0.001,          # 单边 10bp
+    "alert_daily_drop_pct": -3.0,   # 单日净值跌幅达到该值 → 告警（%）
+    "alert_drawdown_pct": -10.0,    # 从峰值回撤达到该值 → 告警（%）
+    "alert_stale_days": 2,          # 落后最新交易日超过该天数 → 告警（跑没跑）
     "weights": "默认（-RET1/-RET5/-HIGH60_GAP/-LOG_AMT20 等权 rank）",
 }
 
@@ -247,6 +250,16 @@ def run_once(as_of: Optional[str] = None, verbose: bool = True) -> dict:
             state["holdings"].setdefault(h["code"], {"name": h["name"], "qty": 0, "buy_dates": []})
             state["holdings"][h["code"]]["qty"] += h["qty"]
             state["holdings"][h["code"]]["buy_dates"].append(tr["buy_date"])
+    # 告警检查（取"今天之前"的最后一个净值作为前值；历史里已含今天的记录）
+    prev_nav = None
+    for h in reversed(state.get("nav_history") or []):
+        if h.get("date") != d8 and h.get("nav"):
+            prev_nav = float(h["nav"])
+            break
+    fired = _alerts(state, prev_nav or 1.0, nav2, d8)
+    if fired:
+        state.setdefault("alerts", []).append({"date": d8, "items": fired})
+        state["alerts"] = state["alerts"][-100:]
     state["last_date"] = d8
     state["log"].append({"date": d8, "opened": [n["code"] for n in names],
                          "closed": [h["code"] for tr in sold for h in tr["names"]],
@@ -257,6 +270,77 @@ def run_once(as_of: Optional[str] = None, verbose: bool = True) -> dict:
         print(f"{d8}: 净值 {nav2:.4f}｜开仓 {len(names)} 只（{' '.join(n['code'] for n in names) or '—'}）"
               f"｜平仓 {len(sold)} 个分仓｜持仓 {len(held_codes2)} 只｜现金 {state['cash']:.0f}")
     return state
+
+
+def _push_notify(title: str, detail: str, level: str = "warn", key: str = "",
+                 throttle: int = 12 * 3600) -> dict:
+    """走项目统一通知（本地事件流 data/notifications.json + 可选 webhook）。"""
+    try:
+        from ..notify import push as _push
+        return _push("paper_portfolio", title, level=level, detail=detail,
+                     key=key, throttle_seconds=throttle)
+    except Exception:
+        return {}
+
+
+def _alerts(state: dict, nav_prev: float, nav_now: float, date8: str) -> list:
+    """跑完后做健康检查：单日大跌 / 深度回撤 / 落后交易日。返回触发的告警列表。"""
+    cfg = state.get("config") or {}
+    fired = []
+    # ① 单日跌幅
+    thr_day = float(cfg.get("alert_daily_drop_pct") or -3.0)
+    if nav_prev and nav_prev > 0:
+        chg = (nav_now / nav_prev - 1) * 100
+        if chg <= thr_day:
+            _push_notify(f"纸面盘单日 {chg:.2f}%（{date8}）",
+                         f"净值 {nav_prev:.4f} → {nav_now:.4f}；阈值 {thr_day}%。"
+                         f"持仓 {len(state.get('holdings') or {})} 只。"
+                         f"单日大跌多为小盘 beta 波动，先看是否个别持仓极端（可在卡片里看持仓与操作）。",
+                         key="daily_drop")
+            fired.append({"type": "daily_drop", "value": round(chg, 2)})
+    # ② 峰值回撤
+    thr_dd = float(cfg.get("alert_drawdown_pct") or -10.0)
+    navs = [h["nav"] for h in (state.get("nav_history") or []) if h.get("nav")]
+    if navs:
+        peak = max(navs)
+        dd = (nav_now / peak - 1) * 100 if peak else 0.0
+        if dd <= thr_dd:
+            _push_notify(f"纸面盘从峰值回撤 {dd:.2f}%",
+                         f"峰值 {peak:.4f} → {nav_now:.4f}（{date8}）；阈值 {thr_dd}%。"
+                         f"回测口径下该组合最大回撤约 28~37%，回撤属常态，"
+                         f"但若连续加深需要核对是否规则被改动或数据异常。",
+                         key="drawdown")
+            fired.append({"type": "drawdown", "value": round(dd, 2)})
+    return fired
+
+
+def check_staleness(as_of: Optional[str] = None, notify: bool = True) -> dict:
+    """检查纸面盘是否落后最新交易日（"跑没跑"）—— 由 update_daily 每日调用。"""
+    s = _load_state()
+    if not s:
+        return {"started": False}
+    con = sqlite3.connect(str(KLINE_DB))
+    try:
+        latest = str(con.execute("SELECT MAX(date) FROM kline_daily").fetchone()[0])
+    finally:
+        con.close()
+    cal = _trading_dates(latest, 60)
+    last = s.get("last_date")
+    gap = None
+    if last and last in cal:
+        gap = len(cal) - 1 - cal.index(last)
+    elif last and latest:
+        gap = 99
+    cfg = s.get("config") or {}
+    thr = int(cfg.get("alert_stale_days") or 2)
+    stale = gap is not None and gap > thr
+    if stale and notify:
+        _push_notify(f"纸面盘已落后 {gap} 个交易日",
+                     f"最后记录 {last}，最新交易日 {latest}（阈值 {thr} 天）。"
+                     f"多半是 update_daily 的 ㉑ 步失败或没跑 —— 看数据页的任务与通知，"
+                     f"跑一次 `python -m backend.alpha.paper_portfolio` 即可补上（同日幂等）。",
+                     level="warn", key="stale", throttle=6 * 3600)
+    return {"latest_trading_day": latest, "last_recorded": last, "gap_days": gap, "stale": stale}
 
 
 def status() -> dict:

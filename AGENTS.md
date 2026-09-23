@@ -213,7 +213,10 @@ Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
 | `validate_known.py` / `diagnose_null.py` | 流程自检（已知因子方向）与零信号基准 |
 | `pipeline.py` / `store.py` / `import_reports.py` | API 与 CLI 共用的 mine/walk_forward 主流程 + `data/alpha.db`（alpha_run/alpha_formula）落库 |
 | `smb.py` | 规模因子（SMB 小−大）+ 月度「最小市值 N 只」策略；市值口径 = **成交额 ÷ 换手率**（免疫复权）；剔除规则全 as-of；`--include-bj` 把北交所纳入股票池（默认不含，含时自动跑一遍不含的对照组） |
-| `paper_portfolio.py` | **组合纸面盘（前向记录）**：用固定因子组合（K=20/H=10、中盘域、每日 1/H 分仓、单边 10bp 成本）**每天真实往前跑**，状态 `data/paper_portfolio.json`（持仓/分仓/净值历史），同日幂等；接进 `update_daily` ㉑ 步；API `/api/alpha/paper`。目的=把回测结论变成不可回看、不可调参的**前瞻**记录 |
+| `paper_portfolio.py` | **组合纸面盘（前向记录）**：用固定因子组合（K=20/H=10、中盘域、每日 1/H 分仓、单边 10bp 成本）**每天真实往前跑**，状态 `data/paper_portfolio.json`（持仓/分仓/净值历史），同日幂等；接进 `update_daily` ㉑ 步；API `/api/alpha/paper`；前端「策略 → 因子挖掘 → 组合纸面盘」。目的=把回测结论变成不可回看、不可调参的**前瞻**记录。
+  **异常通知**（走 `notify.push`，前端 NotifyBell 可见 + 可选 webhook）：① 单日净值跌幅 ≤ **-3%**；
+  ② 从峰值回撤 ≤ **-10%**（阈值在 `config` 里可调）；③ **`check_staleness()`**：落后最新交易日 > 2 天
+  （"跑没跑"）→ 由 ㉑ 步每日调用，㉑ 步失败会写 `{'error': ...}` 从而进当天的失败汇总通知 |
 | `allocation.py` | **通用多腿组合构建器**：腿 = `smb` / `equal` / `etf:<code>` / `file:<path>`；输出相关矩阵、固定配比网格、自动配比（等权/逆波动/最小方差/最大夏普）；**滚动样本外**（`--rolling --window 36`）每月只用过去 N 月估权重 |
 
 **API**：`/api/alpha/{meta,mine,walkforward,runs,run/<id>,composite,zoo,composite_report,factor-analysis,smb,allocation}`（`allocation` 支持 `rolling=1&window=36`）、
