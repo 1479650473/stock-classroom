@@ -365,6 +365,8 @@ def build_memory_block(profile_id: int, positions: List[dict], limit: int = 10,
         "self_style": style,
         "continuity": continuity,
         "your_calibration": calib,
+        # 事件实证（2024+ 中小盘域样本外，裁尾口径）：给"追热点"提供负期望证据
+        "event_evidence": _event_evidence(),
         "structure_routing": routing_block,
         "history_note": "近 3 个交易日逐条详细（含委托与结果）；更早的日子只给摘要"
                         "（日期/操作/净值/复盘一句）——需要细节用工具查或问自己写下的记忆。",
@@ -378,6 +380,47 @@ def build_memory_block(profile_id: int, positions: List[dict], limit: int = 10,
         "discipline_rules": _rules_block(int(profile_id), as_of),
         "notes": notes_sorted,
     }
+
+
+def _event_evidence() -> dict:
+    """事件研究结论（`data/experiments/event_study.json`，读不到就返回空）。
+
+    为什么给模型看这个：它的风格偏动量/主题，而实证显示在该域该期间
+    **所有"热点事件"后的 5 日都是负超额**。这是事实不是禁令 —— 模型仍可自主决定，
+    但要基于事实，而不是"涨停说明很强"的直觉。
+    """
+    try:
+        import json as _json
+        import os as _os
+        from ..api.paths import DATA_DIR as _DD
+        p = _os.path.join(str(_DD), "experiments", "event_study.json")
+        if not _os.path.exists(p):
+            return {}
+        d = _json.load(open(p, encoding="utf-8"))
+        ev = d.get("events") or {}
+        rows = {}
+        for k in ("首板", "连板≥2", "跌停", "龙虎榜净买强"):
+            v = ev.get(k)
+            if not v:
+                continue
+            rows[k] = {
+                "事件后5日超额": f"{v.get('exc_clip_pct')}%",
+                "同分位对照": f"{v.get('ctrl_clip_pct')}%",
+                "净效应": (f"{v.get('excess_over_matched_pct')}%" if v.get("excess_over_matched_pct") is not None else "n/a"),
+                "样本": f"{v.get('n')} 例 / {v.get('days')} 天",
+            }
+        if not rows:
+            return {}
+        return {
+            "口径": f"中小盘域（流动性排名 601~1800）、{d['meta']['range'][0]}~{d['meta']['range'][1]}、"
+                    f"T+1 开盘买入持有 5 日、相对等权池超额（裁尾 ±20%）、已按同日 RET5 分位对照",
+            "各事件": rows,
+            "读法": "负的净效应 = 该事件后买入跑输同类（按动量匹配）的票。样本外只有两年多、"
+                    "事件样本有限，别当成铁律；但「涨停=很强/跌停=超跌该反弹/龙虎榜净买=有资金」这类直觉"
+                    "在这里**全都不成立**，追它之前请先想清楚理由。",
+        }
+    except Exception:
+        return {}
 
 
 def _rules_block(profile_id: int, as_of: Optional[str] = None) -> list:
