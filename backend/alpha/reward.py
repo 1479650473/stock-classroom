@@ -98,7 +98,7 @@ def _max_drawdown(equity: np.ndarray) -> float:
 def evaluate(sig: np.ndarray, target: np.ndarray, masks: Dict[str, np.ndarray],
              sl: slice, top_k: int = 20, cost_one_way: float = DEFAULT_COST_ONE_WAY,
              bench_daily: Optional[np.ndarray] = None, hold: int = 1,
-             neutralize_fn=None) -> Dict[str, float]:
+             neutralize_fn=None, scale: Optional[np.ndarray] = None) -> Dict[str, float]:
     """在 sl 指定的时间段上评估信号。sig/target 形状 [N, T]。
 
     bench_daily：可选，等权股票池的日收益序列（长度 T）。给了之后就额外给出
@@ -153,6 +153,11 @@ def evaluate(sig: np.ndarray, target: np.ndarray, masks: Dict[str, np.ndarray],
         W[:, hold:] = (c[:, hold:] - c[:, :-hold]) / float(hold)
     else:
         W = Mf
+    # 仓位系数（择时实验用）：scale_t ∈ [0,1] 逐日缩放持仓 → 调仓成本也随比例变化
+    if scale is not None:
+        sc = np.asarray(scale, dtype=np.float64)[:W.shape[1]]
+        if sc.size == W.shape[1]:
+            W = W * np.clip(sc, 0.0, 1.0)[None, :]
     tg0 = np.nan_to_num(tg)
     daily_free = (W * tg0).sum(axis=0)
     dw = np.abs(np.diff(W, axis=1)).sum(axis=0) if idx.size > 1 else np.zeros(0)
