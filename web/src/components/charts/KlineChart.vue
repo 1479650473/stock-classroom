@@ -156,7 +156,8 @@ const isFs = ref(false)
 const rangeTick = ref(0)
 
 // ---- 区间测量 ----
-interface SelStats { n: number; from: string; to: string; chg: number; hi: number; lo: number; amp: number; vol: number; amt: number }
+interface SelMark { label: string; kind: 'sup' | 'res' | 'line' }
+interface SelStats { n: number; from: string; to: string; chg: number; hi: number; lo: number; amp: number; vol: number; amt: number; marks: SelMark[] }
 const measureOn = ref(false)
 const sel = ref<{ i1: number; i2: number; stats: SelStats } | null>(null)
 let dragging = false
@@ -168,6 +169,16 @@ function fmtT(t: string | number): string {
     return d.toISOString().slice(0, 16).replace('T', ' ')
   }
   return s
+}
+
+/** 程序画的线段在某个 bar 下标处的值（用于测量联动） */
+function lineValAt(seg: { p1: { time: string; price: number }; p2: { time: string; price: number } },
+                   idx: number): number | null {
+  const i1 = idxByTime.get(String(seg.p1.time))
+  const i2 = idxByTime.get(String(seg.p2.time))
+  if (i1 == null || i2 == null || i1 === i2) return null
+  const slope = (seg.p2.price - seg.p1.price) / (i2 - i1)
+  return seg.p1.price + slope * (idx - i1)
 }
 
 function computeSel(i1: number, i2: number): SelStats | null {
@@ -188,10 +199,35 @@ function computeSel(i1: number, i2: number): SelStats | null {
     amt += bars[k].amount ?? 0
   }
   const base = first.close || 1
+  // 程序画线联动：区间内经过的水平位 / 穿过的趋势线、通道
+  const marks: SelMark[] = []
+  const ana = props.analysis
+  if (ana && ana.ok) {
+    for (const lv of ana.levels || []) {
+      if (lv.price >= lo && lv.price <= hi) {
+        marks.push({
+          label: `${lv.role === 'support' ? '支撑' : '阻力'} ${lv.price}`,
+          kind: lv.role === 'support' ? 'sup' : 'res',
+        })
+      }
+    }
+    for (const seg of [ana.trend?.trend, ana.trend?.channel]) {
+      if (!seg) continue
+      const v1 = lineValAt(seg, a)
+      const v2 = lineValAt(seg, b)
+      if (v1 == null || v2 == null) continue
+      const lo2 = Math.min(v1, v2)
+      const hi2 = Math.max(v1, v2)
+      if (hi2 >= lo && lo2 <= hi) {
+        marks.push({ label: `${seg.label} ${v1.toFixed(2)}→${v2.toFixed(2)}`, kind: 'line' })
+      }
+    }
+  }
   return {
     n: b - a + 1, from: fmtT(first.time), to: fmtT(last.time),
     chg: (last.close / base - 1) * 100,
     hi, lo, amp: ((hi - lo) / base) * 100, vol, amt,
+    marks,
   }
 }
 
@@ -1214,6 +1250,10 @@ onBeforeUnmount(() => {
         <span>量</span><b>{{ fmtVol(sel.stats.vol) }}</b>
         <span class="sep">·</span><span>额</span><b>{{ fmtVol(sel.stats.amt) }}</b>
       </div>
+      <div v-if="sel.stats.marks.length" class="lwc-selstats__row lwc-selstats__row--marks">
+        <span>程序位</span>
+        <b v-for="(mk, i) in sel.stats.marks" :key="i" class="lwc-selstats__tag" :class="`is-${mk.kind}`">{{ mk.label }}</b>
+      </div>
     </div>
     <div ref="playheadEl" class="lwc-playhead" :style="{ background: playheadColor }" />
     <div v-if="showTools" class="lwc-tools">
@@ -1271,6 +1311,18 @@ onBeforeUnmount(() => {
 .lwc-selstats__row b { color: var(--text); font-weight: 600; }
 .lwc-selstats__row--head { color: var(--accent); font-weight: 600; }
 .lwc-selstats__row .sep { color: var(--border-strong); }
+.lwc-selstats__row--marks { flex-wrap: wrap; row-gap: 3px; }
+.lwc-selstats__tag {
+  font-weight: 500 !important;
+  font-size: 10px;
+  line-height: 1.6;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 6px;
+}
+.lwc-selstats__tag.is-sup { color: var(--down) !important; border-color: color-mix(in srgb, var(--down) 45%, transparent); }
+.lwc-selstats__tag.is-res { color: var(--up) !important; border-color: color-mix(in srgb, var(--up) 45%, transparent); }
+.lwc-selstats__tag.is-line { color: var(--accent) !important; border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 .lwc-selstats .up { color: var(--up); }
 .lwc-selstats .down { color: var(--down); }
 .lwc-chart { width: 100%; height: 100%; }
