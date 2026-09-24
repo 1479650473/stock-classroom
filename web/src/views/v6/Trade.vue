@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onActivated, onMounted, ref, watch } from 'vue'
+import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppPage from '@/components/ui/AppPage.vue'
 import PageToolbar from '@/components/ui/PageToolbar.vue'
@@ -8,13 +8,16 @@ import StatTile from '@/components/ui/StatTile.vue'
 import DataTable from '@/components/ui/DataTable.vue'
 import type { DataColumn } from '@/components/ui/DataTable.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
+import TradeSystems from '@/components/TradeSystems.vue'
+import SimPanel from '@/components/SimPanel.vue'
 import FormField from '@/components/ui/FormField.vue'
 import Drawer from '@/components/ui/Drawer.vue'
 import EmptyGuide from '@/components/ui/EmptyGuide.vue'
 import Icon from '@/components/Icon.vue'
 import { useToastStore } from '@/stores/toast'
 import {
-  listAccounts, getPositions, getOrders, placeOrder, cancelOrder, refreshPrices,
+  listAccounts, createAccount, renameAccount, resetAccount, deleteAccount,
+  getPositions, getOrders, placeOrder, cancelOrder, refreshPrices,
   getNavHistory, getPicks, runPicks,
 } from '@/api'
 import type { AccountSummary, Position, Order, PickItem } from '@/api'
@@ -22,17 +25,19 @@ import { useEChart, cssVar } from '@/composables/useEChart'
 import { areaLineStyle, tooltipStyle } from '@/lib/chartTheme'
 import { usePersistedRef } from '@/composables/usePersistedRef'
 
-type Tab = 'positions' | 'order' | 'orders' | 'picks'
+type Tab = 'systems' | 'positions' | 'order' | 'orders' | 'picks' | 'sim'
 
 const route = useRoute()
 const router = useRouter()
 const toast = useToastStore()
 
 const TABS = [
+  { value: 'systems', label: '体系总览', icon: 'layers' },
   { value: 'positions', label: '持仓', icon: 'holdings' },
   { value: 'order', label: '下单', icon: 'trade' },
   { value: 'orders', label: '订单', icon: 'log' },
   { value: 'picks', label: '选股', icon: 'picks' },
+  { value: 'sim', label: '模拟盘', icon: 'wallet' },
 ]
 
 const tab = ref<Tab>(normalizeTab(route.query.tab))
@@ -50,6 +55,12 @@ const picksRunning = ref(false)
 const nav = ref<number[]>([])
 const navEl = ref<HTMLElement | null>(null)
 const advancedOpen = ref(false)
+const accountBusy = ref(false)
+const accountDraft = reactive({
+  name: '',
+  newName: '',
+  newCapital: 100000,
+})
 
 const form = usePersistedRef('trade.form', {
   side: 'buy' as 'buy' | 'sell',
@@ -64,6 +75,14 @@ const submitting = ref(false)
 const currentAccount = computed(() =>
   accounts.value.find((a) => a.account_id === selectedId.value) ?? null,
 )
+
+watch(
+  currentAccount,
+  (a) => {
+    accountDraft.name = a?.name || ''
+  },
+  { immediate: true },
+)
 const positionRows = computed(() => positions.value as unknown as Record<string, unknown>[])
 const orderRows = computed(() => orders.value as unknown as Record<string, unknown>[])
 const pickRows = computed(() => picks.value as unknown as Record<string, unknown>[])
@@ -72,10 +91,23 @@ const posFloatPnl = computed(() => positions.value.reduce((s, p) => s + p.float_
 
 function normalizeTab(v: unknown): Tab {
   const s = String(v || '')
-  return (['positions', 'order', 'orders', 'picks'] as const).includes(s as Tab)
+  return (['systems', 'positions', 'order', 'orders', 'picks', 'sim'] as const).includes(s as Tab)
     ? (s as Tab)
-    : 'positions'
+    : 'systems'
 }
+
+/** 账户相关页签（持仓/下单/订单/选股）才显示账户栏；总览与模拟盘不显示 */
+const showAccountBar = computed(() => ['positions', 'order', 'orders', 'picks'].includes(tab.value))
+
+const SUBTITLES: Record<Tab, string> = {
+  systems: '三个程序交易体系：固定策略（因子公式）· 外部 LLM 决策 · 本地预测模型',
+  positions: '通用模拟账户 · 持仓 · 下单 · 订单 · 选股',
+  order: '通用模拟账户 · 持仓 · 下单 · 订单 · 选股',
+  orders: '通用模拟账户 · 持仓 · 下单 · 订单 · 选股',
+  picks: '通用模拟账户 · 持仓 · 下单 · 订单 · 选股',
+  sim: '体系三 · 本地预测模型（stock-ml 策略账户快照）',
+}
+const subtitle = computed(() => SUBTITLES[tab.value])
 
 watch(tab, (v) => {
   const q = { ...route.query, tab: v }
@@ -129,6 +161,76 @@ async function loadAccounts() {
     loadError.value = e instanceof Error ? e.message : '账户加载失败'
   } finally {
     loading.value = false
+  }
+}
+
+async function handleCreateAccount() {
+  const name = accountDraft.newName.trim()
+  const capital = Number(accountDraft.newCapital)
+  if (!name) { toast.error('请输入账户名称'); return }
+  if (!Number.isFinite(capital) || capital <= 0) { toast.error('请输入有效的初始资金'); return }
+  accountBusy.value = true
+  try {
+    const id = await createAccount(name, capital)
+    await loadAccounts()
+    if (typeof id === 'number') selectedId.value = id
+    await refreshAccountData()
+    accountDraft.newName = ''
+    accountDraft.newCapital = 100000
+    toast.success(`账户「${name}」已创建`)
+  } catch (e) {
+    toast.error('创建账户失败：' + msg(e))
+  } finally {
+    accountBusy.value = false
+  }
+}
+
+async function handleRenameAccount() {
+  if (!selectedId.value) return
+  const name = accountDraft.name.trim()
+  if (!name) { toast.error('账户名称不能为空'); return }
+  accountBusy.value = true
+  try {
+    await renameAccount(selectedId.value, name)
+    await loadAccounts()
+    toast.success('账户名称已更新')
+  } catch (e) {
+    toast.error('重命名失败：' + msg(e))
+  } finally {
+    accountBusy.value = false
+  }
+}
+
+async function handleResetAccount() {
+  if (!selectedId.value || !currentAccount.value) return
+  if (!window.confirm(`确认重置「${currentAccount.value.name}」？持仓、订单、成交和净值记录都会清空。`)) return
+  accountBusy.value = true
+  try {
+    await resetAccount(selectedId.value)
+    await refreshAccountData()
+    toast.success('账户已重置')
+  } catch (e) {
+    toast.error('重置失败：' + msg(e))
+  } finally {
+    accountBusy.value = false
+  }
+}
+
+async function handleDeleteAccount() {
+  if (!selectedId.value || !currentAccount.value) return
+  if (!window.confirm(`确认删除「${currentAccount.value.name}」？此操作不可撤销。`)) return
+  accountBusy.value = true
+  try {
+    const id = selectedId.value
+    await deleteAccount(id)
+    if (selectedId.value === id) selectedId.value = null
+    await loadAccounts()
+    advancedOpen.value = false
+    toast.success('账户已删除')
+  } catch (e) {
+    toast.error('删除失败：' + msg(e))
+  } finally {
+    accountBusy.value = false
   }
 }
 
@@ -316,8 +418,9 @@ watch(tab, async (v) => {
 </script>
 
 <template>
-  <AppPage title="交易" subtitle="持仓 · 下单 · 订单 · 选股，一处完成">
+  <AppPage title="交易" :subtitle="subtitle">
     <template #actions>
+      <template v-if="showAccountBar">
       <select
         v-if="accounts.length > 1"
         v-model="selectedId"
@@ -333,10 +436,11 @@ watch(tab, async (v) => {
       <button class="ui-btn ui-btn--primary" @click="tab = 'order'">
         <Icon name="plus" :size="14" /><span>下单</span>
       </button>
+      </template>
     </template>
 
     <EmptyGuide
-      v-if="!loading && !accounts.length"
+      v-if="showAccountBar && !loading && !accounts.length"
       icon="wallet"
       title="还没有模拟账户"
       desc="先创建一个账户，就可以开始模拟交易了。"
@@ -347,7 +451,7 @@ watch(tab, async (v) => {
     </EmptyGuide>
 
     <template v-else>
-      <div v-if="currentAccount" class="metrics">
+      <div v-if="showAccountBar && currentAccount" class="metrics">
         <StatTile label="总资产" :value="fmtMoney(currentAccount.total_assets)" icon="wallet" />
         <StatTile
           label="总盈亏"
@@ -375,8 +479,13 @@ watch(tab, async (v) => {
           </PageToolbar>
         </div>
 
+        <!-- 体系总览（三大程序交易体系） -->
+        <div v-if="tab === 'systems'" class="pane">
+          <TradeSystems @go="(t) => (tab = t as Tab)" />
+        </div>
+
         <!-- 持仓 -->
-        <div v-if="tab === 'positions'" class="pane">
+        <div v-else-if="tab === 'positions'" class="pane">
           <DataTable
             :columns="positionColumns"
             :rows="positionRows"
@@ -487,7 +596,7 @@ watch(tab, async (v) => {
         </div>
 
         <!-- 选股 -->
-        <div v-else class="pane">
+        <div v-else-if="tab === 'picks'" class="pane">
           <DataTable
             :columns="pickColumns"
             :rows="pickRows"
@@ -524,6 +633,11 @@ watch(tab, async (v) => {
             </template>
           </DataTable>
         </div>
+
+        <!-- 模拟盘（体系三 · 本地预测模型） -->
+        <div v-else-if="tab === 'sim'" class="pane">
+          <SimPanel />
+        </div>
       </SectionCard>
 
       <!-- 净值曲线 -->
@@ -533,21 +647,59 @@ watch(tab, async (v) => {
     </template>
 
     <Drawer v-model:open="advancedOpen" title="账户设置" desc="创建、重命名或重置模拟账户">
-      <EmptyGuide icon="settings" title="账户管理" desc="账户创建/重置等高级操作将在此处提供。" />
+      <div class="account-admin">
+        <section v-if="currentAccount" class="account-block">
+          <div class="account-block__head">
+            <div>
+              <div class="account-block__name">{{ currentAccount.name }}</div>
+              <div class="account-block__meta">
+                初始资金 {{ fmtMoney(currentAccount.initial_capital) }} · 持仓 {{ currentAccount.positions }} 只
+              </div>
+            </div>
+            <span class="ui-chip ui-chip--gold">当前账户</span>
+          </div>
+          <FormField label="账户名称">
+            <input v-model="accountDraft.name" class="ui-input" maxlength="24" @keyup.enter="handleRenameAccount" />
+          </FormField>
+          <div class="account-actions">
+            <button class="ui-btn ui-btn--primary" :disabled="accountBusy" @click="handleRenameAccount">
+              保存名称
+            </button>
+          </div>
+        </section>
+
+        <section class="account-block">
+          <h3 class="account-block__title">新建账户</h3>
+          <FormField label="账户名称" required>
+            <input v-model="accountDraft.newName" class="ui-input" placeholder="例如：趋势实验" maxlength="24" />
+          </FormField>
+          <FormField label="初始资金" required>
+            <input v-model.number="accountDraft.newCapital" class="ui-input num" type="number" min="1000" step="10000" />
+          </FormField>
+          <div class="account-actions">
+            <button class="ui-btn ui-btn--primary" :disabled="accountBusy" @click="handleCreateAccount">
+              <Icon name="plus" :size="14" /><span>创建账户</span>
+            </button>
+          </div>
+        </section>
+
+        <section v-if="currentAccount" class="account-block account-block--danger">
+          <h3 class="account-block__title">危险操作</h3>
+          <p class="account-block__hint">
+            重置会清空该账户的持仓、订单、成交和净值记录；删除账户不可撤销。
+          </p>
+          <div class="account-actions">
+            <button class="ui-btn ui-btn--danger" :disabled="accountBusy" @click="handleResetAccount">重置账户</button>
+            <button class="ui-btn ui-btn--danger" :disabled="accountBusy" @click="handleDeleteAccount">删除账户</button>
+          </div>
+        </section>
+      </div>
     </Drawer>
   </AppPage>
 </template>
 
 <style scoped>
-.metrics {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: var(--sp-4);
-  padding: var(--sp-5);
-  background: var(--bg-raised);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-lg);
-}
+/* .metrics 已收敛到全局样式（styles/base.css） */
 .pane { padding: var(--sp-2) var(--sp-5) var(--sp-5); }
 .order-form {
   display: grid;
@@ -561,4 +713,22 @@ watch(tab, async (v) => {
 .nav-chart { height: 260px; }
 .mono { font-family: var(--font-mono); }
 .gold { color: var(--gold); font-weight: 600; }
+
+.account-admin { display: flex; flex-direction: column; gap: var(--sp-4); }
+.account-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+}
+.account-block--danger { border-color: color-mix(in srgb, var(--up) 35%, var(--border-soft)); }
+.account-block__head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-3); }
+.account-block__name { font-size: var(--fs-lg); font-weight: 650; }
+.account-block__meta { margin-top: 3px; color: var(--text-faint); font-size: var(--fs-xs); }
+.account-block__title { margin: 0; font-size: var(--fs-md); font-weight: 600; color: var(--text); }
+.account-block__hint { margin: 0; color: var(--text-sub); font-size: var(--fs-xs); line-height: 1.6; }
+.account-actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
 </style>

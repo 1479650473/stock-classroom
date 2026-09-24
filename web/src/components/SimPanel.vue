@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
-import AppPage from '@/components/ui/AppPage.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import DataTable from '@/components/ui/DataTable.vue'
 import type { DataColumn } from '@/components/ui/DataTable.vue'
@@ -195,12 +194,19 @@ function groupByDate(trades: SimTrade[]) {
 </script>
 
 <template>
-  <AppPage title="模拟盘" :subtitle="`对接 stock-ml 策略账户 · 数据日期 ${dataDate || '—'} · 快照 ${generated || '—'}`">
-    <template #actions>
+  <div class="sim-panel">
+    <div class="sim-bar">
+      <div class="sim-bar__meta">
+        <span class="sim-bar__src">体系三 · 本地预测模型</span>
+        <span class="sim-bar__sep">·</span>
+        <span>数据来源 stock-ml 策略账户（快照由本地训练模型驱动）</span>
+        <span class="sim-bar__sep">·</span>
+        <span>数据日期 {{ dataDate || '—' }} · 快照 {{ generated || '—' }}</span>
+      </div>
       <button class="btn" :disabled="refreshing" @click="doRefresh">
         {{ refreshing ? '刷新中…' : '刷新数据' }}
       </button>
-    </template>
+    </div>
 
     <div v-if="error" class="err-box">加载失败：{{ error }}</div>
 
@@ -252,10 +258,23 @@ function groupByDate(trades: SimTrade[]) {
       </div>
       <div v-if="!accounts.length" class="acc-empty">暂无账户数据</div>
     </SectionCard>
-  </AppPage>
+  </div>
 </template>
 
 <style scoped>
+.sim-panel { display: flex; flex-direction: column; gap: 2px; }
+.sim-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: 2px 2px 12px;
+  flex-wrap: wrap;
+}
+.sim-bar__meta { font-size: 12px; color: var(--text-faint); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.sim-bar__src { color: var(--accent); font-weight: 600; }
+.sim-bar__sep { color: var(--border-strong); }
+
 .btn {
   padding: 6px 16px;
   border-radius: 8px;
