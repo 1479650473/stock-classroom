@@ -77,6 +77,14 @@ function toggleMa(n: number) {
   maSet.value = cur.includes(n) ? cur.filter((x) => x !== n) : [...cur, n].sort((a, b) => a - b)
 }
 
+// 深链：?period=ts|1|5|15|30|60|daily|weekly|monthly、?sub=macd|kdj|rsi|none（截图/分享用）
+;(() => {
+  const qp = String(route.query.period || '')
+  if (PERIOD_OPTIONS.some((o) => o.value === qp)) period.value = qp as Period
+  const qs = String(route.query.sub || '')
+  if (SUB_OPTIONS.some((o) => o.value === qs)) subIndicator.value = qs as 'macd' | 'kdj' | 'rsi' | 'none'
+})()
+
 const isMinute = computed(() => ['ts', '1', '5', '15', '30', '60'].includes(period.value))
 const isTimeshare = computed(() => period.value === 'ts')
 const periodLabel = computed(() =>
@@ -251,6 +259,8 @@ watch(
   () => route.query,
   (q) => {
     if (q.tab === 'stock' && tab.value !== 'stock') tab.value = 'stock'
+    const qp = String(q.period || '')
+    if (qp && PERIOD_OPTIONS.some((o) => o.value === qp) && qp !== period.value) period.value = qp as Period
     if (q.code && String(q.code) !== code.value) {
       code.value = String(q.code)
       stockName.value = String(q.name || '')

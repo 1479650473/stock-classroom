@@ -438,9 +438,15 @@ function apply() {
     tsAvgSeries.value?.setData([])
   }
 
+  // 分时模式不画均线/布林（券商口径：分时只有价格线+均价线）
+  const overlaysOn = !props.timeshare
   props.mas.forEach((n, i) => {
     const s = maSeries[i]
     if (!s) return
+    if (!overlaysOn) {
+      s.setData([])
+      return
+    }
     const data: { time: Time; value: number }[] = []
     for (let idx = 0; idx < bars.length; idx++) {
       if (idx < n - 1) continue
@@ -452,7 +458,10 @@ function apply() {
   })
 
   // 布林带
-  if (props.boll && bollSeries.value.length === 3) {
+  if (bollSeries.value.length === 3 && (!props.boll || !overlaysOn)) {
+    bollSeries.value.forEach((x) => x.setData([]))
+  }
+  if (props.boll && overlaysOn && bollSeries.value.length === 3) {
     const closes = bars.map((b) => b.close)
     const { mid, upper, lower } = calcBoll(closes)
     const sets = [upper, mid, lower]
