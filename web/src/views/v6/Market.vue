@@ -77,6 +77,12 @@ function toggleMa(n: number) {
   maSet.value = cur.includes(n) ? cur.filter((x) => x !== n) : [...cur, n].sort((a, b) => a - b)
 }
 
+/** 图表键盘快捷键：数字 1-9 切周期（对应 PERIOD_OPTIONS 顺序） */
+function setPeriodByKey(i: number) {
+  const opt = PERIOD_OPTIONS[i]
+  if (opt) period.value = opt.value as Period
+}
+
 // 深链：?period=ts|1|5|15|30|60|daily|weekly|monthly、?sub=macd|kdj|rsi|none（截图/分享用）
 ;(() => {
   const qp = String(route.query.period || '')
@@ -431,6 +437,7 @@ onMounted(() => {
                 >{{ p.label }}</button>
               </div>
               <span class="kbar__spacer" />
+              <span class="kbar__hint">1-9 周期 · ←→ 平移 · ↑↓ 缩放 · Home 复位 · 图表内点选后生效</span>
               <div v-if="!isMinute" class="kbar__days">
                 <button
                   v-for="d in DAY_OPTIONS" :key="d.value"
@@ -470,6 +477,7 @@ onMounted(() => {
             :timeshare="isTimeshare"
             :prev-close="prevClose"
             :title="`${stockName || code} ${periodLabel}`"
+            @period-key="setPeriodByKey"
           />
           <div v-if="!isMinute" class="detail-table">
             <h3 class="sub-title">历史数据（近 {{ Math.min(kline.length, 60) }} 条）</h3>
@@ -593,4 +601,5 @@ onMounted(() => {
 .kbar__chip:hover { color: var(--text-sub); border-color: var(--border-strong); }
 .kbar__chip.is-on { color: var(--accent); border-color: var(--accent); background: var(--accent-dim, transparent); }
 .kbar__days { display: flex; gap: 2px; }
+.kbar__hint { margin-left: 10px; font-size: 11px; color: var(--text-faint); }
 </style>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import {
   createChart, CandlestickSeries, HistogramSeries, LineSeries, AreaSeries, LineStyle, CrosshairMode,
   createSeriesMarkers,
@@ -120,6 +120,8 @@ const props = withDefaults(
   },
 )
 
+const emit = defineEmits<{ periodKey: [index: number] }>()
+
 const wrapEl = ref<HTMLDivElement>()
 const el = ref<HTMLDivElement>()
 const playheadEl = ref<HTMLDivElement>()
@@ -145,6 +147,132 @@ let idxByTime = new Map<string, number>()
 const legendRows = ref<LegendCell[][]>([])
 const paneCount = ref(0)
 const isFs = ref(false)
+const rangeTick = ref(0)
+
+// ---- 区间测量 ----
+interface SelStats { n: number; from: string; to: string; chg: number; hi: number; lo: number; amp: number; vol: number; amt: number }
+const measureOn = ref(false)
+const sel = ref<{ i1: number; i2: number; stats: SelStats } | null>(null)
+let dragging = false
+
+function fmtT(t: string | number): string {
+  const s = String(t)
+  if (/^\d{9,10}$/.test(s)) {
+    const d = new Date(Number(s) * 1000)
+    return d.toISOString().slice(0, 16).replace('T', ' ')
+  }
+  return s
+}
+
+function computeSel(i1: number, i2: number): SelStats | null {
+  const bars = props.bars
+  if (!bars.length) return null
+  const a = Math.max(0, Math.min(i1, i2))
+  const b = Math.min(bars.length - 1, Math.max(i1, i2))
+  const first = bars[a]
+  const last = bars[b]
+  let hi = -Infinity
+  let lo = Infinity
+  let vol = 0
+  let amt = 0
+  for (let k = a; k <= b; k++) {
+    if (bars[k].high > hi) hi = bars[k].high
+    if (bars[k].low < lo) lo = bars[k].low
+    vol += bars[k].volume ?? 0
+    amt += bars[k].amount ?? 0
+  }
+  const base = first.close || 1
+  return {
+    n: b - a + 1, from: fmtT(first.time), to: fmtT(last.time),
+    chg: (last.close / base - 1) * 100,
+    hi, lo, amp: ((hi - lo) / base) * 100, vol, amt,
+  }
+}
+
+const selRect = computed(() => {
+  const s = sel.value
+  const ch = chart.value
+  if (!s || !ch) return null
+  void rangeTick.value
+  const bars = props.bars
+  const x1 = ch.timeScale().timeToCoordinate(bars[s.i1]?.time as Time)
+  const x2 = ch.timeScale().timeToCoordinate(bars[s.i2]?.time as Time)
+  if (x1 == null || x2 == null) return null
+  return { left: Math.min(x1, x2), width: Math.max(2, Math.abs(x2 - x1)) }
+})
+
+function barIndexFromX(x: number): number {
+  const ts = chart.value?.timeScale()
+  if (!ts || !props.bars.length) return -1
+  const lg = ts.coordinateToLogical(x)
+  if (lg == null) return -1
+  return Math.max(0, Math.min(props.bars.length - 1, Math.round(lg)))
+}
+
+function onWrapPointerDown(e: PointerEvent) {
+  wrapEl.value?.focus({ preventScroll: true })
+  if (!measureOn.value || !el.value) return
+  const rect = el.value.getBoundingClientRect()
+  const i = barIndexFromX(e.clientX - rect.left)
+  if (i < 0) return
+  dragging = true
+  const stats = computeSel(i, i)
+  if (stats) sel.value = { i1: i, i2: i, stats }
+  window.addEventListener('pointermove', onWinMove)
+  window.addEventListener('pointerup', onWinUp)
+  e.preventDefault()
+}
+
+function onWinMove(ev: PointerEvent) {
+  if (!dragging || !el.value || !sel.value) return
+  const rect = el.value.getBoundingClientRect()
+  const i = barIndexFromX(ev.clientX - rect.left)
+  if (i < 0) return
+  const stats = computeSel(sel.value.i1, i)
+  if (stats) sel.value = { i1: sel.value.i1, i2: i, stats }
+}
+
+function onWinUp() {
+  dragging = false
+  window.removeEventListener('pointermove', onWinMove)
+  window.removeEventListener('pointerup', onWinUp)
+}
+
+function toggleMeasure() {
+  measureOn.value = !measureOn.value
+  sel.value = null
+  chart.value?.applyOptions({
+    handleScroll: !measureOn.value,
+    handleScale: !measureOn.value,
+  })
+  if (measureOn.value) wrapEl.value?.focus({ preventScroll: true })
+}
+
+function onKey(e: KeyboardEvent) {
+  const t = e.target as HTMLElement | null
+  if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return
+  const ts = chart.value?.timeScale()
+  if (!ts) return
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    const r = ts.getVisibleLogicalRange()
+    if (!r) return
+    const w = r.to - r.from
+    const d = (e.key === 'ArrowLeft' ? -1 : 1) * Math.max(1, w * 0.12)
+    ts.setVisibleLogicalRange({ from: r.from + d, to: r.to + d })
+    e.preventDefault()
+  } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+    zoom(e.key === 'ArrowUp' ? 0.8 : 1.25)
+    e.preventDefault()
+  } else if (e.key === 'Home') {
+    resetView()
+    e.preventDefault()
+  } else if (e.key === 'Escape') {
+    if (measureOn.value) toggleMeasure()
+  } else if (/^[1-9]$/.test(e.key)) {
+    emit('periodKey', Number(e.key) - 1)
+    e.preventDefault()
+  }
+}
 
 const MA_EXTRA = () => [tokens().up, tokens().info]
 
@@ -328,6 +456,73 @@ function layoutPanes() {
 }
 
 // ---- 副图指标 ----
+
+/** 查找序列所在窗格 */
+function paneIndexOf(s: unknown): number {
+  const ch = chart.value
+  if (!ch || !s) return -1
+  const panes = ch.panes()
+  for (let i = 0; i < panes.length; i++) {
+    if (panes[i].getSeries().includes(s as never)) return i
+  }
+  return -1
+}
+
+function removePaneIfEmpty(idx: number) {
+  const ch = chart.value
+  if (!ch || idx < 0) return
+  const panes = ch.panes()
+  if (idx < panes.length && panes[idx].getSeries().length === 0) {
+    try { ch.removePane(idx) } catch { /* 版本差异忽略 */ }
+  }
+}
+
+/**
+ * 结构同步：资金流/权益窗格按 show 标记增删，并保证窗格顺序 = 主图 / 量 / 资金流 / 指标。
+ * （原来只在 init 时按当时数据建窗格 → 日K 切到分钟会留下空的资金流窗格）
+ */
+function syncStructure() {
+  const ch = chart.value
+  if (!ch) return
+  const wantFlow = props.showFundFlow || props.fundFlow.length > 0
+    || props.showEquity || props.equity.length > 0
+  const flow = fundFlowSeries.value ?? equitySeries.value
+  if (wantFlow && !flow) {
+    // 建流量窗格（资金流优先，其次权益），再把它移到指标窗之前
+    const line = cssVar('--accent', '#7AA2F7')
+    if (props.showFundFlow || props.fundFlow.length > 0) {
+      fundFlowSeries.value = ch.addSeries(
+        HistogramSeries,
+        { priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false },
+        ch.panes().length,
+      )
+    } else {
+      equitySeries.value = ch.addSeries(
+        AreaSeries,
+        {
+          lineColor: line, lineWidth: 2,
+          topColor: withAlpha(line, 0.28), bottomColor: withAlpha(line, 0.02),
+          priceLineVisible: false, lastValueVisible: false,
+        },
+        ch.panes().length,
+      )
+    }
+    const newIdx = ch.panes().length - 1
+    const subIdx = paneIndexOf(subSeries[0])
+    if (subIdx >= 0 && subIdx < newIdx) {
+      try { ch.swapPanes(subIdx, newIdx) } catch { /* ignore */ }
+    }
+    apply()
+  } else if (!wantFlow && flow) {
+    const idx = paneIndexOf(flow)
+    ch.removeSeries(flow)
+    fundFlowSeries.value = null
+    equitySeries.value = null
+    removePaneIfEmpty(idx)
+    layoutPanes()
+  }
+}
+
 let subPaneOn = false
 function ensureSub() {
   if (!chart.value) return
@@ -345,11 +540,12 @@ function ensureSub() {
   }
   const pane = subPaneOn ? Math.max(1, chart.value.panes().length - 1) : subPaneIndex()
   const mkLine = (color: string, width = 1) => chart.value!.addSeries(LineSeries, {
-    color, lineWidth: width as 1 | 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+    color, lineWidth: width as 1 | 2, priceLineVisible: false, lastValueVisible: false,
+    crosshairMarkerVisible: false, priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
   }, pane)
   if (props.sub === 'macd') {
     subSeries.push(chart.value.addSeries(HistogramSeries, {
-      priceLineVisible: false, lastValueVisible: false, priceFormat: { type: 'price', precision: 3, minMove: 0.001 },
+      priceLineVisible: false, lastValueVisible: false, priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
     }, pane))
     subSeries.push(mkLine(maColors()[0]!, 1))
     subSeries.push(mkLine(maColors()[1]!, 1))
@@ -607,7 +803,8 @@ function buildLegend(param: MouseEventParams | null) {
     { label: '高', value: hi.toFixed(2) },
     { label: '低', value: lo.toFixed(2) },
     { label: '收', value: b.close.toFixed(2) },
-    { label: '涨跌', value: `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`, color: cUp },
+    { label: '涨跌', value: `${b.close - base >= 0 ? '+' : ''}${(b.close - base).toFixed(2)}`, color: cUp },
+    { label: '涨跌幅', value: `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`, color: cUp },
     { label: '振幅', value: `${amp.toFixed(2)}%` },
     { label: '量', value: fmtVol(vol) },
     ...(amt ? [{ label: '额', value: fmtVol(amt) }] : []),
@@ -728,6 +925,7 @@ function onFsChange() {
 }
 
 function schedulePlayhead() {
+  rangeTick.value++
   cancelAnimationFrame(rafId)
   rafId = requestAnimationFrame(positionPlayhead)
 }
@@ -829,7 +1027,8 @@ watch(() => props.playheadTime, () => schedulePlayhead())
 watch(() => props.height, (h) => {
   if (!isFs.value) chart.value?.applyOptions({ height: h })
 })
-watch(() => props.fundFlow, () => apply())
+watch(() => props.fundFlow, () => { syncStructure(); apply() })
+watch(() => [props.showFundFlow, props.showEquity, props.equity], () => syncStructure())
 watch(() => props.sub, () => { ensureSub(); buildLegend(null) })
 watch(() => props.boll, (on) => {
   bollSeries.value.forEach((s) => s.applyOptions({ visible: on }))
@@ -860,9 +1059,12 @@ onBeforeUnmount(() => {
   <div
     ref="wrapEl"
     class="lwc-wrap"
+    tabindex="0"
     :data-panes="paneCount"
-    :class="{ 'lwc-wrap--fs': isFs }"
+    :class="{ 'lwc-wrap--fs': isFs, 'lwc-wrap--measure': measureOn }"
     :style="isFs ? {} : { height: `${height}px` }"
+    @keydown="onKey"
+    @pointerdown="onWrapPointerDown"
   >
     <div v-if="showLegend && legendRows.length" class="lwc-legend">
       <div v-for="(row, ri) in legendRows" :key="ri" class="lwc-legend__row">
@@ -873,8 +1075,29 @@ onBeforeUnmount(() => {
       </div>
     </div>
     <div ref="el" class="lwc-chart" />
+    <div v-if="selRect" class="lwc-sel" :style="{ left: `${selRect.left}px`, width: `${selRect.width}px` }" />
+    <div v-if="sel" class="lwc-selstats">
+      <div class="lwc-selstats__row lwc-selstats__row--head">{{ sel.stats.from }} → {{ sel.stats.to }} · {{ sel.stats.n }} 根</div>
+      <div class="lwc-selstats__row">
+        <span>涨跌幅</span>
+        <b :class="sel.stats.chg >= 0 ? 'up' : 'down'">{{ (sel.stats.chg >= 0 ? '+' : '') + sel.stats.chg.toFixed(2) }}%</b>
+        <span class="sep">·</span><span>振幅</span><b>{{ sel.stats.amp.toFixed(2) }}%</b>
+      </div>
+      <div class="lwc-selstats__row">
+        <span>高</span><b>{{ sel.stats.hi.toFixed(2) }}</b>
+        <span class="sep">·</span><span>低</span><b>{{ sel.stats.lo.toFixed(2) }}</b>
+      </div>
+      <div class="lwc-selstats__row">
+        <span>量</span><b>{{ fmtVol(sel.stats.vol) }}</b>
+        <span class="sep">·</span><span>额</span><b>{{ fmtVol(sel.stats.amt) }}</b>
+      </div>
+    </div>
     <div ref="playheadEl" class="lwc-playhead" :style="{ background: playheadColor }" />
     <div v-if="showTools" class="lwc-tools">
+      <button
+        class="lwc-tool" :class="{ 'is-on': measureOn }"
+        title="区间测量（拖拽选择，Esc 退出）" @click="toggleMeasure"
+      ><Icon name="ruler" :size="13" /></button>
       <button class="lwc-tool" title="放大" @click="zoom(0.7)"><Icon name="plus" :size="13" /></button>
       <button class="lwc-tool" title="缩小" @click="zoom(1.4)"><Icon name="minus" :size="13" /></button>
       <button class="lwc-tool" title="复位" @click="resetView"><Icon name="refresh" :size="13" /></button>
@@ -887,8 +1110,46 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.lwc-wrap { position: relative; width: 100%; }
+.lwc-wrap { position: relative; width: 100%; outline: none; }
+.lwc-wrap:focus-visible { box-shadow: 0 0 0 2px var(--ring, rgba(122, 162, 247, 0.45)); border-radius: var(--radius-sm, 6px); }
+.lwc-wrap--measure { cursor: crosshair; }
 .lwc-wrap:fullscreen { height: 100vh !important; background: var(--bg); }
+
+.lwc-sel {
+  position: absolute;
+  top: 0;
+  bottom: 28px;
+  z-index: 2;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  border-left: 1px dashed var(--accent);
+  border-right: 1px dashed var(--accent);
+}
+.lwc-selstats {
+  position: absolute;
+  left: 10px;
+  bottom: 36px;
+  z-index: 3;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid var(--border-soft);
+  background: color-mix(in srgb, var(--bg-panel) 92%, transparent);
+  font-size: 11px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  box-shadow: var(--shadow-1, 0 2px 8px rgba(0, 0, 0, 0.2));
+}
+.lwc-selstats__row { display: flex; align-items: baseline; gap: 5px; }
+.lwc-selstats__row span { color: var(--text-faint); }
+.lwc-selstats__row b { color: var(--text); font-weight: 600; }
+.lwc-selstats__row--head { color: var(--accent); font-weight: 600; }
+.lwc-selstats__row .sep { color: var(--border-strong); }
+.lwc-selstats .up { color: var(--up); }
+.lwc-selstats .down { color: var(--down); }
 .lwc-chart { width: 100%; height: 100%; }
 
 .lwc-legend {
@@ -946,4 +1207,5 @@ onBeforeUnmount(() => {
   transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
 }
 .lwc-tool:hover { color: var(--accent); border-color: var(--accent); }
+.lwc-tool.is-on { color: var(--on-gold, #1a1d23); background: var(--gold); border-color: var(--gold); }
 </style>

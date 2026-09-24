@@ -46,6 +46,7 @@ export const ICONS: Record<string, string> = {
   trending: '<polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/>',
   database: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/><line x1="3" y1="12" x2="3" y2="12.01"/>',
   backtest: '<path d="M8 5 3 9l5 4"/><path d="M3 9h10a6.5 6.5 0 0 1 0 13"/><circle cx="18" cy="18" r="0.5" fill="currentColor" stroke="none"/>',
+  ruler: '<path d="M21.3 8.7 8.7 21.3a1 1 0 0 1-1.4 0L2.7 16.7a1 1 0 0 1 0-1.4L15.3 2.7a1 1 0 0 1 1.4 0l4.6 4.6a1 1 0 0 1 0 1.4Z"/><path d="m7.5 10.5 2 2"/><path d="m10.5 7.5 2 2"/><path d="m13.5 4.5 2 2"/><path d="m4.5 13.5 2 2"/>',
   compare: '<rect x="3" y="3" width="8" height="18" rx="1.5"/><line x1="7" y1="8" x2="7" y2="16"/><rect x="13" y="8" width="8" height="8" rx="1.5"/><line x1="17" y1="4" x2="17" y2="14"/>',
   filter: '<polygon points="22 3 2 3 10 12.5 10 19 14 21 14 12.5 22 3"/>',
   columns: '<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/>',
