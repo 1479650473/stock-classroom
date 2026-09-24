@@ -9,6 +9,7 @@ import type {
 } from 'lightweight-charts'
 import Icon from '@/components/Icon.vue'
 import { cssVar } from '@/composables/useEChart'
+import type { AutoAnalysis } from '@/api'
 import { chartTokens, maColors, withAlpha } from '@/lib/chartTheme'
 import {
   boll as calcBoll, kdj as calcKdj, macd as calcMacd, rsi as calcRsi, timeshareAvg,
@@ -94,6 +95,8 @@ const props = withDefaults(
     showLegend?: boolean
     /** 截图文件名前缀 */
     title?: string
+    /** 程序自动画线（趋势线/通道/支撑阻力/箱体/事件/枢轴） */
+    analysis?: AutoAnalysis | null
   }>(),
   {
     mas: () => [5, 20],
@@ -117,6 +120,7 @@ const props = withDefaults(
     showTools: true,
     showLegend: true,
     title: '',
+    analysis: null,
   },
 )
 
@@ -139,6 +143,8 @@ let subSeries: ISeriesApi<'Line' | 'Histogram'>[] = []
 let priceLine: IPriceLine | null = null
 let prevLine: IPriceLine | null = null
 let markersPlugin: ISeriesMarkersPluginApi<Time> | null = null
+let analysisSeries: ISeriesApi<'Line'>[] = []
+let analysisPriceLines: IPriceLine[] = []
 let ro: ResizeObserver | null = null
 let mo: MutationObserver | null = null
 let rafId = 0
@@ -730,11 +736,36 @@ function apply() {
     }
     markerData.sort((a, b) => String(a.time).localeCompare(String(b.time)))
   }
+  // 程序分析的事件 + 枢轴点，合并进标记
+  const ana = props.analysis
+  if (ana && ana.ok) {
+    for (const e of ana.events || []) {
+      const bullish = e.type === 'breakout' || (e.text || '').includes('收复')
+      markerData.push({
+        time: e.time as Time,
+        position: bullish ? 'belowBar' : 'aboveBar',
+        color: bullish ? downColor() : upColor(),
+        shape: bullish ? 'arrowUp' : 'arrowDown',
+        text: e.text,
+      } as SeriesMarker<Time>)
+    }
+    for (const p of ana.pivots || []) {
+      markerData.push({
+        time: p.date as Time,
+        position: p.kind === 'high' ? 'aboveBar' : 'belowBar',
+        color: withAlpha(textColor(), 0.65),
+        shape: 'circle',
+        text: '',
+      } as SeriesMarker<Time>)
+    }
+    markerData.sort((a, b) => String(a.time).localeCompare(String(b.time)))
+  }
   if (markersPlugin) {
     markersPlugin.setMarkers(markerData)
   } else if (candleSeries.value) {
     markersPlugin = createSeriesMarkers(candleSeries.value, markerData)
   }
+  drawAnalysis()
 
   if (priceLine) {
     candleSeries.value.removePriceLine(priceLine)
@@ -746,6 +777,81 @@ function apply() {
   layoutPanes()
   schedulePlayhead()
   buildLegend(null)
+}
+
+// ---- 程序自动画线 ----
+function clearAnalysisDrawings() {
+  if (!chart.value) return
+  analysisSeries.forEach((s) => { try { chart.value!.removeSeries(s) } catch { /* ignore */ } })
+  analysisSeries = []
+  if (candleSeries.value) {
+    analysisPriceLines.forEach((l) => { try { candleSeries.value!.removePriceLine(l) } catch { /* ignore */ } })
+  }
+  analysisPriceLines = []
+}
+
+/** 画一段线：两点 + 外延到最新 bar（券商画法：线延伸到当前） */
+function drawSegment(seg: { p1: { time: string; price: number }; p2: { time: string; price: number }; current?: number },
+                     color: string, dashed = false) {
+  if (!chart.value) return
+  const bars = props.bars
+  if (!bars.length) return
+  const pts: { time: Time; value: number }[] = [
+    { time: seg.p1.time as Time, value: seg.p1.price },
+    { time: seg.p2.time as Time, value: seg.p2.price },
+  ]
+  const lastT = bars[bars.length - 1].time
+  if (seg.current != null && String(lastT) > String(seg.p2.time)) {
+    pts.push({ time: lastT as Time, value: seg.current })
+  }
+  const s = chart.value.addSeries(LineSeries, {
+    color,
+    lineWidth: 1,
+    priceLineVisible: false,
+    lastValueVisible: false,
+    crosshairMarkerVisible: false,
+    lineStyle: dashed ? LineStyle.Dashed : LineStyle.Solid,
+    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+  })
+  s.setData(pts as never)
+  analysisSeries.push(s)
+}
+
+function drawAnalysis() {
+  const a = props.analysis
+  clearAnalysisDrawings()
+  if (!a || !a.ok || !chart.value || !candleSeries.value) return
+  if (a.trend?.trend) drawSegment(a.trend.trend, cssVar('--accent', '#7AA2F7'))
+  if (a.trend?.channel) drawSegment(a.trend.channel, cssVar('--gold', '#D4A574'), true)
+  // 轴标签只给「最近的一支撑 + 一阻力」，否则多条水平线的标签会互相重叠
+  const nearest = (role: string) => {
+    const list = (a.levels || []).filter((x) => x.role === role)
+    if (!list.length) return null
+    return list.reduce((best, x) =>
+      Math.abs(x.dist_atr ?? 99) < Math.abs(best.dist_atr ?? 99) ? x : best, list[0])
+  }
+  const supNear = nearest('support')
+  const resNear = nearest('resistance')
+  for (const lv of a.levels || []) {
+    const color = lv.role === 'support' ? tokens().down : tokens().up
+    const labeled = lv === supNear || lv === resNear
+    analysisPriceLines.push(candleSeries.value.createPriceLine({
+      price: lv.price, color, lineWidth: 1, lineStyle: LineStyle.Dashed,
+      axisLabelVisible: labeled,
+      title: labeled ? `${lv.role === 'support' ? '支撑' : '阻力'}${lv.n > 1 ? '·' + lv.n : ''}` : '',
+    }))
+  }
+  const r = a.trend?.range
+  if (r) {
+    analysisPriceLines.push(candleSeries.value.createPriceLine({
+      price: r.top, color: tokens().info, lineWidth: 1, lineStyle: LineStyle.Dotted,
+      axisLabelVisible: true, title: '箱顶',
+    }))
+    analysisPriceLines.push(candleSeries.value.createPriceLine({
+      price: r.bottom, color: tokens().info, lineWidth: 1, lineStyle: LineStyle.Dotted,
+      axisLabelVisible: true, title: '箱底',
+    }))
+  }
 }
 
 // ---- 十字光标信息条 ----
@@ -1028,6 +1134,7 @@ watch(() => props.height, (h) => {
   if (!isFs.value) chart.value?.applyOptions({ height: h })
 })
 watch(() => props.fundFlow, () => { syncStructure(); apply() })
+watch(() => props.analysis, () => apply())
 watch(() => [props.showFundFlow, props.showEquity, props.equity], () => syncStructure())
 watch(() => props.sub, () => { ensureSub(); buildLegend(null) })
 watch(() => props.boll, (on) => {

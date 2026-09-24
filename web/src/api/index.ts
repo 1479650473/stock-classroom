@@ -123,6 +123,25 @@ export interface MinuteKline {
 export const getKlineMinute = (code: string, period: string, days = 0) =>
   api.get<MinuteKline>('/api/kline/minute', { code, period, days }, { ttl: 20_000 })
 
+export interface AutoLine { label: string; p1: { time: string; price: number }; p2: { time: string; price: number }; current?: number; violations?: number }
+export interface AutoLevel { price: number; role: 'support' | 'resistance'; n: number; strength?: number; dist_atr?: number | null; last_date?: string; label: string }
+export interface AutoTrend {
+  kind: 'up' | 'down' | 'range'; label?: string
+  trend?: AutoLine | null; channel?: AutoLine | null
+  range?: { top: number; bottom: number; from: string; to: string; width_atr?: number | null; label: string } | null
+}
+export interface AutoEvent { time: string; price: number; type: string; text: string }
+export interface AutoPivot { i: number; date: string; price: number; kind: 'high' | 'low' }
+export interface AutoAnalysis {
+  ok: boolean; reason?: string
+  code: string; period: string; as_of: string; close: number; atr14: number | null
+  pivots: AutoPivot[]; levels: AutoLevel[]; trend: AutoTrend; events: AutoEvent[]
+  structure: Record<string, unknown>; notes: string[]
+}
+/** 程序自动画线 + 自动技术分析（摆动点/支撑阻力/趋势线通道/箱体/突破事件 + 中文解读） */
+export const getKlineAnalysis = (code: string, period = 'daily', days = 250) =>
+  api.get<AutoAnalysis>('/api/kline/analysis', { code, period, days }, { ttl: 120_000 })
+
 export interface StockRef {
   code: string
   name: string

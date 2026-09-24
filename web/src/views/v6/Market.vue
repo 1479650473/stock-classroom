@@ -13,8 +13,8 @@ import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import KlineChart from '@/components/charts/KlineChart.vue'
 import EtfPanel from '@/components/EtfPanel.vue'
 import Icon from '@/components/Icon.vue'
-import { getIndices, getSectors, getNorthFlow, getKline, getKlineMinute, searchStock, getFundFlow } from '@/api'
-import type { IndexQuote, KlineBar, KlinePeriod, MinuteBar, StockRef, FundFlowBar } from '@/api'
+import { getIndices, getSectors, getNorthFlow, getKline, getKlineMinute, getKlineAnalysis, searchStock, getFundFlow } from '@/api'
+import type { IndexQuote, KlineBar, KlinePeriod, MinuteBar, StockRef, FundFlowBar, AutoAnalysis } from '@/api'
 import { usePersistedRef } from '@/composables/usePersistedRef'
 
 type Tab = 'market' | 'stock' | 'etf'
@@ -70,6 +70,10 @@ const prevClose = ref<number | null>(null)
 
 // 专业控件（持久化）：副图指标 / 布林带 / 均线组
 const subIndicator = usePersistedRef<'macd' | 'kdj' | 'rsi' | 'none'>('market.sub', 'macd')
+// 程序自动画线 / 自动技术分析（默认开）
+const autoOn = usePersistedRef('market.auto', true)
+const analysis = ref<AutoAnalysis | null>(null)
+const analysisLoading = ref(false)
 const bollOn = usePersistedRef('market.boll', false)
 const maSet = usePersistedRef<number[]>('market.mas', [5, 10, 20, 60])
 function toggleMa(n: number) {
@@ -199,6 +203,22 @@ async function loadMarket(fresh = false) {
   }
 }
 
+/** 程序分析（仅日/周/月线；分钟级暂不做结构分析） */
+async function loadAnalysis() {
+  if (!autoOn.value || !code.value || isMinute.value) {
+    analysis.value = null
+    return
+  }
+  analysisLoading.value = true
+  try {
+    analysis.value = await getKlineAnalysis(code.value, period.value as KlinePeriod, Number(days.value))
+  } catch {
+    analysis.value = null
+  } finally {
+    analysisLoading.value = false
+  }
+}
+
 async function loadKline() {
   if (!code.value) return
   klineLoading.value = true
@@ -228,6 +248,7 @@ async function loadKline() {
     minuteBars.value = []
   } finally {
     klineLoading.value = false
+    void loadAnalysis()
   }
 }
 
@@ -260,6 +281,7 @@ watch(tab, (v) => {
   router.replace({ query: { ...route.query, tab: v } })
 })
 watch(days, () => { if (code.value) loadKline() })
+watch(autoOn, () => { void loadAnalysis() })
 watch(period, () => { if (code.value) loadKline() })
 watch(
   () => route.query,
@@ -454,6 +476,11 @@ onMounted(() => {
                 @click="toggleMa(n)"
               >MA{{ n }}</button>
               <button class="kbar__chip" :class="{ 'is-on': bollOn }" @click="bollOn = !bollOn">BOLL</button>
+              <button
+                v-if="!isMinute" class="kbar__chip kbar__chip--auto"
+                :class="{ 'is-on': autoOn }" title="程序自动画线 + 结构解读"
+                @click="autoOn = !autoOn"
+              >程序画线</button>
               <span class="kbar__spacer" />
               <span class="kbar__lbl">副图</span>
               <button
@@ -477,8 +504,30 @@ onMounted(() => {
             :timeshare="isTimeshare"
             :prev-close="prevClose"
             :title="`${stockName || code} ${periodLabel}`"
+            :analysis="autoOn ? analysis : null"
             @period-key="setPeriodByKey"
           />
+
+          <!-- 程序自动分析卡片 -->
+          <div v-if="autoOn && !isMinute && analysis?.ok" class="auto-card">
+            <div class="auto-card__head">
+              <span class="auto-card__badge">程序分析</span>
+              <span class="auto-card__route">{{ (analysis.structure || {}).route || analysis.trend.label || '—' }}</span>
+              <span class="auto-card__meta">
+                ATR14 {{ analysis.atr14 }} · 收盘 {{ analysis.close }} · as-of {{ analysis.as_of }}
+              </span>
+            </div>
+            <ul class="auto-card__notes">
+              <li v-for="(n, i) in analysis.notes" :key="i">{{ n }}</li>
+            </ul>
+            <div class="auto-card__levels">
+              <span v-for="lv in analysis.levels" :key="lv.label" class="auto-chip"
+                    :class="lv.role === 'support' ? 'auto-chip--sup' : 'auto-chip--res'">
+                {{ lv.label }}<i v-if="lv.dist_atr != null">{{ lv.dist_atr > 0 ? '+' : '' }}{{ lv.dist_atr }}×ATR</i>
+              </span>
+            </div>
+            <div class="auto-card__disc">由确定性规则自动生成（摆动点/区间/突破质量与 AI 操盘手同源），不构成投资建议</div>
+          </div>
           <div v-if="!isMinute" class="detail-table">
             <h3 class="sub-title">历史数据（近 {{ Math.min(kline.length, 60) }} 条）</h3>
             <DataTable
@@ -602,4 +651,35 @@ onMounted(() => {
 .kbar__chip.is-on { color: var(--accent); border-color: var(--accent); background: var(--accent-dim, transparent); }
 .kbar__days { display: flex; gap: 2px; }
 .kbar__hint { margin-left: 10px; font-size: 11px; color: var(--text-faint); }
+.kbar__chip--auto.is-on { color: var(--gold); border-color: var(--gold); }
+
+.auto-card {
+  margin-top: var(--sp-3);
+  padding: 12px 14px;
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--gold);
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, var(--bg-raised), var(--bg-panel));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.auto-card__head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.auto-card__badge {
+  font-size: 11px; font-weight: 700; color: var(--on-gold, #1a1d23);
+  background: var(--gold); border-radius: var(--radius-pill, 999px); padding: 2px 8px;
+}
+.auto-card__route { font-size: var(--fs-md); font-weight: 650; color: var(--text); }
+.auto-card__meta { font-size: 11px; color: var(--text-faint); margin-left: auto; }
+.auto-card__notes { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
+.auto-card__notes li { font-size: var(--fs-sm); color: var(--text-sub); line-height: 1.6; }
+.auto-card__levels { display: flex; flex-wrap: wrap; gap: 6px; }
+.auto-chip {
+  font-size: 11px; padding: 3px 9px; border-radius: var(--radius-pill, 999px);
+  border: 1px solid var(--border); color: var(--text-sub);
+}
+.auto-chip i { font-style: normal; margin-left: 5px; color: var(--text-faint); }
+.auto-chip--sup { border-color: color-mix(in srgb, var(--down) 45%, transparent); color: var(--down); }
+.auto-chip--res { border-color: color-mix(in srgb, var(--up) 45%, transparent); color: var(--up); }
+.auto-card__disc { font-size: 11px; color: var(--text-faint); }
 </style>

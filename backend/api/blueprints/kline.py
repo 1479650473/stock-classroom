@@ -94,6 +94,23 @@ def kline_minute():
     return ok({"bars": bars, "prev_close": prev_close, "period": period, "source": "sina"})
 
 
+@bp.route("/kline/analysis")
+def kline_analysis():
+    """程序自动画线 + 自动技术分析（摆动点/支撑阻力/趋势线通道/箱体/突破事件 + 中文解读）。"""
+    code = request.args.get("code", "").strip()
+    period = request.args.get("period", "daily").strip()
+    days = int_arg(request.args.get("days"), 250, 60, 1000)
+    if not code:
+        return err(400, "missing_code", "需要 code 参数")
+    if period not in ("daily", "weekly", "monthly"):
+        period = "daily"
+    try:
+        from autodraw import analyze
+        return ok(analyze(code, period, days))
+    except Exception as e:                                        # noqa: BLE001
+        return err(500, "analysis_error", str(e))
+
+
 @bp.route("/kline/cyq")
 def cyq():
     code = request.args.get("code", "").strip()
