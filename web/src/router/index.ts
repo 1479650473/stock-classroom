@@ -9,6 +9,7 @@ const viewModules: Record<string, () => Promise<{ default: unknown }>> = {
   trade: () => import('@/views/v6/Trade.vue'),
   ai: () => import('@/views/v6/AI.vue'),
   data: () => import('@/views/v6/Data.vue'),
+  sim: () => import('@/views/v6/Sim.vue'),
   settings: () => import('@/views/Settings.vue'),
 }
 
@@ -19,6 +20,7 @@ const ALL_ROUTES: RouteRecordRaw[] = [
   { path: '/trade', name: 'trade', component: viewModules.trade, meta: { title: '交易' } },
   { path: '/ai', name: 'ai', component: viewModules.ai, meta: { title: 'AI' } },
   { path: '/data', name: 'data', component: viewModules.data, meta: { title: '数据' } },
+  { path: '/sim', name: 'sim', component: viewModules.sim, meta: { title: '模拟盘' } },
   { path: '/settings', name: 'settings', component: viewModules.settings, meta: { title: '设置' } },
 
   // ---- 旧路由兼容重定向（书签/习惯不失效） ----

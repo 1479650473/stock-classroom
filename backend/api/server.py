@@ -78,6 +78,9 @@ def create_app():
     # AI 操盘手 (长期自主 LLM 交易员: 专属账户 + 每日决策 + 长期记忆)
     from .blueprints import trader
     app.register_blueprint(trader.bp)
+    # 模拟盘可视化 (对接 stock-ml 模拟账户快照)
+    from .blueprints import sim
+    app.register_blueprint(sim.bp)
     # 因子挖掘 (公式搜索 + 回测奖励, AlphaGPT 式)
     from .blueprints import alpha
     app.register_blueprint(alpha.bp)

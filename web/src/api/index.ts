@@ -766,3 +766,26 @@ export interface AlphaRollingOs {
 }
 export const getAlphaAllocation = (legs: string, grid = 0.05, rolling = true, window = 36) =>
   api.get<AlphaAllocation>('/api/alpha/allocation', { legs, grid, rolling: rolling ? 1 : 0, window })
+
+// ---- 模拟盘（对接 stock-ml 项目快照） ----
+export interface SimPosition { code: string; name?: string; leg?: string; shares: number; cost: number; price: number; value: number; ret_pct: number }
+export interface SimTrade { date: string; leg?: string; code: string; side: string; shares: number; price: number; amount: number; fee: number; pnl_pct?: number }
+export interface SimLeg { name: string; nav: number }
+export interface SimAccount {
+  name: string
+  label: string
+  init: number
+  nav: number
+  ret_pct: number
+  cash: number
+  mv: number
+  positions: SimPosition[]
+  trades: SimTrade[]
+  nav_history: { date: string; nav: number }[]
+  last_rebalance?: string
+  strategy?: string
+  legs?: SimLeg[]
+}
+export interface SimSnapshot { generated: string; data_date: string; accounts: SimAccount[] }
+export const getSimAccounts = () => api.get<SimSnapshot>('/api/sim/accounts')
+export const refreshSim = () => api.post<SimSnapshot>('/api/sim/refresh')

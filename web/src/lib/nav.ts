@@ -24,6 +24,7 @@ export const NAV: NavGroup[] = [
       { path: '/trade', name: 'trade', title: '交易', icon: 'trade', hint: '持仓 · 下单 · 订单 · 选股' },
       { path: '/ai', name: 'ai', title: 'AI', icon: 'chat', hint: 'AI 操盘手 · 对话操盘 · 工具台' },
       { path: '/data', name: 'data', title: '数据', icon: 'database', hint: '数据管道 · 数据库 · 训练' },
+      { path: '/sim', name: 'sim', title: '模拟盘', icon: 'wallet', hint: 'stock-ml 策略账户追踪 · 净值 · 持仓 · 交易' },
     ],
   },
 ]
