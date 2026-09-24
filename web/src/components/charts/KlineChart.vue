@@ -14,7 +14,7 @@ import { chartTokens, maColors, withAlpha } from '@/lib/chartTheme'
 import {
   SUB_SPECS, computeSub, timeshareAvg, boll as calcBoll, sar as calcSar,
 } from '@/lib/indicators'
-import type { IndSeries } from '@/lib/indicators'
+import type { IndSeries, SubParams } from '@/lib/indicators'
 
 /**
  * 专业 K 线：TradingView Lightweight Charts v5 封装。
@@ -92,6 +92,10 @@ const props = withDefaults(
     boll?: boolean
     /** 主图 SAR（抛物线转向，点状） */
     sar?: boolean
+    /** 副图参数覆盖（缺省用注册表默认值） */
+    subParams?: SubParams | null
+    /** 筹码分布最新快照（平均成本 + 90% 成本区间），画成主图水平标注 */
+    chips?: { avg: number; low90: number; high90: number } | null
     /** 右上角工具（缩放/复位/截图/全屏） */
     showTools?: boolean
     /** 左上角十字光标信息条 */
@@ -121,6 +125,8 @@ const props = withDefaults(
     sub: 'none',
     boll: false,
     sar: false,
+    subParams: null,
+    chips: null,
     showTools: true,
     showLegend: true,
     title: '',
@@ -574,15 +580,16 @@ let subPaneOn = false
 let subCache: { sig: string; data: Record<string, IndSeries> } | null = null
 let subGuides: IPriceLine[] = []
 let sarSeries: ISeriesApi<'Line'>[] = []
+let chipLines: IPriceLine[] = []
 //: 标准参考线（超买/超卖），按指标类型给
 const SUB_GUIDES: Record<string, number[]> = { cci: [-100, 100], wr: [20, 80], rsi: [30, 70], kdj: [20, 80] }
 
 /** 副图数据（按 bars 指纹缓存，十字光标移动/图例刷新时不重算） */
 function subData(): Record<string, IndSeries> {
   const bars = props.bars
-  const sig = `${props.sub}|${bars.length}|${bars.length ? bars[bars.length - 1].time : ''}`
+  const sig = `${props.sub}|${bars.length}|${bars.length ? bars[bars.length - 1].time : ''}|${JSON.stringify(props.subParams || {})}`
   if (subCache && subCache.sig === sig) return subCache.data
-  const data = computeSub(props.sub, bars) || {}
+  const data = computeSub(props.sub, bars, props.subParams || undefined) || {}
   subCache = { sig, data }
   return data
 }
@@ -866,6 +873,7 @@ function apply() {
     markersPlugin = createSeriesMarkers(candleSeries.value, markerData)
   }
   drawAnalysis()
+  drawChips()
 
   if (priceLine) {
     candleSeries.value.removePriceLine(priceLine)
@@ -953,6 +961,25 @@ function drawAnalysis() {
       axisLabelVisible: true, title: '箱底',
     }))
   }
+}
+
+// ---- 筹码分布叠加（最新快照：平均成本 + 90% 成本区间） ----
+function drawChips() {
+  if (!candleSeries.value) return
+  chipLines.forEach((l) => { try { candleSeries.value!.removePriceLine(l) } catch { /* ignore */ } })
+  chipLines = []
+  const c = props.chips
+  if (!c || !Number.isFinite(c.avg)) return
+  const mk = (price: number, color: string, title: string, dashed = true) => {
+    chipLines.push(candleSeries.value!.createPriceLine({
+      price, color, lineWidth: 1,
+      lineStyle: dashed ? LineStyle.Dashed : LineStyle.Dotted,
+      axisLabelVisible: true, title,
+    }))
+  }
+  mk(c.avg, cssVar('--gold', '#D4A574'), '筹码成本', true)
+  if (Number.isFinite(c.low90)) mk(c.low90, withAlpha(textColor(), 0.8), '90%筹码·低', false)
+  if (Number.isFinite(c.high90)) mk(c.high90, withAlpha(textColor(), 0.8), '90%筹码·高', false)
 }
 
 // ---- 十字光标信息条 ----
@@ -1230,6 +1257,8 @@ watch(() => props.analysis, () => apply())
 watch(() => [props.showFundFlow, props.showEquity, props.equity], () => syncStructure())
 watch(() => props.sub, () => { ensureSub(); buildLegend(null) })
 watch(() => props.sar, () => apply())
+watch(() => props.chips, () => apply())
+watch(() => props.subParams, () => { subCache = null; applySub(); buildLegend(null) })
 watch(() => props.boll, (on) => {
   bollSeries.value.forEach((s) => s.applyOptions({ visible: on }))
   if (on) apply()

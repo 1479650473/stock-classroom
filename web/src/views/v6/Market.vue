@@ -13,8 +13,9 @@ import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import KlineChart from '@/components/charts/KlineChart.vue'
 import EtfPanel from '@/components/EtfPanel.vue'
 import Icon from '@/components/Icon.vue'
-import { getIndices, getSectors, getNorthFlow, getKline, getKlineMinute, getKlineAnalysis, searchStock, getFundFlow } from '@/api'
+import { getIndices, getSectors, getNorthFlow, getKline, getKlineMinute, getKlineAnalysis, getCyq, searchStock, getFundFlow } from '@/api'
 import type { IndexQuote, KlineBar, KlinePeriod, MinuteBar, StockRef, FundFlowBar, AutoAnalysis } from '@/api'
+import { SUB_SPECS } from '@/lib/indicators'
 import { usePersistedRef } from '@/composables/usePersistedRef'
 
 type Tab = 'market' | 'stock' | 'etf'
@@ -89,6 +90,60 @@ const analysis = ref<AutoAnalysis | null>(null)
 const analysisLoading = ref(false)
 const bollOn = usePersistedRef('market.boll', false)
 const sarOn = usePersistedRef('market.sar', false)
+// 筹码分布（最新快照叠加 + 卡片）
+const chipOn = usePersistedRef('market.chip', false)
+const cyq = ref<Record<string, unknown> | null>(null)
+// 副图参数（按指标存，缺省=注册表默认值）
+const subParams = usePersistedRef<Record<string, Record<string, number>>>('market.subParams', {})
+const paramOpen = ref(false)
+const curParams = computed(() => subParams.value[subIndicator.value] || {})
+function setParam(key: string, ev: Event) {
+  const v = Number((ev.target as HTMLInputElement).value)
+  const kind = subIndicator.value
+  const next = { ...(subParams.value[kind] || {}) }
+  if (Number.isFinite(v) && v > 0) next[key] = Math.round(v)
+  else delete next[key]
+  subParams.value = { ...subParams.value, [kind]: next }
+}
+function resetParams() {
+  const kind = subIndicator.value
+  const next = { ...subParams.value }
+  delete next[kind]
+  subParams.value = next
+}
+/** 筹码叠加（主图线） */
+const chipOverlay = computed(() => {
+  const c = cyq.value
+  if (!chipOn.value || !c) return null
+  const avg = Number(c.avg_cost)
+  const low = Number(c.cost90_low)
+  const high = Number(c.cost90_high)
+  if (!Number.isFinite(avg)) return null
+  return { avg, low90: Number.isFinite(low) ? low : NaN, high90: Number.isFinite(high) ? high : NaN }
+})
+/** 筹码一句话解读 */
+const chipNote = computed(() => {
+  const c = cyq.value
+  if (!c) return ''
+  const avg = Number(c.avg_cost)
+  const profit = Number(c.profit_ratio) * 100
+  const conc = Number(c.conc90)
+  const px = headQuote.value?.price
+  const parts: string[] = []
+  if (px && Number.isFinite(avg) && avg > 0) {
+    const dev = (px / avg - 1) * 100
+    parts.push(dev >= 0 ? `现价高于平均成本 ${dev.toFixed(1)}%` : `现价低于平均成本 ${Math.abs(dev).toFixed(1)}%`)
+  }
+  if (Number.isFinite(profit)) {
+    parts.push(profit >= 70 ? `获利盘 ${profit.toFixed(0)}%，上方抛压相对轻`
+      : profit <= 20 ? `获利盘仅 ${profit.toFixed(0)}%，反弹会遇解套盘`
+        : `获利盘 ${profit.toFixed(0)}%`)
+  }
+  if (Number.isFinite(conc)) {
+    parts.push(conc <= 0.08 ? '筹码高度集中' : conc <= 0.15 ? '筹码集中度中等' : '筹码较分散')
+  }
+  return parts.join('；')
+})
 const maSet = usePersistedRef<number[]>('market.mas', [5, 10, 20, 60])
 function toggleMa(n: number) {
   const cur = maSet.value || []
@@ -233,6 +288,19 @@ async function loadAnalysis() {
   }
 }
 
+async function loadChips() {
+  if (!chipOn.value || !code.value) {
+    cyq.value = null
+    return
+  }
+  try {
+    const rows = await getCyq(code.value)
+    cyq.value = rows && rows.length ? rows[0] : null
+  } catch {
+    cyq.value = null
+  }
+}
+
 async function loadKline() {
   if (!code.value) return
   klineLoading.value = true
@@ -263,6 +331,7 @@ async function loadKline() {
   } finally {
     klineLoading.value = false
     void loadAnalysis()
+    void loadChips()
   }
 }
 
@@ -296,6 +365,7 @@ watch(tab, (v) => {
 })
 watch(days, () => { if (code.value) loadKline() })
 watch(autoOn, () => { void loadAnalysis() })
+watch(chipOn, () => { void loadChips() })
 watch(period, () => { if (code.value) loadKline() })
 watch(
   () => route.query,
@@ -491,6 +561,7 @@ onMounted(() => {
               >MA{{ n }}</button>
               <button class="kbar__chip" :class="{ 'is-on': bollOn }" @click="bollOn = !bollOn">BOLL</button>
               <button class="kbar__chip" :class="{ 'is-on': sarOn }" title="抛物线转向 SAR" @click="sarOn = !sarOn">SAR</button>
+              <button class="kbar__chip" :class="{ 'is-on': chipOn }" title="筹码分布（平均成本 + 90% 成本区间）" @click="chipOn = !chipOn">筹码</button>
               <button
                 v-if="!isMinute" class="kbar__chip kbar__chip--auto"
                 :class="{ 'is-on': autoOn }" title="程序自动画线 + 结构解读"
@@ -503,6 +574,11 @@ onMounted(() => {
                 class="kbar__chip" :class="{ 'is-on': subIndicator === s.value }"
                 @click="subIndicator = s.value as SubKind"
               >{{ s.label }}</button>
+              <button
+                v-if="subIndicator !== 'none'"
+                class="kbar__chip kbar__chip--gear" :class="{ 'is-on': paramOpen }"
+                title="指标参数" @click="paramOpen = !paramOpen"
+              >参数</button>
             </div>
           </div>
 
@@ -515,6 +591,8 @@ onMounted(() => {
             :mas="maSet"
             :boll="bollOn"
             :sar="sarOn"
+            :sub-params="curParams"
+            :chips="chipOverlay"
             :sub="subIndicator"
             :intraday="isMinute"
             :timeshare="isTimeshare"
@@ -523,6 +601,42 @@ onMounted(() => {
             :analysis="autoOn ? analysis : null"
             @period-key="setPeriodByKey"
           />
+
+          <!-- 指标参数弹层 -->
+          <div v-if="paramOpen && subIndicator !== 'none'" class="param-pop">
+            <div class="param-pop__head">
+              <span>{{ SUB_SPECS[subIndicator].label }} 参数</span>
+              <button class="ui-btn ui-btn--ghost" style="padding:2px 8px;font-size:11px" @click="resetParams">重置</button>
+            </div>
+            <div class="param-pop__body">
+              <label v-for="p in SUB_SPECS[subIndicator].params" :key="p.key" class="param-pop__item">
+                <span>{{ p.label }}</span>
+                <input
+                  type="number" min="1" step="1"
+                  :value="curParams[p.key] ?? p.def"
+                  @change="setParam(p.key, $event)"
+                />
+              </label>
+            </div>
+          </div>
+          <div v-if="paramOpen" class="param-mask" @click="paramOpen = false" />
+
+          <!-- 筹码分布卡片 -->
+          <div v-if="chipOn && cyq" class="auto-card auto-card--chip">
+            <div class="auto-card__head">
+              <span class="auto-card__badge" style="background: var(--accent)">筹码分布</span>
+              <span class="auto-card__route">
+                获利盘 {{ (Number(cyq.profit_ratio) * 100).toFixed(1) }}%
+                · 平均成本 {{ Number(cyq.avg_cost).toFixed(2) }}
+              </span>
+              <span class="auto-card__meta">as-of {{ cyq.date }} · 成本数据 250 日窗口</span>
+            </div>
+            <div class="auto-card__levels">
+              <span class="auto-chip">90% 筹码 {{ Number(cyq.cost90_low).toFixed(2) }} ~ {{ Number(cyq.cost90_high).toFixed(2) }}<i>集中度 {{ (Number(cyq.conc90) * 100).toFixed(1) }}%</i></span>
+              <span class="auto-chip">70% 筹码 {{ Number(cyq.cost70_low).toFixed(2) }} ~ {{ Number(cyq.cost70_high).toFixed(2) }}<i>集中度 {{ (Number(cyq.conc70) * 100).toFixed(1) }}%</i></span>
+            </div>
+            <div class="auto-card__disc">{{ chipNote }}。图中已标注平均成本与 90% 成本区间（黄色虚线 = 平均成本，灰点线 = 90% 区间）</div>
+          </div>
 
           <!-- 程序自动分析卡片 -->
           <div v-if="autoOn && !isMinute && analysis?.ok" class="auto-card">
@@ -668,6 +782,35 @@ onMounted(() => {
 .kbar__days { display: flex; gap: 2px; }
 .kbar__hint { margin-left: 10px; font-size: 11px; color: var(--text-faint); }
 .kbar__chip--auto.is-on { color: var(--gold); border-color: var(--gold); }
+.kbar__chip--gear { border-style: dashed; }
+.param-pop {
+  position: absolute;
+  right: 24px;
+  top: 60px;
+  z-index: 30;
+  width: 240px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-pop);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.param-pop__head { display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 600; color: var(--text); }
+.param-pop__body { display: flex; flex-wrap: wrap; gap: 8px 12px; }
+.param-pop__item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-sub); }
+.param-pop__item input {
+  width: 52px;
+  padding: 3px 6px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg-panel);
+  color: var(--text);
+}
+.param-mask { position: fixed; inset: 0; z-index: 20; }
 
 .auto-card {
   margin-top: var(--sp-3);

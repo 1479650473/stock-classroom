@@ -52,7 +52,7 @@ export function macd(closes: number[], fast = 12, slow = 26, signal = 9) {
 }
 
 /** KDJ（N=9，K/D 初值 50，K=2/3K+1/3RSV） */
-export function kdj(bars: BarLike[], n = 9) {
+export function kdj(bars: BarLike[], n = 9, m1 = 3, m2 = 3) {
   const K: IndSeries = []
   const D: IndSeries = []
   const J: IndSeries = []
@@ -68,8 +68,9 @@ export function kdj(bars: BarLike[], n = 9) {
     }
     const close = bars[i].close
     const rsv = hi === lo ? 50 : ((close - lo) / (hi - lo)) * 100
-    k = (2 / 3) * k + (1 / 3) * rsv
-    d = (2 / 3) * d + (1 / 3) * k
+    // 通达信 KDJ：K=(m1-1)/m1·K + 1/m1·RSV；D 同（默认 m1=m2=3）
+    k = ((m1 - 1) / m1) * k + (1 / m1) * rsv
+    d = ((m2 - 1) / m2) * d + (1 / m2) * k
     K.push(i >= n - 1 ? k : null)
     D.push(i >= n - 1 ? d : null)
     J.push(i >= n - 1 ? 3 * k - 2 * d : null)
@@ -393,46 +394,74 @@ export function sar(bars: OhlcBar[], af0 = 0.02, step = 0.02, maxAf = 0.2) {
 
 // ---- 副图注册表：加指标只改这里 + SUB_SPECS ----
 export interface SubSeriesDef { key: string; label: string; hist?: boolean }
-export interface SubSpec { label: string; series: SubSeriesDef[] }
+export interface SubParamDef { key: string; label: string; def: number; min?: number; max?: number }
+export interface SubSpec { label: string; series: SubSeriesDef[]; params: SubParamDef[] }
+export type SubParams = Record<string, number>
 
 export const SUB_SPECS: Record<string, SubSpec> = {
-  macd: { label: 'MACD', series: [{ key: 'hist', label: 'MACD', hist: true }, { key: 'dif', label: 'DIF' }, { key: 'dea', label: 'DEA' }] },
-  kdj: { label: 'KDJ', series: [{ key: 'k', label: 'K' }, { key: 'd', label: 'D' }, { key: 'j', label: 'J' }] },
-  rsi: { label: 'RSI', series: [{ key: 'rsi6', label: 'RSI6' }, { key: 'rsi12', label: 'RSI12' }, { key: 'rsi24', label: 'RSI24' }] },
-  obv: { label: 'OBV', series: [{ key: 'obv', label: 'OBV' }, { key: 'ma', label: 'MAOBV' }] },
-  cci: { label: 'CCI', series: [{ key: 'cci', label: 'CCI(14)' }] },
-  wr: { label: 'WR', series: [{ key: 'wr10', label: 'WR10' }, { key: 'wr6', label: 'WR6' }] },
-  dmi: { label: 'DMI', series: [{ key: 'pdi', label: '+DI' }, { key: 'mdi', label: '-DI' }, { key: 'adx', label: 'ADX' }] },
-  bias: { label: 'BIAS', series: [{ key: 'b6', label: 'BIAS6' }, { key: 'b12', label: 'BIAS12' }, { key: 'b24', label: 'BIAS24' }] },
-  atr: { label: 'ATR', series: [{ key: 'atr', label: 'ATR14' }] },
-  psy: { label: 'PSY', series: [{ key: 'psy', label: 'PSY(12)' }, { key: 'ma', label: 'PSYMA' }] },
-  vr: { label: 'VR', series: [{ key: 'vr', label: 'VR(26)' }] },
-  trix: { label: 'TRIX', series: [{ key: 'trix', label: 'TRIX(12)' }, { key: 'ma', label: 'MATRIX' }] },
-  mtm: { label: 'MTM', series: [{ key: 'mtm', label: 'MTM(12)' }, { key: 'ma', label: 'MTMMA' }] },
-  arbr: { label: 'ARBR', series: [{ key: 'ar', label: 'AR(26)' }, { key: 'br', label: 'BR(26)' }] },
-  roc: { label: 'ROC', series: [{ key: 'roc', label: 'ROC(12)' }, { key: 'ma', label: 'MAROC' }] },
+  macd: { label: 'MACD', params: [{ key: 'fast', label: '快', def: 12 }, { key: 'slow', label: '慢', def: 26 }, { key: 'signal', label: '信号', def: 9 }],
+    series: [{ key: 'hist', label: 'MACD', hist: true }, { key: 'dif', label: 'DIF' }, { key: 'dea', label: 'DEA' }] },
+  kdj: { label: 'KDJ', params: [{ key: 'n', label: 'N', def: 9 }, { key: 'm1', label: 'M1', def: 3 }, { key: 'm2', label: 'M2', def: 3 }],
+    series: [{ key: 'k', label: 'K' }, { key: 'd', label: 'D' }, { key: 'j', label: 'J' }] },
+  rsi: { label: 'RSI', params: [{ key: 'n1', label: 'N1', def: 6 }, { key: 'n2', label: 'N2', def: 12 }, { key: 'n3', label: 'N3', def: 24 }],
+    series: [{ key: 'rsi1', label: 'RSI1' }, { key: 'rsi2', label: 'RSI2' }, { key: 'rsi3', label: 'RSI3' }] },
+  obv: { label: 'OBV', params: [{ key: 'ma', label: '均线', def: 30 }],
+    series: [{ key: 'obv', label: 'OBV' }, { key: 'ma', label: 'MAOBV' }] },
+  cci: { label: 'CCI', params: [{ key: 'n', label: 'N', def: 14 }], series: [{ key: 'cci', label: 'CCI' }] },
+  wr: { label: 'WR', params: [{ key: 'n1', label: 'N1', def: 10 }, { key: 'n2', label: 'N2', def: 6 }],
+    series: [{ key: 'wr1', label: 'WR1' }, { key: 'wr2', label: 'WR2' }] },
+  dmi: { label: 'DMI', params: [{ key: 'n', label: 'N', def: 14 }],
+    series: [{ key: 'pdi', label: '+DI' }, { key: 'mdi', label: '-DI' }, { key: 'adx', label: 'ADX' }] },
+  bias: { label: 'BIAS', params: [{ key: 'n1', label: 'N1', def: 6 }, { key: 'n2', label: 'N2', def: 12 }, { key: 'n3', label: 'N3', def: 24 }],
+    series: [{ key: 'b1', label: 'BIAS1' }, { key: 'b2', label: 'BIAS2' }, { key: 'b3', label: 'BIAS3' }] },
+  atr: { label: 'ATR', params: [{ key: 'n', label: 'N', def: 14 }], series: [{ key: 'atr', label: 'ATR' }] },
+  psy: { label: 'PSY', params: [{ key: 'n', label: 'N', def: 12 }, { key: 'm', label: '均线', def: 6 }],
+    series: [{ key: 'psy', label: 'PSY' }, { key: 'ma', label: 'PSYMA' }] },
+  vr: { label: 'VR', params: [{ key: 'n', label: 'N', def: 26 }], series: [{ key: 'vr', label: 'VR' }] },
+  trix: { label: 'TRIX', params: [{ key: 'n', label: 'N', def: 12 }, { key: 'm', label: '均线', def: 9 }],
+    series: [{ key: 'trix', label: 'TRIX' }, { key: 'ma', label: 'MATRIX' }] },
+  mtm: { label: 'MTM', params: [{ key: 'n', label: 'N', def: 12 }, { key: 'm', label: '均线', def: 6 }],
+    series: [{ key: 'mtm', label: 'MTM' }, { key: 'ma', label: 'MTMMA' }] },
+  arbr: { label: 'ARBR', params: [{ key: 'n', label: 'N', def: 26 }],
+    series: [{ key: 'ar', label: 'AR' }, { key: 'br', label: 'BR' }] },
+  roc: { label: 'ROC', params: [{ key: 'n', label: 'N', def: 12 }, { key: 'm', label: '均线', def: 6 }],
+    series: [{ key: 'roc', label: 'ROC' }, { key: 'ma', label: 'MAROC' }] },
 }
 
 /** 按注册表计算副图数据（键与 SUB_SPECS[key].series[].key 对应） */
-export function computeSub(kind: string, bars: OhlcBar[]): Record<string, IndSeries> | null {
+/** 参数合并（缺省用注册表默认值；非法值回退默认） */
+export function resolveParams(kind: string, params?: SubParams): SubParams {
+  const out: SubParams = {}
+  const spec = SUB_SPECS[kind]
+  if (!spec) return out
+  for (const p of spec.params) {
+    const v = params ? Number(params[p.key]) : NaN
+    out[p.key] = Number.isFinite(v) && v > 0 ? Math.round(v) : p.def
+  }
+  return out
+}
+
+/** 按注册表计算副图数据（键与 SPEC.series[].key 对应；params 缺省=默认参数） */
+export function computeSub(kind: string, bars: OhlcBar[], params?: SubParams): Record<string, IndSeries> | null {
   if (!SUB_SPECS[kind] || !bars.length) return null
   const closes = bars.map((b) => b.close)
+  const P = resolveParams(kind, params)
   switch (kind) {
-    case 'macd': { const { dif, dea, hist } = macd(closes); return { dif, dea, hist } }
-    case 'kdj': { const { k, d, j } = kdj(bars, 9); return { k, d, j } }
-    case 'rsi': return { rsi6: rsi(closes, 6), rsi12: rsi(closes, 12), rsi24: rsi(closes, 24) }
-    case 'obv': { const { obv: o, ma } = obv(bars); return { obv: o, ma } }
-    case 'cci': return { cci: cci(bars, 14) }
-    case 'wr': return { wr10: wr(bars, 10), wr6: wr(bars, 6) }
-    case 'dmi': { const { pdi, mdi, adx } = dmi(bars, 14); return { pdi, mdi, adx } }
-    case 'bias': return { b6: bias(closes, 6), b12: bias(closes, 12), b24: bias(closes, 24) }
-    case 'atr': return { atr: atrLine(bars, 14) }
-    case 'psy': { const { psy: p, ma } = psy(closes, 12, 6); return { psy: p, ma } }
-    case 'vr': return { vr: vrLine(bars, 26) }
-    case 'trix': { const { trix, ma } = trixLine(closes, 12, 9); return { trix, ma } }
-    case 'mtm': { const { mtm: m2, ma } = mtm(closes, 12, 6); return { mtm: m2, ma } }
-    case 'arbr': { const { ar, br } = arbr(bars, 26); return { ar, br } }
-    case 'roc': { const { roc: r2, ma } = roc(closes, 12, 6); return { roc: r2, ma } }
+    case 'macd': { const { dif, dea, hist } = macd(closes, P.fast, P.slow, P.signal); return { dif, dea, hist } }
+    case 'kdj': { const { k, d, j } = kdj(bars, P.n, P.m1, P.m2); return { k, d, j } }
+    case 'rsi': return { rsi1: rsi(closes, P.n1), rsi2: rsi(closes, P.n2), rsi3: rsi(closes, P.n3) }
+    case 'obv': { const { obv: o, ma } = obv(bars, P.ma); return { obv: o, ma } }
+    case 'cci': return { cci: cci(bars, P.n) }
+    case 'wr': return { wr1: wr(bars, P.n1), wr2: wr(bars, P.n2) }
+    case 'dmi': { const { pdi, mdi, adx } = dmi(bars, P.n); return { pdi, mdi, adx } }
+    case 'bias': return { b1: bias(closes, P.n1), b2: bias(closes, P.n2), b3: bias(closes, P.n3) }
+    case 'atr': return { atr: atrLine(bars, P.n) }
+    case 'psy': { const { psy: p, ma } = psy(closes, P.n, P.m); return { psy: p, ma } }
+    case 'vr': return { vr: vrLine(bars, P.n) }
+    case 'trix': { const { trix, ma } = trixLine(closes, P.n, P.m); return { trix, ma } }
+    case 'mtm': { const { mtm: m2, ma } = mtm(closes, P.n, P.m); return { mtm: m2, ma } }
+    case 'arbr': { const { ar, br } = arbr(bars, P.n); return { ar, br } }
+    case 'roc': { const { roc: r2, ma } = roc(closes, P.n, P.m); return { roc: r2, ma } }
     default: return null
   }
 }
