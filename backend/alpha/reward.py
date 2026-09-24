@@ -98,12 +98,20 @@ def _max_drawdown(equity: np.ndarray) -> float:
 def evaluate(sig: np.ndarray, target: np.ndarray, masks: Dict[str, np.ndarray],
              sl: slice, top_k: int = 20, cost_one_way: float = DEFAULT_COST_ONE_WAY,
              bench_daily: Optional[np.ndarray] = None, hold: int = 1,
-             neutralize_fn=None, scale: Optional[np.ndarray] = None) -> Dict[str, float]:
+             neutralize_fn=None, scale: Optional[np.ndarray] = None,
+             weight_mode: str = "equal") -> Dict[str, float]:
     """在 sl 指定的时间段上评估信号。sig/target 形状 [N, T]。
 
     bench_daily：可选，等权股票池的日收益序列（长度 T）。给了之后就额外给出
     **超额收益**指标（组合日收益 - 池日收益），搜索目标改用超额 Sortino，
     否则“高收益”可能只是押中了上涨的股票池。
+    weight_mode：组合内权重（2026-09-24 新增，借鉴 AlphaMaster 的 `position = tanh(factor)` 连续仓位）：
+        "equal"     等权（默认，历史口径）
+        "tanh:a"    按分数排序做 tanh 加权：x=2r-1（r=名次分位，最好的=1），w=tanh(a·x)，a 越大越集中
+        "rank"      线性加权（最好权重 k，最差 1）
+        "rank2"     二次加权（最好权重 k²，最差 1）
+      加权会提高换手（权重天天变）—— 成本照实扣，所以"是否值得"要看净额。
+
     hold：持有天数。1 = 每日换仓；>1 时用 **重叠建仓（tranche）** 实现：
     每天建 1/hold 的仓、持有 hold 天，等价于对每日选股矩阵做 hold 日滚动平均，
     换手与交易成本随之降到约 1/hold（实测日频 0.55 换手 ≈ 13%/年成本，是主要拖累）。
@@ -145,6 +153,34 @@ def evaluate(sig: np.ndarray, target: np.ndarray, masks: Dict[str, np.ndarray],
     np.put_along_axis(M, part, sel_ok, axis=0)
     held_f = np.maximum(held, 1).astype(np.float32)
     Mf = M.astype(np.float32) / held_f[None, :]                    # 每日等权组合权重
+    if weight_mode and weight_mode != "equal":
+        # 按截面分数给组合内权重（每天独立归一化；名次最好的权重最大）
+        w = np.zeros_like(Mf)
+        for jj in range(idx.size):
+            sel = part[:, jj][sel_ok[:, jj]]
+            if sel.size == 0:
+                continue
+            vals = s_all[sel, jj]
+            kk = sel.size
+            order = np.argsort(-vals)                     # 0 = 最好
+            r = 1.0 - order / max(1, kk - 1) if kk > 1 else np.ones(1)
+            if weight_mode == "rank":
+                ww = (r * (kk - 1) + 1.0)
+            elif weight_mode == "rank2":
+                ww = (r * (kk - 1) + 1.0) ** 2
+            elif weight_mode.startswith("tanh"):
+                try:
+                    a = float(weight_mode.split(":", 1)[1])
+                except Exception:
+                    a = 2.0
+                x = 2.0 * r - 1.0
+                ww = np.tanh(a * x) + 1.0                 # 保持非负且单调
+            else:
+                ww = np.ones(kk)
+            ww = np.where(np.isfinite(ww), ww, 0.0)
+            if ww.sum() > 0:
+                w[sel, jj] = ww / ww.sum()
+        Mf = w
     if hold > 1 and idx.size > hold:
         # 重叠建仓：W = 过去 hold 天权重的平均（等价于每天建 1/hold 仓、持有 hold 天）
         c = np.cumsum(Mf, axis=1, dtype=np.float64)
@@ -247,7 +283,8 @@ def evaluate(sig: np.ndarray, target: np.ndarray, masks: Dict[str, np.ndarray],
             # 成本压力与敞口（2026-09-24 新增，借鉴 AlphaMaster 的多目标奖励）
             "ann_2x_cost": ann_2x, "ex_ann_2x_cost": ex_ann_2x,
             "cost_breakeven_bp": cost_breakeven_bp,
-            "pool_beta": pool_beta, "side_share": side_share, "weight_hhi": hhi}
+            "pool_beta": pool_beta, "side_share": side_share, "weight_hhi": hhi,
+            "weight_mode": weight_mode}
 
 
 def bench_series(target: np.ndarray, masks: Dict[str, np.ndarray]) -> np.ndarray:

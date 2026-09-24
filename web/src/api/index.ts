@@ -591,8 +591,8 @@ export interface PaperPortfolio {
   log?: { date: string; opened?: string[]; closed?: string[]; nav?: number }[]
   recent?: unknown[]
 }
-export const getPaperPortfolio = () =>
-  api.get<PaperPortfolio>('/api/alpha/paper', {}, { ttl: 60_000 })
+export const getPaperPortfolio = (tag = '', fresh = false) =>
+  api.get<PaperPortfolio>('/api/alpha/paper', tag ? { tag } : {}, { ttl: 60_000, fresh })
 
 /** 小模型（System 1 横截面头）的样本外成绩 + 可选现场扫描 */
 export interface Sys1XsecReport {

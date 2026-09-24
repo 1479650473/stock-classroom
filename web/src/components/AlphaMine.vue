@@ -15,6 +15,7 @@ import Icon from '@/components/Icon.vue'
 import { useJobsStore } from '@/stores/jobs'
 import { useToastStore } from '@/stores/toast'
 import Tooltip from '@/components/ui/Tooltip.vue'
+import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import { useEChart, cssVar } from '@/composables/useEChart'
 import {
   getAlphaAllocation, getAlphaCompositeReport, getAlphaMeta, getAlphaRun, getAlphaRuns, getAlphaSmb, getAlphaZoo,
@@ -60,10 +61,17 @@ const { draw: drawPaperChart } = useEChart(paperChartEl, () => {
   } as Record<string, unknown>
 })
 
-async function loadPaper() {
+const paperTag = ref<'' | 'rank2'>('')
+async function switchPaperTag(t: '' | 'rank2') {
+  if (paperTag.value === t) return
+  paperTag.value = t
+  paper.value = null
+  await loadPaper(true)
+}
+async function loadPaper(fresh = false) {
   paperLoading.value = true
   try {
-    paper.value = await getPaperPortfolio()
+    paper.value = await getPaperPortfolio(paperTag.value, fresh)
     await nextTick()
     drawPaperChart()
   } finally {
@@ -344,6 +352,15 @@ onMounted(async () => { await Promise.all([load(), loadMeta(), loadZoo(), loadCo
           <b>中盘域（流动性排名 601~1800）· K=20 · 持有 10 个交易日（每日 1/H 分仓）· 单边 10bp 成本</b>。
           与回测的区别只有一个，但很关键：<b>不可回看、不可调参</b> —— 这是验证「净 +5%/年」是否真实存在的唯一办法。
         </p>
+        <div class="zoo__bar" style="margin:6px 0 4px">
+          <SegmentedControl :model-value="paperTag" :options="[
+            { value: '', label: 'v1 等权' },
+            { value: 'rank2', label: 'v2 rank2 加权' }]"
+            @update:model-value="(v) => switchPaperTag(v as '' | 'rank2')" />
+          <span class="muted" style="margin-left:8px">
+            v2 依据 10 折样本外实验（净额 +2.4~3.0pp、K=20 时 10/10 折为正）；两条记录各自独立累积
+          </span>
+        </div>
         <LoadingBlock v-if="paperLoading && !paper" />
         <div v-else-if="paper && !paper.started" class="muted">{{ paper.hint }}</div>
         <template v-else-if="paper">

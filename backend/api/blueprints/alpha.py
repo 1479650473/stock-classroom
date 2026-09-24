@@ -159,7 +159,8 @@ def paper_portfolio_status():
     为什么有它：所有组合结论都是回测；纸面盘每天按同一规则往前跑，积累**前瞻**记录。
     """
     from ...alpha.paper_portfolio import status as _st
-    return ok(_st())
+    tag = (request.args.get("tag") or "").strip().replace("/", "").replace("..", "")[:32]
+    return ok(_st(tag))
 
 
 @bp.route("/smb", methods=["GET"])

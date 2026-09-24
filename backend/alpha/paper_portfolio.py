@@ -33,12 +33,24 @@ for _p in (ROOT, os.path.join(ROOT, "backend")):
         sys.path.insert(0, _p)
 
 from ..api.paths import DATA_DIR, KLINE_DB                 # noqa: E402
+import numpy as np                                          # noqa: E402
+
 from . import panel as P                                    # noqa: E402
 
 STATE_PATH = os.path.join(str(DATA_DIR), "paper_portfolio.json")
 
+
+def _state_path(tag: str = "") -> str:
+    """多实例：tag='' 为 v1（等权，历史记录）；其它 tag 存 paper_portfolio_<tag>.json。
+
+    为什么允许多实例：口径改进（如 rank2 加权）应**另开一条前瞻记录**，
+    而不是覆盖旧记录 —— 否则"不可回看、不可调参"的审计价值就没了。
+    """
+    return os.path.join(str(DATA_DIR), f"paper_portfolio{('_' + tag) if tag else ''}.json")
+
 DEFAULTS = {
-    "name": "组合纸面盘（K=20 / H=10 / 中盘域）",
+    "name": "组合纸面盘 v1（K=20 / H=10 / 中盘域 / 等权）",
+    "weight_mode": "equal",         # equal | rank2（组合内按分数二次加权，实测净额 +2~3pp）
     "initial_capital": 1_000_000,      # 名义本金 100 万
     "initial_nav": 1.0,
     "pool_skip": 600,
@@ -55,21 +67,30 @@ DEFAULTS = {
 
 # ───────────────────────── 状态 ─────────────────────────
 
-def _load_state() -> Optional[dict]:
-    if not os.path.exists(STATE_PATH):
+def _load_state(tag: str = "") -> Optional[dict]:
+    p = _state_path(tag)
+    if not os.path.exists(p):
         return None
-    with open(STATE_PATH, encoding="utf-8") as f:
+    with open(p, encoding="utf-8") as f:
         return json.load(f)
 
 
-def _save_state(s: dict) -> None:
-    os.makedirs(os.path.dirname(STATE_PATH), exist_ok=True)
-    with open(STATE_PATH, "w", encoding="utf-8") as f:
+def _save_state(s: dict, tag: str = "") -> None:
+    p = _state_path(tag)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "w", encoding="utf-8") as f:
         json.dump(s, f, ensure_ascii=False, indent=1)
 
 
-def _new_state(as_of: str) -> dict:
-    return {"config": dict(DEFAULTS), "cash": float(DEFAULTS["initial_capital"]),
+def _new_state(as_of: str, tag: str = "") -> dict:
+    cfg = dict(DEFAULTS)
+    if tag == "rank2":
+        cfg["name"] = "组合纸面盘 v2（K=20 / H=10 / 中盘域 / rank2 加权）"
+        cfg["weight_mode"] = "rank2"
+        cfg["note"] = ("2026-09-24 起：组合内按分数二次加权（rank2），依据 10 折样本外实验"
+                       "（净额 +2.4~3.0pp、K=20 时 10/10 折为正、2× 成本仍通过）；"
+                       "v1（等权）记录保留在 paper_portfolio.json 以作对照")
+    return {"config": cfg, "cash": float(DEFAULTS["initial_capital"]),
             "tranches": [], "holdings": {}, "nav_history": [], "created_at": as_of,
             "last_date": None, "log": []}
 
@@ -144,7 +165,7 @@ def _fmt(d: str) -> str:
 
 # ───────────────────────── 主流程 ─────────────────────────
 
-def run_once(as_of: Optional[str] = None, verbose: bool = True) -> dict:
+def run_once(as_of: Optional[str] = None, verbose: bool = True, tag: str = "") -> dict:
     """按 as_of（默认最新交易日）跑一次：卖到期分仓 → 开新分仓 → 记净值。同日幂等。"""
     if as_of:
         d8 = str(as_of).replace("-", "")[:8]
@@ -155,7 +176,7 @@ def run_once(as_of: Optional[str] = None, verbose: bool = True) -> dict:
         finally:
             con.close()
     d8 = str(d8).replace("-", "")[:8]
-    state = _load_state() or _new_state(d8)
+    state = _load_state(tag) or _new_state(d8, tag)
     cfg = state["config"]
     if state.get("last_date") == d8:
         if verbose:
@@ -212,12 +233,20 @@ def run_once(as_of: Optional[str] = None, verbose: bool = True) -> dict:
     sc = _score(uni, d8)
     picks = [c for c in sorted(sc, key=lambda x: -sc[x]) if c not in held_now][:per_tranche]
     px_buy = _closes(picks, d8) if picks else {}
+    # 组合内权重：equal = 等额；rank2 = 按分数名次二次加权（最好 4 份、次好 1 份 …）
+    wts = np.ones(len(picks))
+    if str(cfg.get("weight_mode") or "equal") == "rank2" and len(picks) > 1:
+        order = np.argsort([-sc[c] for c in picks])
+        r = np.empty(len(picks))
+        r[order] = np.linspace(1.0, 0.0, len(picks))     # 1.0 = 最好
+        wts = (r * (len(picks) - 1) + 1.0) ** 2
+    wts = wts / wts.sum() if wts.sum() > 0 else wts
     names = []
-    for c in picks:
+    for ci_, c in enumerate(picks):
         p = px_buy.get(c) or 0
         if p <= 0:
             continue
-        amt = budget / max(1, len(picks))
+        amt = budget * float(wts[ci_])
         qty = int(amt / p / 100) * 100          # 100 股整数倍
         if qty <= 0:
             continue
@@ -265,7 +294,7 @@ def run_once(as_of: Optional[str] = None, verbose: bool = True) -> dict:
                          "closed": [h["code"] for tr in sold for h in tr["names"]],
                          "nav": round(nav2, 5)})
     state["log"] = state["log"][-400:]
-    _save_state(state)
+    _save_state(state, tag)
     if verbose:
         print(f"{d8}: 净值 {nav2:.4f}｜开仓 {len(names)} 只（{' '.join(n['code'] for n in names) or '—'}）"
               f"｜平仓 {len(sold)} 个分仓｜持仓 {len(held_codes2)} 只｜现金 {state['cash']:.0f}")
@@ -314,9 +343,9 @@ def _alerts(state: dict, nav_prev: float, nav_now: float, date8: str) -> list:
     return fired
 
 
-def check_staleness(as_of: Optional[str] = None, notify: bool = True) -> dict:
+def check_staleness(as_of: Optional[str] = None, notify: bool = True, tag: str = "") -> dict:
     """检查纸面盘是否落后最新交易日（"跑没跑"）—— 由 update_daily 每日调用。"""
-    s = _load_state()
+    s = _load_state(tag)
     if not s:
         return {"started": False}
     con = sqlite3.connect(str(KLINE_DB))
@@ -343,8 +372,8 @@ def check_staleness(as_of: Optional[str] = None, notify: bool = True) -> dict:
     return {"latest_trading_day": latest, "last_recorded": last, "gap_days": gap, "stale": stale}
 
 
-def status() -> dict:
-    s = _load_state()
+def status(tag: str = "") -> dict:
+    s = _load_state(tag)
     if not s:
         return {"started": False, "hint": "还没跑过：python -m backend.alpha.paper_portfolio"}
     hist = s.get("nav_history") or []
@@ -403,16 +432,18 @@ def main() -> None:
     ap.add_argument("--status", action="store_true")
     ap.add_argument("--reset", action="store_true")
     ap.add_argument("--date", default=None, help="指定交易日（默认最新）")
+    ap.add_argument("--tag", default="", help="实例（''=v1 等权；rank2=加权版）")
     a = ap.parse_args()
     if a.reset:
-        if os.path.exists(STATE_PATH):
-            os.remove(STATE_PATH)
-            print("已重置（删除状态文件）")
+        p = _state_path(a.tag)
+        if os.path.exists(p):
+            os.remove(p)
+            print("已重置（删除状态文件）", p)
         return
     if a.status:
-        print(json.dumps(status(), ensure_ascii=False, indent=1))
+        print(json.dumps(status(a.tag), ensure_ascii=False, indent=1))
         return
-    run_once(a.date)
+    run_once(a.date, tag=a.tag)
 
 
 if __name__ == "__main__":
