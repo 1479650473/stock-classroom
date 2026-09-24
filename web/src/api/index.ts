@@ -132,10 +132,18 @@ export interface AutoTrend {
 }
 export interface AutoEvent { time: string; price: number; type: string; text: string }
 export interface AutoPivot { i: number; date: string; price: number; kind: 'high' | 'low' }
+export interface AutoSignal { i: number; date: string; kind: 'signal' | 'mdb' | 'mdt' | 'ioi'; dir: number; follow: string; text: string; breakout_prev5?: string }
+export interface AutoBarsInfo {
+  counts?: { signal_yes: number; signal_failed: number; mdb: number; mdt: number; ioi: number }
+  leg?: { label?: string; count?: number; weak?: boolean; note?: string }
+  window?: number; streak?: number
+  last_signal?: { date: string; text: string; follow: string } | null
+}
 export interface AutoAnalysis {
   ok: boolean; reason?: string
   code: string; period: string; as_of: string; close: number; atr14: number | null
   pivots: AutoPivot[]; levels: AutoLevel[]; trend: AutoTrend; events: AutoEvent[]
+  signals?: AutoSignal[]; bars_info?: AutoBarsInfo
   structure: Record<string, unknown>; notes: string[]
 }
 /** 程序自动画线 + 自动技术分析（摆动点/支撑阻力/趋势线通道/箱体/突破事件 + 中文解读） */

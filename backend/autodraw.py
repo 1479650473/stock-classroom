@@ -30,6 +30,8 @@ PIVOT_K = 3              # 左右各 3 根确认摆动点
 LEVEL_TOL_ATR = 0.6      # 聚类容差（×ATR）
 LEVEL_TOL_PCT = 0.012    # 聚类容差下限（1.2%）
 MAX_LEVELS = 3           # 每侧最多画几条
+SIGNAL_WINDOW = 60       # 棒级信号画线窗口（只看最近 N 根，避免糊图）
+SIGNAL_STAT_WINDOW = 120  # 卡片里统计口径（更长的窗口）
 BOX_LOOKBACK = 60        # 箱体回看
 LINE_VIOL_TOL = 0.35     # 趋势线"被有效跌破"的容忍度（×ATR）
 
@@ -302,6 +304,65 @@ def analyze(code: str, period: str = "daily", days: int = 250) -> dict:
     tr = trend_or_range(bars, pv, atr)
     ev = events(bars, atr)
 
+    # ---- 棒级信号（与 AI 操盘手同一套判定：trader.bars）----
+    signals: List[dict] = []
+    bars_info: Dict[str, object] = {}
+    try:
+        from backend.trader import bars as bars_mod
+        raw = bars_mod.signals_for_series(bars, atr)
+        # 画线口径：只看最近 SIGNAL_WINDOW 根；已判定跟随的信号棒 / 双底顶 / IOI
+        win = max(0, len(bars) - SIGNAL_WINDOW)
+        keep = []
+        for x in raw:
+            if x["i"] < win:
+                continue
+            if x["kind"] == "signal":
+                # 信号失效（✗）全留；跟随成功（✓）只留带"对前5棒突破"上下文的强信号
+                if x["follow"] == "failed":
+                    keep.append(x)
+                elif x["follow"] == "yes" and x["breakout_prev5"] in ("up", "down", "both"):
+                    keep.append(x)
+            elif x["kind"] in ("mdb", "mdt"):
+                if x["breakout_prev5"] in ("up", "down", "both"):
+                    keep.append(x)
+            elif x["kind"] == "ioi":
+                keep.append(x)
+        for x in keep:                      # 日期统一 YYYY-MM-DD（前端按 Time 解析）
+            x["date"] = _fmt_date(x["date"])
+        signals = keep
+        # 卡片统计用更长窗口（SIGNAL_STAT_WINDOW）
+        stat_win = max(0, len(bars) - SIGNAL_STAT_WINDOW)
+        cnt = {"signal_yes": 0, "signal_failed": 0, "mdb": 0, "mdt": 0, "ioi": 0}
+        for x in raw:
+            if x["i"] < stat_win:
+                continue
+            if x["kind"] == "signal" and x["follow"] in ("yes", "failed"):
+                cnt["signal_yes" if x["follow"] == "yes" else "signal_failed"] += 1
+            elif x["kind"] in ("mdb", "mdt", "ioi"):
+                cnt[x["kind"]] += 1
+        leg = bars_mod.leg_counts(bars)
+        last_sig = next((x for x in reversed(raw) if x["kind"] == "signal"), None)
+        streak = 0
+        for b in reversed(bars):
+            if b[4] > b[1]:
+                if streak >= 0:
+                    streak += 1
+                else:
+                    break
+            elif b[4] < b[1]:
+                if streak <= 0:
+                    streak -= 1
+                else:
+                    break
+            else:
+                break
+        bars_info = {"counts": cnt, "leg": leg, "window": SIGNAL_STAT_WINDOW,
+                     "last_signal": ({"date": last_sig["date"], "text": last_sig["text"],
+                                      "follow": last_sig["follow"]} if last_sig else None),
+                     "streak": streak}
+    except Exception as exc:  # noqa: BLE001
+        bars_info = {"error": str(exc)[:120]}
+
     # 结构标签 + 突破质量：日线复用 AI 操盘手同一套（保证"图和操盘手看到的一致"）
     struct_info: Dict[str, object] = {}
     if period == "daily":
@@ -363,6 +424,17 @@ def analyze(code: str, period: str = "daily", days: int = 250) -> dict:
         notes.append("铁丝网/粘滞区：实体重叠高，假突破概率大，等明确信号再动手")
     if ev:
         notes.append("近期事件：" + "、".join(f"{e['time']} {e['text']}" for e in ev[-3:]))
+    bi = bars_info.get("counts") if isinstance(bars_info, dict) else None
+    if bi:
+        leg = bars_info.get("leg") or {}
+        parts = [f"信号棒✓{bi.get('signal_yes', 0)}", f"✗{bi.get('signal_failed', 0)}",
+                 f"双底{bi.get('mdb', 0)}", f"双顶{bi.get('mdt', 0)}", f"IOI{bi.get('ioi', 0)}"]
+        tail = ""
+        if leg.get("label"):
+            tail = f"；当前计数 {leg['label']}"
+        if bars_info.get("streak"):
+            tail += f"；连{'阳' if int(bars_info['streak']) > 0 else '阴'} {abs(int(bars_info['streak']))} 根"
+        notes.append(f"棒级信号（近 {bars_info.get('window')} 根）：" + " · ".join(parts) + tail)
 
     result = {
         "ok": True, "code": code, "period": period, "days": days,
@@ -372,6 +444,8 @@ def analyze(code: str, period: str = "daily", days: int = 250) -> dict:
         "levels": lv,
         "trend": tr,
         "events": ev,
+        "signals": signals,
+        "bars_info": bars_info,
         "structure": struct_info,
         "notes": notes,
     }

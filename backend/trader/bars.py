@@ -213,6 +213,67 @@ def leg_counts(bars: list) -> dict:
     return {"label": "反弹中（尚未出现做空触发）", "count": 0, "weak": False, "note": ""}
 
 
+def signals_for_series(bars: list, atr: Optional[float] = None) -> list:
+    """逐根扫描棒级信号（供**画线/标注**用，与 compute() 同一套判定）。
+
+    bars: [(date,o,h,l,c[,v])] 升序。
+    返回 [{i, date, kind, dir, follow, text, breakout_prev5}]：
+      kind = signal（趋势棒/信号棒，dir=1 多 / -1 空，follow=yes/no/failed/pending）
+           / mdb（微双底，dir=1）/ mdt（微双顶，dir=-1）/ ioi（内-外-内，dir=0）
+    """
+    if len(bars) < 3:
+        return []
+    if atr is None:
+        trs = []
+        for i in range(1, len(bars)):
+            _, _, h, l, _ = bars[i][:5]
+            pc = bars[i - 1][4]
+            trs.append(max(h - l, abs(h - pc), abs(l - pc)))
+        atr = sum(trs) / len(trs) if trs else None
+    out = []
+    for i in range(1, len(bars)):
+        d, o, h, l, c = bars[i][0], bars[i][1], bars[i][2], bars[i][3], bars[i][4]
+        prev = bars[i - 1]
+        info = _classify(o, h, l, c, prev)
+        # 对前 5 棒区间的突破（上下文标记，用于过滤噪点）
+        bp = "none"
+        if i >= 5:
+            prev5 = bars[i - 5:i]
+            if h > max(x[2] for x in prev5) and l < min(x[3] for x in prev5):
+                bp = "both"
+            elif h > max(x[2] for x in prev5):
+                bp = "up"
+            elif l < min(x[3] for x in prev5):
+                bp = "down"
+        # 微双底/微双顶
+        if atr:
+            tol = atr * 0.2
+            if abs(l - prev[3]) <= tol:
+                out.append({"i": i, "date": d, "kind": "mdb", "dir": 1, "follow": "", "text": "双底", "breakout_prev5": bp})
+            elif abs(h - prev[2]) <= tol:
+                out.append({"i": i, "date": d, "kind": "mdt", "dir": -1, "follow": "", "text": "双顶", "breakout_prev5": bp})
+        # IOI
+        if i >= 2:
+            a, b_, cb = bars[i - 2], bars[i - 1], bars[i]
+            if (b_[2] > a[2] and b_[3] < a[3]) and (cb[2] < b_[2] and cb[3] > b_[3]):
+                out.append({"i": i, "date": d, "kind": "ioi", "dir": 0, "follow": "", "text": "IOI", "breakout_prev5": bp})
+        # 信号棒（趋势棒）+ 跟随判定
+        br = info.get("body_ratio")
+        cp = info.get("close_pos")
+        if br is not None and cp is not None and br >= 0.55 and (cp >= 0.65 or cp <= 0.35):
+            up = c > o
+            nxt = bars[i + 1:i + 3]
+            follow = "pending"
+            if nxt:
+                same = any((x[4] > c) if up else (x[4] < c) for x in nxt)
+                opp = any((x[4] < o) if up else (x[4] > o) for x in nxt)
+                follow = "yes" if (same and not opp) else ("failed" if opp else "no")
+            out.append({"i": i, "date": d, "kind": "signal", "dir": 1 if up else -1,
+                        "follow": follow, "breakout_prev5": bp,
+                        "text": ("信号棒✓" if follow == "yes" else ("信号棒✗" if follow == "failed" else "信号棒"))})
+    return out
+
+
 def render(d: dict, name: str = "") -> str:
     if not d or not d.get("ok"):
         return f"{name} 棒级：数据不足"

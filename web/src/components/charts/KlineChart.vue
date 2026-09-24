@@ -758,6 +758,22 @@ function apply() {
         text: '',
       } as SeriesMarker<Time>)
     }
+    // 棒级信号（与 AI 操盘手同一套判定）：信号棒✓/✗、双底/顶、IOI
+    // 守卫：只接受合法 YYYY-MM-DD（时间格式错会让 LWC 直接抛错、整图不渲染）
+    for (const sg of (ana.signals || []).filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(String(x.date)))) {
+      const bull = sg.kind === 'signal'
+        ? (sg.dir > 0 && sg.follow === 'yes') || (sg.dir < 0 && sg.follow === 'failed')
+        : sg.kind === 'mdb'
+      const color = sg.kind === 'ioi' ? withAlpha(textColor(), 0.8)
+        : (bull ? downColor() : upColor())
+      const shape = sg.kind === 'signal' ? (bull ? 'arrowUp' : 'arrowDown') : 'circle'
+      const position = sg.kind === 'ioi' ? 'inBar'
+        : (bull ? 'belowBar' : 'aboveBar')
+      const text = sg.kind === 'signal' ? (sg.follow === 'yes' ? '✓' : '✗') : sg.text
+      markerData.push({
+        time: sg.date as Time, position, color, shape, text: text || undefined,
+      } as SeriesMarker<Time>)
+    }
     markerData.sort((a, b) => String(a.time).localeCompare(String(b.time)))
   }
   if (markersPlugin) {
