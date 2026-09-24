@@ -493,6 +493,35 @@ class TraderTools:
             out["一致性问题（提示，不阻塞）"] = [x["msg"] for x in issues]
         return out
 
+    def get_key_levels(self, code: str) -> dict:
+        """程序画的支撑/阻力/趋势线（autodraw 确定性规则，与 K 线界面同源）。"""
+        try:
+            from ..autodraw import analyze as _an
+            a = _an(str(code).strip(), "daily", 250)
+            if not a.get("ok"):
+                return {"ok": False, "reason": a.get("reason")}
+            sup = [x for x in (a.get("levels") or []) if x["role"] == "support"][:3]
+            res = [x for x in (a.get("levels") or []) if x["role"] == "resistance"][:3]
+            out = {"ok": True, "code": a.get("code"), "as_of": a.get("as_of"),
+                   "close": a.get("close"), "atr14": a.get("atr14"),
+                   "支撑": [{"价格": x["price"], "触碰": x["n"], "距离ATR": x["dist_atr"]} for x in sup],
+                   "阻力": [{"价格": x["price"], "触碰": x["n"], "距离ATR": x["dist_atr"]} for x in res]}
+            t = (a.get("trend") or {}).get("trend")
+            if t:
+                out["趋势线"] = {"名称": t["label"], "现值": t["current"],
+                                 "起点": f"{t['p1']['time']} {t['p1']['price']}",
+                                 "有效跌破次数": t.get("violations")}
+            c = (a.get("trend") or {}).get("channel")
+            if c:
+                out["通道"] = {"名称": c["label"], "现值": c["current"]}
+            r = (a.get("trend") or {}).get("range")
+            if r:
+                out["箱体"] = {"顶": r["top"], "底": r["bottom"], "宽ATR": r.get("width_atr")}
+            out["note"] = "确定性规则画线，参考位不是指令；划线口径见 K 线界面「程序画线」"
+            return out
+        except Exception as e:                                    # noqa: BLE001
+            return {"ok": False, "error": str(e)[:200]}
+
     # ── 调度 ──
     _RESERVED = ("execute", "decision", "notes", "log", "plan", "executions",
                  "account_id", "profile_id", "risk_rules", "decision_id", "dry_run",
@@ -562,6 +591,12 @@ TOOL_SPECS = [
             "sort_by": {"type": "string", "description": "排序维度，默认 circ_mv"},
             "ascending": {"type": "boolean", "description": "true=升序（如按市值最小排）"},
             "limit": {"type": "integer", "description": "返回条数，默认 20，最多 100"}}}}},
+    {"type": "function", "function": {
+        "name": "get_key_levels",
+        "description": "一只股票的程序关键位：支撑/阻力带（含触碰次数与距离×ATR）、趋势线现值、通道与箱体。"
+                       "与 K 线界面「程序画线」同源，用于决定止损/加仓参考位（参考位，不是指令）。",
+        "parameters": {"type": "object", "properties": {
+            "code": {"type": "string", "description": "股票代码"}}, "required": ["code"]}}},
     {"type": "function", "function": {
         "name": "get_stock_factors",
         "description": "单只股票的全部可用指标（流通市值/各周期涨跌幅/换手/振幅/波动/60日位置/ST代理），用于验证候选。",

@@ -361,9 +361,15 @@ def build_memory_block(profile_id: int, positions: List[dict], limit: int = 10,
             pass
     except Exception:
         calib = {}
+    kl = {}
+    try:
+        kl = _key_levels_block(acct.get("positions") or [])
+    except Exception:
+        kl = {}
     return {
         "self_style": style,
         "continuity": continuity,
+        "key_levels": kl,
         "your_calibration": calib,
         # 事件实证（2024+ 中小盘域样本外，裁尾口径）：给"追热点"提供负期望证据
         "event_evidence": _event_evidence(),
@@ -441,6 +447,48 @@ def _rules_block(profile_id: int, as_of: Optional[str] = None) -> list:
 
 
 # ───────────────────────── 汇总 ─────────────────────────
+
+def _key_levels_block(positions: List[dict]) -> dict:
+    """持仓股的「程序关键位」：来自 autodraw 的支撑/阻力带与趋势线（确定性规则画线）。
+
+    与 K 线界面上的「程序画线」同源 —— 你在图上看到的支撑/阻力，模型这里也拿得到，
+    避免它凭感觉决定止损/加仓位置。
+    """
+    out = []
+    for p in (positions or [])[:12]:
+        code = str(p.get("code") or "").strip()
+        if not code:
+            continue
+        try:
+            from ..autodraw import analyze as _an
+            a = _an(code, "daily", 250)
+            if not a.get("ok"):
+                continue
+            sup = [x for x in (a.get("levels") or []) if x["role"] == "support"]
+            res = [x for x in (a.get("levels") or []) if x["role"] == "resistance"]
+            item = {
+                "code": code,
+                "name": p.get("name"),
+                "close": a.get("close"),
+                "atr14": a.get("atr14"),
+                "支撑": (f"{sup[0]['price']}（{sup[0]['n']}次，{sup[0]['dist_atr']}×ATR）" if sup else None),
+                "阻力": (f"{res[0]['price']}（{res[0]['n']}次，{res[0]['dist_atr']}×ATR）" if res else None),
+            }
+            t = (a.get("trend") or {}).get("trend")
+            if t:
+                item["趋势线"] = f"{t['label']} 现值 {t['current']}"
+            r = (a.get("trend") or {}).get("range")
+            if r:
+                item["箱体"] = f"{r['bottom']}~{r['top']}"
+            out.append(item)
+        except Exception:
+            continue
+    return {
+        "持仓关键位": out,
+        "note": "程序按确定性规则画的支撑/阻力/趋势线（与 K 线界面「程序画线」同源）；"
+                "它们是参考位，不是买卖指令 —— 你可以不采纳，但下单纯靠感觉时先看看它们。",
+    }
+
 
 def build_daily_context(profile: dict, with_candidates: bool = True,
                         with_news: bool = True) -> dict:

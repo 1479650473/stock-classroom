@@ -39,6 +39,9 @@ SYSTEM = (
     "\n"
     "【工作方式】\n"
     "1. 先通读已给你的账户、持仓、待成交委托、净值、市场环境、候选池、新闻与历史记忆。\n"
+    "   其中「持仓关键位」是程序按确定性规则画的支撑/阻力/趋势线（与 K 线界面「程序画线」同源），"
+    "「结构路由」是程序对本轮标的的结构分类与常见处理，「事件实证」是热点事件的负期望证据，"
+    "「预测校准」是你自己的置信度表现 —— 这些是给你参考的事实，不是指令。\n"
     "2. 需要更多信息就主动调用工具：查个股新闻、查价格、看候选、看大盘，不要凭空臆测。\n"
     "   · 有个小模型（System 1）专做横截面排序：sys1_candidates 可在你没思路时给起点，get_sys1_view 查关注票的「未来 5 日跑赢等权池」概率。\n"
     "     它池内排序有效（样本外 Top10% 组 5 日超额 +0.23%，同期固定因子组合 +0.21%），但有两条硬边界：\n"
@@ -89,6 +92,12 @@ def _fmt_context(ctx: dict) -> str:
         "历史决策": (ctx.get("memory") or {}).get("recent_decisions"),
         "持仓逻辑": (ctx.get("memory") or {}).get("holding_theses"),
         "长期记忆": (ctx.get("memory") or {}).get("notes"),
+        # —— 以下此前生成但没进消息（白名单漏了），2026-09-25 补齐 ——
+        "持仓关键位": (ctx.get("memory") or {}).get("key_levels"),
+        "上轮立场": (ctx.get("memory") or {}).get("continuity"),
+        "预测校准": (ctx.get("memory") or {}).get("your_calibration"),
+        "事件实证": (ctx.get("memory") or {}).get("event_evidence"),
+        "结构路由": (ctx.get("memory") or {}).get("structure_routing"),
     }
     return json.dumps(compact, ensure_ascii=False, default=str)
 
