@@ -104,6 +104,25 @@ export interface KlineBar {
   boll_lower?: number | null
 }
 
+export interface MinuteBar {
+  time: string          // "YYYY-MM-DD HH:MM:SS"
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+  amount: number
+}
+export interface MinuteKline {
+  bars: MinuteBar[]
+  prev_close: number | null
+  period: string
+  source: string
+}
+/** 分钟级 K 线（1/5/15/30/60 分钟；新浪源，后端 45s 缓存） */
+export const getKlineMinute = (code: string, period: string, days = 0) =>
+  api.get<MinuteKline>('/api/kline/minute', { code, period, days }, { ttl: 20_000 })
+
 export interface StockRef {
   code: string
   name: string

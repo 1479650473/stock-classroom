@@ -19,7 +19,7 @@ def holder():
         rows = get_holder_count(code, limit)
         if not rows:
             return err(404, "no_data", f"{code} 无股东户数数据", retriable=False)
-        return ok(rows, code=code)
+        return ok(rows, stock_code=code)
     except Exception as e:
         return err(502, "holder_error", str(e), retriable=True)
 
@@ -36,6 +36,6 @@ def fund_hold():
         rows = get_fund_hold(code, limit)
         if not rows:
             return err(404, "no_data", f"{code} 无基金持仓数据", retriable=False)
-        return ok(rows, code=code)
+        return ok(rows, stock_code=code)
     except Exception as e:
         return err(502, "fund_hold_error", str(e), retriable=True)

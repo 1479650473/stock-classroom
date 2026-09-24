@@ -125,7 +125,7 @@ def board_kline():
         rows = get_board_kline(code, days)
         if not rows:
             return err(404, "no_data", f"{code} 无板块数据", retriable=False)
-        return ok(rows, code=code)
+        return ok(rows, board_code=code)
     except Exception as e:
         return err(502, "market_error", str(e), retriable=True)
 

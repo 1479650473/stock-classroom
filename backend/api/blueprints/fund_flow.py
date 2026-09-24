@@ -19,6 +19,6 @@ def fund_flow_kline():
         rows = get_fund_flow(code, days)
         if not rows:
             return err(404, "no_data", f"{code} 无资金流数据", retriable=False)
-        return ok(rows, code=code)
+        return ok(rows, stock_code=code)
     except Exception as e:
         return err(502, "fund_flow_error", str(e), retriable=True)

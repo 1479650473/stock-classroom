@@ -15,7 +15,7 @@ def lhb():
     try:
         from data_manager import get_lhb
         rows = get_lhb(code, days)
-        return ok(rows, code=code or None)
+        return ok(rows, stock_code=code or None)
     except Exception as e:
         return err(502, "lhb_error", str(e), retriable=True)
 
@@ -32,6 +32,6 @@ def margin():
         rows = get_margin(code, days)
         if not rows:
             return err(404, "no_data", f"{code} 无融资融券数据", retriable=False)
-        return ok(rows, code=code)
+        return ok(rows, stock_code=code)
     except Exception as e:
         return err(502, "margin_error", str(e), retriable=True)

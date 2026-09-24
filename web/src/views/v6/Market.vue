@@ -13,11 +13,12 @@ import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import KlineChart from '@/components/charts/KlineChart.vue'
 import EtfPanel from '@/components/EtfPanel.vue'
 import Icon from '@/components/Icon.vue'
-import { getIndices, getSectors, getNorthFlow, getKline, searchStock, getFundFlow } from '@/api'
-import type { IndexQuote, KlineBar, StockRef, FundFlowBar } from '@/api'
+import { getIndices, getSectors, getNorthFlow, getKline, getKlineMinute, searchStock, getFundFlow } from '@/api'
+import type { IndexQuote, KlineBar, KlinePeriod, MinuteBar, StockRef, FundFlowBar } from '@/api'
 import { usePersistedRef } from '@/composables/usePersistedRef'
 
 type Tab = 'market' | 'stock' | 'etf'
+type Period = 'ts' | '1' | '5' | '15' | '30' | '60' | 'daily' | 'weekly' | 'monthly'
 
 const route = useRoute()
 const router = useRouter()
@@ -33,13 +34,26 @@ const tab = ref<Tab>(route.query.tab === 'stock' ? 'stock' : route.query.tab ===
 const code = usePersistedRef('market.code', String(route.query.code || ''))
 const stockName = ref(String(route.query.name || ''))
 const days = usePersistedRef('market.days', '250')
-const period = usePersistedRef<'daily' | 'weekly' | 'monthly'>('market.period', 'daily')
+const period = usePersistedRef<Period>('market.period', 'daily')
 
 const PERIOD_OPTIONS = [
+  { value: 'ts', label: '分时' },
+  { value: '1', label: '1分' },
+  { value: '5', label: '5分' },
+  { value: '15', label: '15分' },
+  { value: '30', label: '30分' },
+  { value: '60', label: '60分' },
   { value: 'daily', label: '日K' },
   { value: 'weekly', label: '周K' },
   { value: 'monthly', label: '月K' },
 ]
+const SUB_OPTIONS = [
+  { value: 'macd', label: 'MACD' },
+  { value: 'kdj', label: 'KDJ' },
+  { value: 'rsi', label: 'RSI' },
+  { value: 'none', label: '无' },
+]
+const MA_CHOICES = [5, 10, 20, 30, 60, 120, 250]
 
 const indices = ref<IndexQuote[]>([])
 const sectors = ref<Record<string, unknown>[]>([])
@@ -51,6 +65,23 @@ const kline = ref<KlineBar[]>([])
 const klineLoading = ref(false)
 const klineError = ref('')
 const fundFlow = ref<FundFlowBar[]>([])
+const minuteBars = ref<MinuteBar[]>([])
+const prevClose = ref<number | null>(null)
+
+// 专业控件（持久化）：副图指标 / 布林带 / 均线组
+const subIndicator = usePersistedRef<'macd' | 'kdj' | 'rsi' | 'none'>('market.sub', 'macd')
+const bollOn = usePersistedRef('market.boll', false)
+const maSet = usePersistedRef<number[]>('market.mas', [5, 10, 20, 60])
+function toggleMa(n: number) {
+  const cur = maSet.value || []
+  maSet.value = cur.includes(n) ? cur.filter((x) => x !== n) : [...cur, n].sort((a, b) => a - b)
+}
+
+const isMinute = computed(() => ['ts', '1', '5', '15', '30', '60'].includes(period.value))
+const isTimeshare = computed(() => period.value === 'ts')
+const periodLabel = computed(() =>
+  PERIOD_OPTIONS.find((o) => o.value === period.value)?.label || period.value,
+)
 
 const lastBar = computed(() => kline.value[kline.value.length - 1] ?? null)
 
@@ -67,16 +98,39 @@ const lwcFundFlow = computed(() =>
 function lwcTime(d: string): string {
   return /^\d{8}$/.test(d) ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}` : d
 }
-const lwcBars = computed(() =>
-  kline.value.map((b) => ({
+/** "YYYY-MM-DD HH:MM:SS" → epoch 秒（按北京时间当 UTC 用，轴面显示才正确） */
+function epTime(s: string): number {
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(s)
+  if (!m) return Math.floor(Date.parse(s) / 1000)
+  return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) / 1000
+}
+const lwcBars = computed(() => {
+  if (isMinute.value) {
+    let bars = minuteBars.value
+    if (isTimeshare.value && bars.length) {
+      const lastDate = bars[bars.length - 1].time.slice(0, 10)
+      bars = bars.filter((b) => b.time.slice(0, 10) === lastDate)
+    }
+    return bars.map((b) => ({
+      time: epTime(b.time),
+      open: b.open,
+      high: b.high,
+      low: b.low,
+      close: b.close,
+      volume: b.volume,
+      amount: b.amount,
+    }))
+  }
+  return kline.value.map((b) => ({
     time: lwcTime(b.date),
     open: b.open,
     high: b.high,
     low: b.low,
     close: b.close,
     volume: b.volume,
-  })),
-)
+    amount: b.amount,
+  }))
+})
 /** 涨跌停阈值：主板 10%、创业板/科创 20%、北交所 30%（用于 K 线涨跌停标记） */
 const limitPct = computed(() => {
   const c = String(code.value || '')
@@ -86,9 +140,27 @@ const limitPct = computed(() => {
 })
 
 const changePct = computed(() => {
+  if (isMinute.value) {
+    const bars = lwcBars.value
+    const last = bars[bars.length - 1]
+    if (!last) return 0
+    const base = prevClose.value ?? bars[bars.length - 2]?.close ?? last.close
+    return base ? ((last.close - base) / base) * 100 : 0
+  }
   if (!lastBar.value || kline.value.length < 2) return 0
   const prev = kline.value[kline.value.length - 2].close
   return prev ? ((lastBar.value.close - prev) / prev) * 100 : 0
+})
+/** 头部报价（分钟模式用最后一根分钟线） */
+const headQuote = computed(() => {
+  if (isMinute.value) {
+    const bars = lwcBars.value
+    const last = bars[bars.length - 1]
+    return last ? { price: last.close, high: last.high, low: last.low, open: last.open, volume: last.volume } : null
+  }
+  return lastBar.value
+    ? { price: lastBar.value.close, high: lastBar.value.high, low: lastBar.value.low, open: lastBar.value.open, volume: lastBar.value.volume }
+    : null
 })
 
 const DAY_OPTIONS = [
@@ -118,17 +190,28 @@ async function loadKline() {
   klineLoading.value = true
   klineError.value = ''
   try {
-    const [bars, ff] = await Promise.all([
-      getKline(code.value, Number(days.value), period.value),
-      period.value === 'daily'
-        ? getFundFlow(code.value, Number(days.value)).catch(() => [] as FundFlowBar[])
-        : Promise.resolve([] as FundFlowBar[]),
-    ])
-    kline.value = bars
-    fundFlow.value = ff
+    if (isMinute.value) {
+      const r = await getKlineMinute(code.value, isTimeshare.value ? '1' : period.value, 0)
+      minuteBars.value = r?.bars || []
+      prevClose.value = r?.prev_close ?? null
+      kline.value = []
+      fundFlow.value = []
+    } else {
+      const [bars, ff] = await Promise.all([
+        getKline(code.value, Number(days.value), period.value as KlinePeriod),
+        period.value === 'daily'
+          ? getFundFlow(code.value, Number(days.value)).catch(() => [] as FundFlowBar[])
+          : Promise.resolve([] as FundFlowBar[]),
+      ])
+      kline.value = bars
+      fundFlow.value = ff
+      minuteBars.value = []
+      prevClose.value = null
+    }
   } catch (e) {
     klineError.value = e instanceof Error ? e.message : 'K线加载失败'
     kline.value = []
+    minuteBars.value = []
   } finally {
     klineLoading.value = false
   }
@@ -240,14 +323,7 @@ onMounted(() => {
 
     <SectionCard :padded="false">
       <div style="padding: 0 var(--sp-5)">
-        <PageToolbar v-model="tab" :tabs="TABS">
-          <template #extra>
-            <template v-if="tab === 'stock'">
-              <SegmentedControl v-model="period" size="sm" :options="PERIOD_OPTIONS" />
-              <SegmentedControl v-model="days" size="sm" :options="DAY_OPTIONS" />
-            </template>
-          </template>
-        </PageToolbar>
+        <PageToolbar v-model="tab" :tabs="TABS" />
       </div>
 
       <!-- 市场 -->
@@ -309,33 +385,83 @@ onMounted(() => {
       <!-- 个股 -->
       <div v-else-if="tab === 'stock'" class="pane">
         <EmptyGuide
-          v-if="!code && !kline.length"
+          v-if="!code && !kline.length && !minuteBars.length"
           icon="kline"
           title="搜索一只股票查看 K 线"
           desc="在右上角输入代码或名称，支持键盘上下选择。"
         />
-        <LoadingBlock v-else-if="klineLoading && !kline.length" :rows="8" />
-        <EmptyGuide v-else-if="klineError && !kline.length" icon="alert" title="K线加载失败" :desc="klineError">
+        <LoadingBlock v-else-if="klineLoading && !kline.length && !minuteBars.length" :rows="8" />
+        <EmptyGuide
+          v-else-if="klineError && !kline.length && !minuteBars.length"
+          icon="alert" title="K线加载失败" :desc="klineError"
+        >
           <template #action><button class="ui-btn" @click="loadKline">重试</button></template>
         </EmptyGuide>
-        <template v-else-if="kline.length">
+        <template v-else-if="kline.length || minuteBars.length">
           <div class="stock-head">
             <div>
               <span class="stock-head__name">{{ stockName || code }}</span>
               <span v-if="stockName && stockName !== code" class="stock-head__code num">{{ code }}</span>
+              <span class="stock-head__adj">前复权</span>
             </div>
             <div class="stock-head__quote">
-              <span class="stock-head__price num">{{ lastBar?.close.toFixed(2) }}</span>
+              <span class="stock-head__price num">{{ headQuote?.price.toFixed(2) }}</span>
               <span class="num" :class="changePct >= 0 ? 'up' : 'down'">{{ fmtPct(changePct) }}</span>
             </div>
           </div>
+
+          <!-- 周期与指标工具条（券商式） -->
+          <div class="kbar">
+            <div class="kbar__row">
+              <div class="kbar__periods">
+                <button
+                  v-for="p in PERIOD_OPTIONS" :key="p.value"
+                  class="kbar__btn" :class="{ 'is-on': period === p.value }"
+                  @click="period = p.value as Period"
+                >{{ p.label }}</button>
+              </div>
+              <span class="kbar__spacer" />
+              <div v-if="!isMinute" class="kbar__days">
+                <button
+                  v-for="d in DAY_OPTIONS" :key="d.value"
+                  class="kbar__btn kbar__btn--sm" :class="{ 'is-on': days === d.value }"
+                  @click="days = d.value"
+                >{{ d.label }}</button>
+              </div>
+            </div>
+            <div class="kbar__row kbar__row--sub">
+              <span class="kbar__lbl">主图</span>
+              <button
+                v-for="n in MA_CHOICES" :key="n"
+                class="kbar__chip" :class="{ 'is-on': maSet.includes(n) }"
+                @click="toggleMa(n)"
+              >MA{{ n }}</button>
+              <button class="kbar__chip" :class="{ 'is-on': bollOn }" @click="bollOn = !bollOn">BOLL</button>
+              <span class="kbar__spacer" />
+              <span class="kbar__lbl">副图</span>
+              <button
+                v-for="s in SUB_OPTIONS" :key="s.value"
+                class="kbar__chip" :class="{ 'is-on': subIndicator === s.value }"
+                @click="subIndicator = s.value as 'macd' | 'kdj' | 'rsi' | 'none'"
+              >{{ s.label }}</button>
+            </div>
+          </div>
+
           <KlineChart
             :bars="lwcBars"
-            :height="460"
-            :fund-flow="lwcFundFlow"
-            :limit-pct="limitPct"
+            :height="470"
+            :fund-flow="isMinute ? [] : lwcFundFlow"
+            :show-fund-flow="!isMinute"
+            :limit-pct="isMinute ? 0 : limitPct"
+            :mas="maSet"
+            :boll="bollOn"
+            :sub="subIndicator"
+            :intraday="isMinute"
+            :timeshare="isTimeshare"
+            :prev-close="prevClose"
+            :title="`${stockName || code} ${periodLabel}`"
           />
-          <div class="detail-table">
+          <div v-if="!isMinute" class="detail-table">
             <h3 class="sub-title">历史数据（近 {{ Math.min(kline.length, 60) }} 条）</h3>
             <DataTable
               :columns="klineColumns"
@@ -405,4 +531,56 @@ onMounted(() => {
 .stock-head__quote { display: flex; align-items: baseline; gap: var(--sp-3); }
 .stock-head__price { font-size: var(--fs-2xl); font-weight: 700; }
 .detail-table { margin-top: var(--sp-5); }
+
+/* ---- 周期与指标工具条（券商式） ---- */
+.stock-head__adj {
+  margin-left: var(--sp-2);
+  font-size: 11px;
+  color: var(--text-faint);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-pill, 999px);
+  padding: 1px 7px;
+  vertical-align: 2px;
+}
+.kbar {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+  padding: 6px 8px;
+  margin-bottom: var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.kbar__row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.kbar__row--sub { border-top: 1px dashed var(--border); padding-top: 5px; }
+.kbar__periods { display: flex; gap: 2px; flex-wrap: wrap; }
+.kbar__spacer { flex: 1; }
+.kbar__lbl { font-size: 11px; color: var(--text-faint); margin-right: 2px; }
+.kbar__btn {
+  padding: 3px 10px;
+  font-size: 12px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-sub);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.kbar__btn:hover { color: var(--text); background: var(--bg-hover); }
+.kbar__btn.is-on { color: var(--on-gold, #1a1d23); background: var(--gold); border-color: var(--gold); font-weight: 600; }
+.kbar__btn--sm { padding: 2px 8px; font-size: 11px; }
+.kbar__chip {
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: var(--radius-pill, 999px);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease);
+}
+.kbar__chip:hover { color: var(--text-sub); border-color: var(--border-strong); }
+.kbar__chip.is-on { color: var(--accent); border-color: var(--accent); background: var(--accent-dim, transparent); }
+.kbar__days { display: flex; gap: 2px; }
 </style>

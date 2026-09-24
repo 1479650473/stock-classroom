@@ -40,7 +40,8 @@ def etf_kline():
                     break
         except Exception:
             pass
-        return ok(bars, code=code, name=name_row or code)
+        # 注意：meta 不能再用 code=（会覆盖信封的 code:0，前端会当错误处理）
+        return ok(bars, etf_code=code, etf_name=name_row or code)
     except Exception as e:
         return err(502, "etf_error", str(e), retriable=True)
 
