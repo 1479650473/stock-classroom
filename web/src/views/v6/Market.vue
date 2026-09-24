@@ -47,7 +47,7 @@ const PERIOD_OPTIONS = [
   { value: 'weekly', label: '周K' },
   { value: 'monthly', label: '月K' },
 ]
-type SubKind = 'macd' | 'kdj' | 'rsi' | 'obv' | 'cci' | 'wr' | 'dmi' | 'bias' | 'atr' | 'psy' | 'vr' | 'none'
+type SubKind = 'macd' | 'kdj' | 'rsi' | 'obv' | 'cci' | 'wr' | 'dmi' | 'bias' | 'atr' | 'psy' | 'vr' | 'trix' | 'mtm' | 'arbr' | 'roc' | 'none'
 const SUB_OPTIONS = [
   { value: 'macd', label: 'MACD' },
   { value: 'kdj', label: 'KDJ' },
@@ -60,6 +60,10 @@ const SUB_OPTIONS = [
   { value: 'psy', label: 'PSY' },
   { value: 'vr', label: 'VR' },
   { value: 'atr', label: 'ATR' },
+  { value: 'trix', label: 'TRIX' },
+  { value: 'mtm', label: 'MTM' },
+  { value: 'arbr', label: 'ARBR' },
+  { value: 'roc', label: 'ROC' },
   { value: 'none', label: '无' },
 ]
 const MA_CHOICES = [5, 10, 20, 30, 60, 120, 250]
@@ -84,6 +88,7 @@ const autoOn = usePersistedRef('market.auto', true)
 const analysis = ref<AutoAnalysis | null>(null)
 const analysisLoading = ref(false)
 const bollOn = usePersistedRef('market.boll', false)
+const sarOn = usePersistedRef('market.sar', false)
 const maSet = usePersistedRef<number[]>('market.mas', [5, 10, 20, 60])
 function toggleMa(n: number) {
   const cur = maSet.value || []
@@ -485,6 +490,7 @@ onMounted(() => {
                 @click="toggleMa(n)"
               >MA{{ n }}</button>
               <button class="kbar__chip" :class="{ 'is-on': bollOn }" @click="bollOn = !bollOn">BOLL</button>
+              <button class="kbar__chip" :class="{ 'is-on': sarOn }" title="抛物线转向 SAR" @click="sarOn = !sarOn">SAR</button>
               <button
                 v-if="!isMinute" class="kbar__chip kbar__chip--auto"
                 :class="{ 'is-on': autoOn }" title="程序自动画线 + 结构解读"
@@ -508,6 +514,7 @@ onMounted(() => {
             :limit-pct="isMinute ? 0 : limitPct"
             :mas="maSet"
             :boll="bollOn"
+            :sar="sarOn"
             :sub="subIndicator"
             :intraday="isMinute"
             :timeshare="isTimeshare"

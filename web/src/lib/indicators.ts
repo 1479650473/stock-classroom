@@ -296,6 +296,101 @@ export function vrLine(bars: OhlcBar[], n = 26): IndSeries {
   return out
 }
 
+
+// ---- 追加指标（第二批） ----
+
+/** TRIX 三重指数平滑（12,9，通达信口径 ×100） */
+export function trixLine(closes: number[], n = 12, m = 9) {
+  const e1 = ema(closes, n).map((x) => x ?? 0)
+  const e2 = ema(e1, n).map((x) => x ?? 0)
+  const e3 = ema(e2, n).map((x) => x ?? 0)
+  const trix: IndSeries = new Array(closes.length).fill(null)
+  for (let i = 1; i < closes.length; i++) {
+    if (i < n * 3) continue
+    const prev = e3[i - 1]
+    trix[i] = prev ? ((e3[i] - prev) / prev) * 100 : 0
+  }
+  return { trix, ma: sma(trix.map((x) => x ?? 0), m) }
+}
+
+/** MTM 动量（12）+ MTMMA(6) */
+export function mtm(closes: number[], n = 12, m = 6) {
+  const out: IndSeries = new Array(closes.length).fill(null)
+  for (let i = n; i < closes.length; i++) out[i] = closes[i] - closes[i - n]
+  return { mtm: out, ma: sma(out.map((x) => x ?? 0), m) }
+}
+
+/** ARBR 人气意愿（26）：AR = 上行力度/下行力度，BR = 昨收比较 */
+export function arbr(bars: OhlcBar[], n = 26) {
+  const ar: IndSeries = new Array(bars.length).fill(null)
+  const br: IndSeries = new Array(bars.length).fill(null)
+  for (let i = n - 1; i < bars.length; i++) {
+    let upAR = 0
+    let dnAR = 0
+    let upBR = 0
+    let dnBR = 0
+    for (let j = i - n + 1; j <= i; j++) {
+      const b = bars[j]
+      const pc = j > 0 ? bars[j - 1].close : b.close
+      upAR += b.high - (b.open ?? b.close)
+      dnAR += (b.open ?? b.close) - b.low
+      upBR += Math.max(0, b.high - pc)
+      dnBR += Math.max(0, pc - b.low)
+    }
+    ar[i] = dnAR > 0 ? (upAR / dnAR) * 100 : 0
+    br[i] = dnBR > 0 ? (upBR / dnBR) * 100 : 0
+  }
+  return { ar, br }
+}
+
+/** ROC 变动率（12）+ MAROC(6) */
+export function roc(closes: number[], n = 12, m = 6) {
+  const out: IndSeries = new Array(closes.length).fill(null)
+  for (let i = n; i < closes.length; i++) {
+    const p = closes[i - n]
+    out[i] = p ? ((closes[i] - p) / p) * 100 : 0
+  }
+  return { roc: out, ma: sma(out.map((x) => x ?? 0), m) }
+}
+
+/** SAR 抛物线转向：返回 { up, down } 两条错位序列（多/空各自成段） */
+export function sar(bars: OhlcBar[], af0 = 0.02, step = 0.02, maxAf = 0.2) {
+  const up: IndSeries = new Array(bars.length).fill(null)
+  const down: IndSeries = new Array(bars.length).fill(null)
+  if (bars.length < 2) return { up, down }
+  let isUp = true
+  let af = af0
+  let ep = bars[0].high
+  let v = bars[0].low
+  for (let i = 1; i < bars.length; i++) {
+    v = v + af * (ep - v)
+    if (isUp) {
+      if (bars[i].low < v) {
+        isUp = false
+        v = ep
+        ep = bars[i].low
+        af = af0
+      } else if (bars[i].high > ep) {
+        ep = bars[i].high
+        af = Math.min(af + step, maxAf)
+      }
+    } else {
+      if (bars[i].high > v) {
+        isUp = true
+        v = ep
+        ep = bars[i].high
+        af = af0
+      } else if (bars[i].low < ep) {
+        ep = bars[i].low
+        af = Math.min(af + step, maxAf)
+      }
+    }
+    if (isUp) up[i] = v
+    else down[i] = v
+  }
+  return { up, down }
+}
+
 // ---- 副图注册表：加指标只改这里 + SUB_SPECS ----
 export interface SubSeriesDef { key: string; label: string; hist?: boolean }
 export interface SubSpec { label: string; series: SubSeriesDef[] }
@@ -312,6 +407,10 @@ export const SUB_SPECS: Record<string, SubSpec> = {
   atr: { label: 'ATR', series: [{ key: 'atr', label: 'ATR14' }] },
   psy: { label: 'PSY', series: [{ key: 'psy', label: 'PSY(12)' }, { key: 'ma', label: 'PSYMA' }] },
   vr: { label: 'VR', series: [{ key: 'vr', label: 'VR(26)' }] },
+  trix: { label: 'TRIX', series: [{ key: 'trix', label: 'TRIX(12)' }, { key: 'ma', label: 'MATRIX' }] },
+  mtm: { label: 'MTM', series: [{ key: 'mtm', label: 'MTM(12)' }, { key: 'ma', label: 'MTMMA' }] },
+  arbr: { label: 'ARBR', series: [{ key: 'ar', label: 'AR(26)' }, { key: 'br', label: 'BR(26)' }] },
+  roc: { label: 'ROC', series: [{ key: 'roc', label: 'ROC(12)' }, { key: 'ma', label: 'MAROC' }] },
 }
 
 /** 按注册表计算副图数据（键与 SUB_SPECS[key].series[].key 对应） */
@@ -330,6 +429,10 @@ export function computeSub(kind: string, bars: OhlcBar[]): Record<string, IndSer
     case 'atr': return { atr: atrLine(bars, 14) }
     case 'psy': { const { psy: p, ma } = psy(closes, 12, 6); return { psy: p, ma } }
     case 'vr': return { vr: vrLine(bars, 26) }
+    case 'trix': { const { trix, ma } = trixLine(closes, 12, 9); return { trix, ma } }
+    case 'mtm': { const { mtm: m2, ma } = mtm(closes, 12, 6); return { mtm: m2, ma } }
+    case 'arbr': { const { ar, br } = arbr(bars, 26); return { ar, br } }
+    case 'roc': { const { roc: r2, ma } = roc(closes, 12, 6); return { roc: r2, ma } }
     default: return null
   }
 }

@@ -12,7 +12,7 @@ import { cssVar } from '@/composables/useEChart'
 import type { AutoAnalysis } from '@/api'
 import { chartTokens, maColors, withAlpha } from '@/lib/chartTheme'
 import {
-  SUB_SPECS, computeSub, timeshareAvg, boll as calcBoll,
+  SUB_SPECS, computeSub, timeshareAvg, boll as calcBoll, sar as calcSar,
 } from '@/lib/indicators'
 import type { IndSeries } from '@/lib/indicators'
 
@@ -87,9 +87,11 @@ const props = withDefaults(
     /** 分时基准价（昨收） */
     prevClose?: number | null
     /** 副图指标（第二指标窗，注册表见 SUB_SPECS） */
-    sub?: 'none' | 'macd' | 'kdj' | 'rsi' | 'obv' | 'cci' | 'wr' | 'dmi' | 'bias' | 'atr' | 'psy' | 'vr'
+    sub?: 'none' | 'macd' | 'kdj' | 'rsi' | 'obv' | 'cci' | 'wr' | 'dmi' | 'bias' | 'atr' | 'psy' | 'vr' | 'trix' | 'mtm' | 'arbr' | 'roc'
     /** 主图布林带 */
     boll?: boolean
+    /** 主图 SAR（抛物线转向，点状） */
+    sar?: boolean
     /** 右上角工具（缩放/复位/截图/全屏） */
     showTools?: boolean
     /** 左上角十字光标信息条 */
@@ -118,6 +120,7 @@ const props = withDefaults(
     prevClose: null,
     sub: 'none',
     boll: false,
+    sar: false,
     showTools: true,
     showLegend: true,
     title: '',
@@ -570,6 +573,7 @@ function syncStructure() {
 let subPaneOn = false
 let subCache: { sig: string; data: Record<string, IndSeries> } | null = null
 let subGuides: IPriceLine[] = []
+let sarSeries: ISeriesApi<'Line'>[] = []
 //: 标准参考线（超买/超卖），按指标类型给
 const SUB_GUIDES: Record<string, number[]> = { cci: [-100, 100], wr: [20, 80], rsi: [30, 70], kdj: [20, 80] }
 
@@ -720,6 +724,28 @@ function apply() {
   // 布林带
   if (bollSeries.value.length === 3 && (!props.boll || !overlaysOn)) {
     bollSeries.value.forEach((x) => x.setData([]))
+  }
+  // SAR（点状，多空各自成段：用空白点造断裂）
+  if (props.sar && overlaysOn && bars.length > 1) {
+    if (!sarSeries.length && chart.value) {
+      sarSeries = [downColor(), upColor()].map((color) => chart.value!.addSeries(LineSeries, {
+        color, lineWidth: 1, pointMarkersVisible: true, pointMarkersRadius: 1.5,
+        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+        priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+      }))
+    }
+    if (sarSeries.length === 2) {
+      const { up, down } = calcSar(bars)
+      const sets = [up, down]
+      sarSeries.forEach((s2, i) => {
+        s2.setData(bars.map((b, j) => (sets[i][j] == null
+          ? { time: b.time as Time }
+          : { time: b.time as Time, value: sets[i][j] as number })) as never)
+      })
+    }
+  } else if (sarSeries.length && chart.value) {
+    sarSeries.forEach((s2) => { try { chart.value!.removeSeries(s2) } catch { /* ignore */ } })
+    sarSeries = []
   }
   if (props.boll && overlaysOn && bollSeries.value.length === 3) {
     const closes = bars.map((b) => b.close)
@@ -1136,6 +1162,10 @@ function applyTheme() {
   }))
   volMaSeries.value?.applyOptions({ color: tokens().textSub })
   tsAvgSeries.value?.applyOptions({ color: tokens().gold })
+  if (sarSeries.length === 2) {
+    sarSeries[0].applyOptions({ color: downColor() })
+    sarSeries[1].applyOptions({ color: upColor() })
+  }
   if (volumeSeries.value) {
     volumeSeries.value.setData(
       props.bars.map((b) => ({
@@ -1199,6 +1229,7 @@ watch(() => props.fundFlow, () => { syncStructure(); apply() })
 watch(() => props.analysis, () => apply())
 watch(() => [props.showFundFlow, props.showEquity, props.equity], () => syncStructure())
 watch(() => props.sub, () => { ensureSub(); buildLegend(null) })
+watch(() => props.sar, () => apply())
 watch(() => props.boll, (on) => {
   bollSeries.value.forEach((s) => s.applyOptions({ visible: on }))
   if (on) apply()
