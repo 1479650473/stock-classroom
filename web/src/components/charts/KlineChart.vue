@@ -12,8 +12,9 @@ import { cssVar } from '@/composables/useEChart'
 import type { AutoAnalysis } from '@/api'
 import { chartTokens, maColors, withAlpha } from '@/lib/chartTheme'
 import {
-  boll as calcBoll, kdj as calcKdj, macd as calcMacd, rsi as calcRsi, timeshareAvg,
+  SUB_SPECS, computeSub, timeshareAvg, boll as calcBoll,
 } from '@/lib/indicators'
+import type { IndSeries } from '@/lib/indicators'
 
 /**
  * 专业 K 线：TradingView Lightweight Charts v5 封装。
@@ -85,8 +86,8 @@ const props = withDefaults(
     timeshare?: boolean
     /** 分时基准价（昨收） */
     prevClose?: number | null
-    /** 副图指标（第二指标窗） */
-    sub?: 'none' | 'macd' | 'kdj' | 'rsi'
+    /** 副图指标（第二指标窗，注册表见 SUB_SPECS） */
+    sub?: 'none' | 'macd' | 'kdj' | 'rsi' | 'obv' | 'cci' | 'wr' | 'dmi' | 'bias' | 'atr' | 'psy' | 'vr'
     /** 主图布林带 */
     boll?: boolean
     /** 右上角工具（缩放/复位/截图/全屏） */
@@ -152,6 +153,7 @@ let idxByTime = new Map<string, number>()
 
 const legendRows = ref<LegendCell[][]>([])
 const paneCount = ref(0)
+const guideCount = ref(0)
 const isFs = ref(false)
 const rangeTick = ref(0)
 
@@ -566,11 +568,26 @@ function syncStructure() {
 }
 
 let subPaneOn = false
+let subCache: { sig: string; data: Record<string, IndSeries> } | null = null
+let subGuides: IPriceLine[] = []
+//: 标准参考线（超买/超卖），按指标类型给
+const SUB_GUIDES: Record<string, number[]> = { cci: [-100, 100], wr: [20, 80], rsi: [30, 70], kdj: [20, 80] }
+
+/** 副图数据（按 bars 指纹缓存，十字光标移动/图例刷新时不重算） */
+function subData(): Record<string, IndSeries> {
+  const bars = props.bars
+  const sig = `${props.sub}|${bars.length}|${bars.length ? bars[bars.length - 1].time : ''}`
+  if (subCache && subCache.sig === sig) return subCache.data
+  const data = computeSub(props.sub, bars) || {}
+  subCache = { sig, data }
+  return data
+}
 function ensureSub() {
   if (!chart.value) return
-  subSeries.forEach((s) => chart.value!.removeSeries(s))
+  subSeries.forEach((s) => { try { chart.value!.removeSeries(s) } catch { /* ignore */ } })
   subSeries = []
-  if (props.sub === 'none') {
+  subGuides = []
+  if (props.sub === 'none' || !SUB_SPECS[props.sub]) {
     // 关掉指标窗：移除空 pane（否则底部会留一块空白）
     if (subPaneOn) {
       try { chart.value.removePane(chart.value.panes().length - 1) } catch { /* 版本差异，忽略 */ }
@@ -581,24 +598,40 @@ function ensureSub() {
     return
   }
   const pane = subPaneOn ? Math.max(1, chart.value.panes().length - 1) : subPaneIndex()
-  const mkLine = (color: string, width = 1) => chart.value!.addSeries(LineSeries, {
-    color, lineWidth: width as 1 | 2, priceLineVisible: false, lastValueVisible: false,
-    crosshairMarkerVisible: false, priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
-  }, pane)
-  if (props.sub === 'macd') {
-    subSeries.push(chart.value.addSeries(HistogramSeries, {
-      priceLineVisible: false, lastValueVisible: false, priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
-    }, pane))
-    subSeries.push(mkLine(maColors()[0]!, 1))
-    subSeries.push(mkLine(maColors()[1]!, 1))
-  } else if (props.sub === 'kdj') {
-    subSeries.push(mkLine(maColors()[0]!, 1))
-    subSeries.push(mkLine(maColors()[1]!, 1))
-    subSeries.push(mkLine(maColors()[2]!, 1))
-  } else if (props.sub === 'rsi') {
-    subSeries.push(mkLine(maColors()[0]!, 1))
-    subSeries.push(mkLine(maColors()[1]!, 1))
-    subSeries.push(mkLine(maColors()[2]!, 1))
+  const spec = SUB_SPECS[props.sub]
+  const volFmt = props.sub === 'obv'
+  let li = 0
+  for (const sd of spec.series) {
+    if (sd.hist) {
+      subSeries.push(chart.value.addSeries(HistogramSeries, {
+        priceLineVisible: false, lastValueVisible: false,
+        priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+      }, pane))
+    } else {
+      subSeries.push(chart.value.addSeries(LineSeries, {
+        color: maColor(li++),
+        lineWidth: 1,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+        priceFormat: volFmt ? { type: 'volume' } : { type: 'price', precision: 2, minMove: 0.01 },
+      }, pane))
+    }
+  }
+  // 标准参考线（给人看的刻度：CCI ±100 / WR 20·80 / RSI·KDJ 20·70）
+  const guides = SUB_GUIDES[props.sub] || []
+  const firstLine = subSeries.find((x) => x.seriesType && x.seriesType() === 'Line')
+  guideCount.value = 0
+  if (guides.length && firstLine && 'createPriceLine' in firstLine) {
+    for (const g of guides) {
+      try {
+        subGuides.push((firstLine as ISeriesApi<'Line'>).createPriceLine({
+          price: g, color: withAlpha(textColor(), 0.45), lineWidth: 1,
+          lineStyle: LineStyle.Dotted, axisLabelVisible: false, title: '',
+        }))
+        guideCount.value = subGuides.length
+      } catch { /* ignore */ }
+    }
   }
   subPaneOn = true
   layoutPanes()
@@ -606,41 +639,30 @@ function ensureSub() {
 }
 
 function applySub() {
-  if (!chart.value) return
+  if (!chart.value || !subSeries.length || props.sub === 'none') return
   const bars = props.bars
-  if (!bars.length || !subSeries.length) return
-  const closes = bars.map((b) => b.close)
-  const toT = (t: string | number) => t as Time
-  if (props.sub === 'macd') {
-    const { dif, dea, hist } = calcMacd(closes)
-    const histS = subSeries[0] as ISeriesApi<'Histogram'>
-    histS.setData(bars.map((b, i) => ({
-      time: toT(b.time),
-      value: hist[i] ?? 0,
-      color: ((hist[i] ?? 0) >= 0 ? upColor() : downColor()) + 'b0',
-    })).filter((d, i) => hist[i] != null))
-    ;(subSeries[1] as ISeriesApi<'Line'>).setData(
-      bars.map((b, i) => ({ time: toT(b.time), value: dif[i] })).filter((d) => d.value != null) as never,
-    )
-    ;(subSeries[2] as ISeriesApi<'Line'>).setData(
-      bars.map((b, i) => ({ time: toT(b.time), value: dea[i] })).filter((d) => d.value != null) as never,
-    )
-  } else if (props.sub === 'kdj') {
-    const { k, d, j } = calcKdj(bars)
-    const sets = [k, d, j]
-    subSeries.forEach((s, si) => {
-      (s as ISeriesApi<'Line'>).setData(
-        bars.map((b, i) => ({ time: toT(b.time), value: sets[si][i] })).filter((x) => x.value != null) as never,
+  if (!bars.length || !SUB_SPECS[props.sub]) return
+  const data = subData()
+  const spec = SUB_SPECS[props.sub]
+  spec.series.forEach((sd, i) => {
+    const s = subSeries[i]
+    if (!s) return
+    const arr = data[sd.key]
+    if (!arr) return
+    if (sd.hist) {
+      ;(s as ISeriesApi<'Histogram'>).setData(
+        bars.map((b, j) => ({
+          time: b.time as Time,
+          value: (arr[j] ?? 0) as number,
+          color: ((arr[j] ?? 0) >= 0 ? upColor() : downColor()) + 'b0',
+        })).filter((_, j) => arr[j] != null) as never,
       )
-    })
-  } else if (props.sub === 'rsi') {
-    const sets = [calcRsi(closes, 6), calcRsi(closes, 12), calcRsi(closes, 24)]
-    subSeries.forEach((s, si) => {
-      (s as ISeriesApi<'Line'>).setData(
-        bars.map((b, i) => ({ time: toT(b.time), value: sets[si][i] })).filter((x) => x.value != null) as never,
+    } else {
+      ;(s as ISeriesApi<'Line'>).setData(
+        bars.map((b, j) => ({ time: b.time as Time, value: arr[j] })).filter((d) => d.value != null) as never,
       )
-    })
-  }
+    }
+  })
 }
 
 // ---- 数据应用 ----
@@ -824,6 +846,7 @@ function apply() {
     priceLine = null
   }
 
+  subCache = null
   chart.value.timeScale().fitContent()
   applySub()
   layoutPanes()
@@ -994,30 +1017,17 @@ function buildLegend(param: MouseEventParams | null) {
     }
   }
 
-  if (props.sub !== 'none') {
-    const closes = bars.map((x) => x.close)
-    if (props.sub === 'macd') {
-      const { dif, dea, hist } = calcMacd(closes)
-      rows.push([
-        { label: 'MACD', value: 'DIF ' + (dif[idx]?.toFixed(3) ?? '—'), color: maColors()[0] },
-        { label: 'DEA', value: dea[idx]?.toFixed(3) ?? '—', color: maColors()[1] },
-        { label: 'MACD', value: hist[idx]?.toFixed(3) ?? '—', color: (hist[idx] ?? 0) >= 0 ? upColor() : downColor() },
-      ])
-    } else if (props.sub === 'kdj') {
-      const { k, d, j } = calcKdj(bars)
-      rows.push([
-        { label: 'K', value: k[idx]?.toFixed(2) ?? '—', color: maColors()[0] },
-        { label: 'D', value: d[idx]?.toFixed(2) ?? '—', color: maColors()[1] },
-        { label: 'J', value: j[idx]?.toFixed(2) ?? '—', color: maColors()[2] },
-      ])
-    } else if (props.sub === 'rsi') {
-      const r6 = calcRsi(closes, 6); const r12 = calcRsi(closes, 12); const r24 = calcRsi(closes, 24)
-      rows.push([
-        { label: 'RSI6', value: r6[idx]?.toFixed(2) ?? '—', color: maColors()[0] },
-        { label: 'RSI12', value: r12[idx]?.toFixed(2) ?? '—', color: maColors()[1] },
-        { label: 'RSI24', value: r24[idx]?.toFixed(2) ?? '—', color: maColors()[2] },
-      ])
-    }
+  if (props.sub !== 'none' && SUB_SPECS[props.sub]) {
+    const data = subData()
+    const spec = SUB_SPECS[props.sub]
+    let li = 0
+    const row: LegendCell[] = spec.series.map((sd) => {
+      const v = (data[sd.key] || [])[idx] ?? null
+      const color = sd.hist ? ((v ?? 0) >= 0 ? upColor() : downColor()) : maColor(li++)
+      const txt = v == null ? '—' : (Math.abs(Number(v)) >= 1e6 ? fmtVol(Number(v)) : Number(v).toFixed(2))
+      return { label: sd.label, value: txt, color }
+    })
+    rows.push(row)
   }
 
   legendRows.value = rows
@@ -1220,6 +1230,7 @@ onBeforeUnmount(() => {
     class="lwc-wrap"
     tabindex="0"
     :data-panes="paneCount"
+    :data-guides="guideCount"
     :class="{ 'lwc-wrap--fs': isFs, 'lwc-wrap--measure': measureOn }"
     :style="isFs ? {} : { height: `${height}px` }"
     @keydown="onKey"

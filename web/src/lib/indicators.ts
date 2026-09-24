@@ -130,3 +130,206 @@ export function timeshareAvg(bars: { volume?: number; amount?: number; close: nu
   }
   return out
 }
+
+// ==================== 副图指标（注册表驱动） ====================
+
+export type OhlcBar = { high: number; low: number; close: number; open?: number; volume?: number }
+
+/** OBV 能量潮（收盘方向加权累计量）+ MAOBV(30) */
+export function obv(bars: OhlcBar[], n = 30) {
+  const out: IndSeries = []
+  let acc = 0
+  for (let i = 0; i < bars.length; i++) {
+    const v = bars[i].volume ?? 0
+    if (i === 0) acc = v
+    else {
+      const prev = bars[i - 1].close
+      if (bars[i].close > prev) acc += v
+      else if (bars[i].close < prev) acc -= v
+    }
+    out.push(acc)
+  }
+  return { obv: out, ma: sma(out.map((x) => x ?? 0), n) }
+}
+
+/** CCI 顺势指标 */
+export function cci(bars: OhlcBar[], n = 14): IndSeries {
+  const tp = bars.map((b) => (b.high + b.low + b.close) / 3)
+  const out: IndSeries = new Array(bars.length).fill(null)
+  for (let i = n - 1; i < bars.length; i++) {
+    const win = tp.slice(i - n + 1, i + 1)
+    const ma = win.reduce((a, x) => a + x, 0) / n
+    const mad = win.reduce((a, x) => a + Math.abs(x - ma), 0) / n
+    out[i] = mad > 0 ? (tp[i] - ma) / (0.015 * mad) : 0
+  }
+  return out
+}
+
+/** 威廉指标 WR（通达信口径：0~100，越大越超卖） */
+export function wr(bars: OhlcBar[], n = 10): IndSeries {
+  const out: IndSeries = new Array(bars.length).fill(null)
+  for (let i = n - 1; i < bars.length; i++) {
+    let hi = -Infinity
+    let lo = Infinity
+    for (let j = i - n + 1; j <= i; j++) {
+      if (bars[j].high > hi) hi = bars[j].high
+      if (bars[j].low < lo) lo = bars[j].low
+    }
+    out[i] = hi === lo ? 50 : ((hi - bars[i].close) / (hi - lo)) * 100
+  }
+  return out
+}
+
+/** DMI 趋向指标（Wilder 平滑）：+DI / -DI / ADX */
+export function dmi(bars: OhlcBar[], n = 14) {
+  const len = bars.length
+  const pdi: IndSeries = new Array(len).fill(null)
+  const mdi: IndSeries = new Array(len).fill(null)
+  const adx: IndSeries = new Array(len).fill(null)
+  if (len < n + 2) return { pdi, mdi, adx }
+  let trS = 0
+  let pS = 0
+  let mS = 0
+  const dxs: number[] = []
+  for (let i = 1; i < len; i++) {
+    const up = bars[i].high - bars[i - 1].high
+    const dn = bars[i - 1].low - bars[i].low
+    const pDM = up > dn && up > 0 ? up : 0
+    const mDM = dn > up && dn > 0 ? dn : 0
+    const tr = Math.max(bars[i].high - bars[i].low, Math.abs(bars[i].high - bars[i - 1].close), Math.abs(bars[i].low - bars[i - 1].close))
+    if (i <= n) {
+      trS += tr
+      pS += pDM
+      mS += mDM
+      if (i === n) {
+        pdi[i] = trS ? (pS / trS) * 100 : 0
+        mdi[i] = trS ? (mS / trS) * 100 : 0
+      }
+    } else {
+      trS = trS - trS / n + tr
+      pS = pS - pS / n + pDM
+      mS = mS - mS / n + mDM
+      const p = trS ? (pS / trS) * 100 : 0
+      const m = trS ? (mS / trS) * 100 : 0
+      pdi[i] = p
+      mdi[i] = m
+    }
+    if (i > n) {
+      const sum = (pdi[i] ?? 0) + (mdi[i] ?? 0)
+      dxs.push(sum ? (Math.abs((pdi[i] ?? 0) - (mdi[i] ?? 0)) / sum) * 100 : 0)
+    }
+  }
+  // ADX = DX 的 n 日 Wilder 平滑
+  let adxV: number | null = null
+  let idx = 0
+  const start = n * 2
+  for (let i = 0; i < len; i++) {
+    const need = i - start + 1
+    if (need <= 0) continue
+    if (adxV == null && need >= n) {
+      adxV = dxs.slice(0, n).reduce((a, x) => a + x, 0) / n
+      adx[i] = adxV
+      idx = n
+    } else if (adxV != null && idx < dxs.length) {
+      adxV = (adxV * (n - 1) + dxs[idx]) / n
+      adx[i] = adxV
+      idx++
+    }
+  }
+  return { pdi, mdi, adx }
+}
+
+/** BIAS 乖离率 */
+export function bias(closes: number[], n: number): IndSeries {
+  const ma = sma(closes, n)
+  return closes.map((c, i) => (ma[i] != null && ma[i] !== 0 ? ((c - ma[i]!) / ma[i]!) * 100 : null))
+}
+
+/** ATR（Wilder 平滑） */
+export function atrLine(bars: OhlcBar[], n = 14): IndSeries {
+  const out: IndSeries = new Array(bars.length).fill(null)
+  if (bars.length < n + 1) return out
+  let v: number | null = null
+  for (let i = 1; i < bars.length; i++) {
+    const tr = Math.max(bars[i].high - bars[i].low, Math.abs(bars[i].high - bars[i - 1].close), Math.abs(bars[i].low - bars[i - 1].close))
+    if (i <= n) {
+      v = (v ?? 0) + tr / n
+      if (i === n) out[i] = v
+    } else {
+      v = ((v ?? 0) * (n - 1) + tr) / n
+      out[i] = v
+    }
+  }
+  return out
+}
+
+/** PSY 心理线 + PSYMA */
+export function psy(closes: number[], n = 12, mn = 6) {
+  const out: IndSeries = new Array(closes.length).fill(null)
+  let up = 0
+  for (let i = 1; i < closes.length; i++) {
+    up += closes[i] > closes[i - 1] ? 1 : 0
+    if (i > n) up -= closes[i - n + 1] > closes[i - n] ? 1 : 0
+    if (i >= n) out[i] = (up / n) * 100
+  }
+  return { psy: out, ma: sma(out.map((x) => x ?? 0), mn) }
+}
+
+/** VR 成交量比率（n=26） */
+export function vrLine(bars: OhlcBar[], n = 26): IndSeries {
+  const out: IndSeries = new Array(bars.length).fill(null)
+  for (let i = n - 1; i < bars.length; i++) {
+    let up = 0
+    let dn = 0
+    let flat = 0
+    for (let j = i - n + 1; j <= i; j++) {
+      const v = bars[j].volume ?? 0
+      const c = bars[j].close
+      const pc = j > 0 ? bars[j - 1].close : c
+      if (c > pc) up += v
+      else if (c < pc) dn += v
+      else flat += v
+    }
+    const denom = dn + flat / 2
+    out[i] = denom > 0 ? ((up + flat / 2) / denom) * 100 : 0
+  }
+  return out
+}
+
+// ---- 副图注册表：加指标只改这里 + SUB_SPECS ----
+export interface SubSeriesDef { key: string; label: string; hist?: boolean }
+export interface SubSpec { label: string; series: SubSeriesDef[] }
+
+export const SUB_SPECS: Record<string, SubSpec> = {
+  macd: { label: 'MACD', series: [{ key: 'hist', label: 'MACD', hist: true }, { key: 'dif', label: 'DIF' }, { key: 'dea', label: 'DEA' }] },
+  kdj: { label: 'KDJ', series: [{ key: 'k', label: 'K' }, { key: 'd', label: 'D' }, { key: 'j', label: 'J' }] },
+  rsi: { label: 'RSI', series: [{ key: 'rsi6', label: 'RSI6' }, { key: 'rsi12', label: 'RSI12' }, { key: 'rsi24', label: 'RSI24' }] },
+  obv: { label: 'OBV', series: [{ key: 'obv', label: 'OBV' }, { key: 'ma', label: 'MAOBV' }] },
+  cci: { label: 'CCI', series: [{ key: 'cci', label: 'CCI(14)' }] },
+  wr: { label: 'WR', series: [{ key: 'wr10', label: 'WR10' }, { key: 'wr6', label: 'WR6' }] },
+  dmi: { label: 'DMI', series: [{ key: 'pdi', label: '+DI' }, { key: 'mdi', label: '-DI' }, { key: 'adx', label: 'ADX' }] },
+  bias: { label: 'BIAS', series: [{ key: 'b6', label: 'BIAS6' }, { key: 'b12', label: 'BIAS12' }, { key: 'b24', label: 'BIAS24' }] },
+  atr: { label: 'ATR', series: [{ key: 'atr', label: 'ATR14' }] },
+  psy: { label: 'PSY', series: [{ key: 'psy', label: 'PSY(12)' }, { key: 'ma', label: 'PSYMA' }] },
+  vr: { label: 'VR', series: [{ key: 'vr', label: 'VR(26)' }] },
+}
+
+/** 按注册表计算副图数据（键与 SUB_SPECS[key].series[].key 对应） */
+export function computeSub(kind: string, bars: OhlcBar[]): Record<string, IndSeries> | null {
+  if (!SUB_SPECS[kind] || !bars.length) return null
+  const closes = bars.map((b) => b.close)
+  switch (kind) {
+    case 'macd': { const { dif, dea, hist } = macd(closes); return { dif, dea, hist } }
+    case 'kdj': { const { k, d, j } = kdj(bars, 9); return { k, d, j } }
+    case 'rsi': return { rsi6: rsi(closes, 6), rsi12: rsi(closes, 12), rsi24: rsi(closes, 24) }
+    case 'obv': { const { obv: o, ma } = obv(bars); return { obv: o, ma } }
+    case 'cci': return { cci: cci(bars, 14) }
+    case 'wr': return { wr10: wr(bars, 10), wr6: wr(bars, 6) }
+    case 'dmi': { const { pdi, mdi, adx } = dmi(bars, 14); return { pdi, mdi, adx } }
+    case 'bias': return { b6: bias(closes, 6), b12: bias(closes, 12), b24: bias(closes, 24) }
+    case 'atr': return { atr: atrLine(bars, 14) }
+    case 'psy': { const { psy: p, ma } = psy(closes, 12, 6); return { psy: p, ma } }
+    case 'vr': return { vr: vrLine(bars, 26) }
+    default: return null
+  }
+}

@@ -47,10 +47,19 @@ const PERIOD_OPTIONS = [
   { value: 'weekly', label: '周K' },
   { value: 'monthly', label: '月K' },
 ]
+type SubKind = 'macd' | 'kdj' | 'rsi' | 'obv' | 'cci' | 'wr' | 'dmi' | 'bias' | 'atr' | 'psy' | 'vr' | 'none'
 const SUB_OPTIONS = [
   { value: 'macd', label: 'MACD' },
   { value: 'kdj', label: 'KDJ' },
   { value: 'rsi', label: 'RSI' },
+  { value: 'obv', label: 'OBV' },
+  { value: 'wr', label: 'WR' },
+  { value: 'cci', label: 'CCI' },
+  { value: 'dmi', label: 'DMI' },
+  { value: 'bias', label: 'BIAS' },
+  { value: 'psy', label: 'PSY' },
+  { value: 'vr', label: 'VR' },
+  { value: 'atr', label: 'ATR' },
   { value: 'none', label: '无' },
 ]
 const MA_CHOICES = [5, 10, 20, 30, 60, 120, 250]
@@ -69,7 +78,7 @@ const minuteBars = ref<MinuteBar[]>([])
 const prevClose = ref<number | null>(null)
 
 // 专业控件（持久化）：副图指标 / 布林带 / 均线组
-const subIndicator = usePersistedRef<'macd' | 'kdj' | 'rsi' | 'none'>('market.sub', 'macd')
+const subIndicator = usePersistedRef<SubKind>('market.sub', 'macd')
 // 程序自动画线 / 自动技术分析（默认开）
 const autoOn = usePersistedRef('market.auto', true)
 const analysis = ref<AutoAnalysis | null>(null)
@@ -92,7 +101,7 @@ function setPeriodByKey(i: number) {
   const qp = String(route.query.period || '')
   if (PERIOD_OPTIONS.some((o) => o.value === qp)) period.value = qp as Period
   const qs = String(route.query.sub || '')
-  if (SUB_OPTIONS.some((o) => o.value === qs)) subIndicator.value = qs as 'macd' | 'kdj' | 'rsi' | 'none'
+  if (SUB_OPTIONS.some((o) => o.value === qs)) subIndicator.value = qs as SubKind
 })()
 
 const isMinute = computed(() => ['ts', '1', '5', '15', '30', '60'].includes(period.value))
@@ -486,7 +495,7 @@ onMounted(() => {
               <button
                 v-for="s in SUB_OPTIONS" :key="s.value"
                 class="kbar__chip" :class="{ 'is-on': subIndicator === s.value }"
-                @click="subIndicator = s.value as 'macd' | 'kdj' | 'rsi' | 'none'"
+                @click="subIndicator = s.value as SubKind"
               >{{ s.label }}</button>
             </div>
           </div>
