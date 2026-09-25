@@ -21,6 +21,7 @@
   --text-faint: #5c6670;
 
   --accent: #7aa2f7;
+  --purple: #b48ead;
   --accent-hover: #8fb4ff;
   --accent-dim: rgba(122, 162, 247, 0.14);
   --on-accent: #0a0c10;
@@ -53,7 +54,6 @@
 
   --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px rgba(0, 0, 0, 0.28);
   --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.5);
-
   /* ---- refinement layer (2026-09-16) ---- */
   --ring: rgba(122, 162, 247, 0.45);        /* focus-visible 外圈 */
   --ring-gold: rgba(212, 165, 116, 0.42);
@@ -66,6 +66,7 @@
   --grid-size: 22px;
   --flash: rgba(122, 162, 247, 0.14);       /* 数据更新闪动 */
   --shadow-lift: 0 10px 28px rgba(0, 0, 0, 0.35);
+
 }
 
 :root[data-theme='obsidian'] {
@@ -83,6 +84,7 @@
   --text-faint: #5e646b;
 
   --accent: #e0a050;
+  --purple: #c9a0dc;
   --accent-hover: #edb97a;
   --accent-dim: rgba(224, 160, 80, 0.14);
   --on-accent: #1a120a;
@@ -115,7 +117,6 @@
 
   --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 8px 24px rgba(0, 0, 0, 0.45);
   --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.6);
-
   /* ---- refinement layer (2026-09-16) ---- */
   --ring: rgba(224, 160, 80, 0.5);
   --ring-gold: rgba(224, 160, 80, 0.45);
@@ -128,6 +129,7 @@
   --grid-size: 24px;
   --flash: rgba(224, 160, 80, 0.16);
   --shadow-lift: 0 12px 32px rgba(0, 0, 0, 0.55);
+
 }
 
 :root[data-theme='ivory'] {
@@ -141,10 +143,11 @@
   --border-strong: #d8cfbe;
 
   --text: #1c1917;
-  --text-sub: #8a8177;
-  --text-faint: #b4ac9f;
+  --text-sub: #766d64;
+  --text-faint: #8f8477;
 
   --accent: #8e3a2f;
+  --purple: #7b3fa0;
   --accent-hover: #a04a3d;
   --accent-dim: rgba(142, 58, 47, 0.1);
   --on-accent: #f7f2ea;
@@ -182,7 +185,6 @@
   --shadow-1: 0 1px 2px rgba(90, 60, 30, 0.06);
   --shadow-2: 0 4px 16px rgba(90, 60, 30, 0.1);
   --shadow-3: 0 16px 48px rgba(90, 60, 30, 0.16);
-
   /* ---- refinement layer (2026-09-16) ---- */
   --ring: rgba(142, 58, 47, 0.28);
   --ring-gold: rgba(169, 129, 46, 0.32);
@@ -195,6 +197,7 @@
   --grid-size: 22px;
   --flash: rgba(142, 58, 47, 0.1);
   --shadow-lift: 0 10px 26px rgba(90, 60, 30, 0.14);
+
 }
 
 /* ---- shared scales (theme-independent) ---- */
@@ -219,9 +222,9 @@
   --sp-6: 24px;
   --sp-8: 32px;
 
-  --radius-sm: 6px;
-  --radius-md: 9px;
-  --radius-lg: 14px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
   --radius-pill: 999px;
 
   --nav-w: 208px;
@@ -249,6 +252,12 @@
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.18);
   --shadow-2: 0 4px 16px rgba(0, 0, 0, 0.28);
   --shadow-3: 0 16px 48px rgba(0, 0, 0, 0.5);
+
+  /* legacy aliases used by older embedded views */
+  --panel: var(--bg-panel);
+  --panel-2: var(--bg-raised);
+  --radius: var(--radius-md);
+  --shadow-lg: var(--shadow-3);
 }
 
 /* 尊重系统「减少动态效果」：把所有过渡/动画压到最短 */

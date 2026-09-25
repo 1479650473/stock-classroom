@@ -610,6 +610,7 @@ function subColorOf(c: SubColor | null | undefined, fallback = ''): string {
     case 'warn': return cssVar('--warn', '#d29922')
     case 'info': return cssVar('--info', '#7AA2F7')
     case 'gold': return cssVar('--gold', '#D4A574')
+    case 'purple': return cssVar('--purple', '#b48ead')
     default: return fallback
   }
 }

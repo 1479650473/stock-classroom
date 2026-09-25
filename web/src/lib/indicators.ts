@@ -465,7 +465,7 @@ export function zjTaijiao(bars: OhlcBar[], chips?: ChipRow[]) {
         colors[i] = 'down'
         tags[i] = tags[i] ? tags[i] + '·出货' : '主力出货'
       } else if (strong) {
-        colors[i] = 'accent'
+        colors[i] = 'purple'
         tags[i] = tags[i] ? tags[i] + '·高度控盘' : '高度控盘'
       } else {
         colors[i] = 'up'
@@ -480,7 +480,7 @@ export function zjTaijiao(bars: OhlcBar[], chips?: ChipRow[]) {
 export interface SubSeriesDef { key: string; label: string; hist?: boolean }
 export interface SubParamDef { key: string; label: string; def: number; min?: number; max?: number }
 /** 逐点颜色（语义键，具体色值由主题决定） */
-export type SubColor = 'up' | 'down' | 'dim' | 'accent' | 'warn' | 'info' | 'gold'
+export type SubColor = 'up' | 'down' | 'dim' | 'accent' | 'warn' | 'info' | 'gold' | 'purple'
 /** 副图计算结果：数据 + 可选逐点颜色 + 可选逐点状态标签 */
 export interface SubResult {
   data: Record<string, IndSeries>
