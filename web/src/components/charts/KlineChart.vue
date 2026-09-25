@@ -14,7 +14,7 @@ import { chartTokens, maColors, withAlpha } from '@/lib/chartTheme'
 import {
   SUB_SPECS, computeSub, timeshareAvg, boll as calcBoll, sar as calcSar,
 } from '@/lib/indicators'
-import type { IndSeries, SubParams } from '@/lib/indicators'
+import type { ChipRow, IndSeries, SubColor, SubParams, SubResult } from '@/lib/indicators'
 
 /**
  * 专业 K 线：TradingView Lightweight Charts v5 封装。
@@ -87,7 +87,7 @@ const props = withDefaults(
     /** 分时基准价（昨收） */
     prevClose?: number | null
     /** 副图指标（第二指标窗，注册表见 SUB_SPECS） */
-    sub?: 'none' | 'macd' | 'kdj' | 'rsi' | 'obv' | 'cci' | 'wr' | 'dmi' | 'bias' | 'atr' | 'psy' | 'vr' | 'trix' | 'mtm' | 'arbr' | 'roc'
+    sub?: 'none' | 'macd' | 'kdj' | 'rsi' | 'obv' | 'cci' | 'wr' | 'dmi' | 'bias' | 'atr' | 'psy' | 'vr' | 'trix' | 'mtm' | 'arbr' | 'roc' | 'zj'
     /** 主图布林带 */
     boll?: boolean
     /** 主图 SAR（抛物线转向，点状） */
@@ -96,6 +96,8 @@ const props = withDefaults(
     subParams?: SubParams | null
     /** 筹码分布最新快照（平均成本 + 90% 成本区间），画成主图水平标注 */
     chips?: { avg: number; low90: number; high90: number } | null
+    /** 筹码分布全序列（「庄家抬轿」等需要逐日筹码的指标用） */
+    chipsRows?: ChipRow[] | null
     /** 右上角工具（缩放/复位/截图/全屏） */
     showTools?: boolean
     /** 左上角十字光标信息条 */
@@ -127,6 +129,7 @@ const props = withDefaults(
     sar: false,
     subParams: null,
     chips: null,
+    chipsRows: null,
     showTools: true,
     showLegend: true,
     title: '',
@@ -577,21 +580,38 @@ function syncStructure() {
 }
 
 let subPaneOn = false
-let subCache: { sig: string; data: Record<string, IndSeries> } | null = null
+let subCache: { sig: string; res: SubResult | null } | null = null
 let subGuides: IPriceLine[] = []
 let sarSeries: ISeriesApi<'Line'>[] = []
 let chipLines: IPriceLine[] = []
 //: 标准参考线（超买/超卖），按指标类型给
 const SUB_GUIDES: Record<string, number[]> = { cci: [-100, 100], wr: [20, 80], rsi: [30, 70], kdj: [20, 80] }
 
-/** 副图数据（按 bars 指纹缓存，十字光标移动/图例刷新时不重算） */
-function subData(): Record<string, IndSeries> {
+/** 副图数据（按 bars/参数/筹码指纹缓存，十字光标移动/图例刷新时不重算） */
+function subData(): SubResult | null {
   const bars = props.bars
-  const sig = `${props.sub}|${bars.length}|${bars.length ? bars[bars.length - 1].time : ''}|${JSON.stringify(props.subParams || {})}`
-  if (subCache && subCache.sig === sig) return subCache.data
-  const data = computeSub(props.sub, bars, props.subParams || undefined) || {}
-  subCache = { sig, data }
-  return data
+  const rows = props.chipsRows
+  const cSig = rows && rows.length ? `${rows.length}@${rows[rows.length - 1]?.date || ''}` : '0'
+  const sig = `${props.sub}|${bars.length}|${bars.length ? bars[bars.length - 1].time : ''}|`
+    + `${JSON.stringify(props.subParams || {})}|${cSig}`
+  if (subCache && subCache.sig === sig) return subCache.res
+  const res = computeSub(props.sub, bars, props.subParams || undefined, rows || undefined)
+  subCache = { sig, res }
+  return res
+}
+
+/** 语义色 → 主题色（副图逐点颜色/图例用） */
+function subColorOf(c: SubColor | null | undefined, fallback = ''): string {
+  switch (c) {
+    case 'up': return upColor()
+    case 'down': return downColor()
+    case 'dim': return withAlpha(textColor(), 0.8)
+    case 'accent': return cssVar('--accent', '#7AA2F7')
+    case 'warn': return cssVar('--warn', '#d29922')
+    case 'info': return cssVar('--info', '#7AA2F7')
+    case 'gold': return cssVar('--gold', '#D4A574')
+    default: return fallback
+  }
 }
 function ensureSub() {
   if (!chart.value) return
@@ -653,19 +673,21 @@ function applySub() {
   if (!chart.value || !subSeries.length || props.sub === 'none') return
   const bars = props.bars
   if (!bars.length || !SUB_SPECS[props.sub]) return
-  const data = subData()
+  const res = subData()
+  if (!res) return
   const spec = SUB_SPECS[props.sub]
   spec.series.forEach((sd, i) => {
     const s = subSeries[i]
     if (!s) return
-    const arr = data[sd.key]
+    const arr = res.data[sd.key]
     if (!arr) return
+    const cols = res.colors?.[sd.key]
     if (sd.hist) {
       ;(s as ISeriesApi<'Histogram'>).setData(
         bars.map((b, j) => ({
           time: b.time as Time,
           value: (arr[j] ?? 0) as number,
-          color: ((arr[j] ?? 0) >= 0 ? upColor() : downColor()) + 'b0',
+          color: subColorOf(cols?.[j], (arr[j] ?? 0) >= 0 ? upColor() : downColor()) + 'b0',
         })).filter((_, j) => arr[j] != null) as never,
       )
     } else {
@@ -1071,16 +1093,29 @@ function buildLegend(param: MouseEventParams | null) {
   }
 
   if (props.sub !== 'none' && SUB_SPECS[props.sub]) {
-    const data = subData()
+    const res = subData()
     const spec = SUB_SPECS[props.sub]
     let li = 0
-    const row: LegendCell[] = spec.series.map((sd) => {
-      const v = (data[sd.key] || [])[idx] ?? null
-      const color = sd.hist ? ((v ?? 0) >= 0 ? upColor() : downColor()) : maColor(li++)
-      const txt = v == null ? '—' : (Math.abs(Number(v)) >= 1e6 ? fmtVol(Number(v)) : Number(v).toFixed(2))
-      return { label: sd.label, value: txt, color }
-    })
-    rows.push(row)
+    if (res) {
+      const row: LegendCell[] = spec.series.map((sd) => {
+        const v = (res.data[sd.key] || [])[idx] ?? null
+        const color = sd.hist
+          ? subColorOf(res.colors?.[sd.key]?.[idx], (v ?? 0) >= 0 ? upColor() : downColor())
+          : maColor(li++)
+        const txt = v == null ? '—' : (Math.abs(Number(v)) >= 1e6 ? fmtVol(Number(v)) : Number(v).toFixed(2))
+        return { label: sd.label, value: txt, color }
+      })
+      // 状态标签（如「庄家抬轿」的无庄/有庄/出货/高度控盘）
+      for (const sd of spec.series) {
+        const tag = res.tags?.[sd.key]?.[idx]
+        if (tag) {
+          const color = subColorOf(res.colors?.[sd.key]?.[idx], undefined)
+          row.push({ label: '', value: tag, color })
+          break
+        }
+      }
+      rows.push(row)
+    }
   }
 
   legendRows.value = rows
@@ -1258,6 +1293,7 @@ watch(() => [props.showFundFlow, props.showEquity, props.equity], () => syncStru
 watch(() => props.sub, () => { ensureSub(); buildLegend(null) })
 watch(() => props.sar, () => apply())
 watch(() => props.chips, () => apply())
+watch(() => props.chipsRows, () => { subCache = null; applySub(); buildLegend(null) })
 watch(() => props.subParams, () => { subCache = null; applySub(); buildLegend(null) })
 watch(() => props.boll, (on) => {
   bollSeries.value.forEach((s) => s.applyOptions({ visible: on }))

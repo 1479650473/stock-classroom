@@ -134,7 +134,7 @@ export function timeshareAvg(bars: { volume?: number; amount?: number; close: nu
 
 // ==================== 副图指标（注册表驱动） ====================
 
-export type OhlcBar = { high: number; low: number; close: number; open?: number; volume?: number }
+export type OhlcBar = { time?: string | number; high: number; low: number; close: number; open?: number; volume?: number }
 
 /** OBV 能量潮（收盘方向加权累计量）+ MAOBV(30) */
 export function obv(bars: OhlcBar[], n = 30) {
@@ -392,10 +392,114 @@ export function sar(bars: OhlcBar[], af0 = 0.02, step = 0.02, maxAf = 0.2) {
   return { up, down }
 }
 
+// ---- 庄家抬轿（通达信公式移植 + 筹码近似） ----
+/**
+ * 控盘 = EMA(EMA(C,9),9) 的日变化率 ×1000；颜色规则（按原公式 STICKLINE 覆盖顺序）：
+ *   控盘<0 → 无庄控盘（灰）；控盘>0 且下行 → 主力出货（绿）
+ *   控盘>0 且上行 → 有庄控盘（红）；若同时「高度控盘条件」成立 → 高度控盘（高亮）
+ * 高度控盘条件：VAR2 = 100×WINNER(C×0.95) > 50 且 COST(85) < C。
+ *
+ * 筹码近似说明（我们没有逐价持仓分布，只有每日分位统计）：
+ *   · COST(85) ≈ 筹码表「70% 区间上沿」(cost70_high)  —— 这是精确定义，非近似；
+ *   · WINNER(p) 用已知分位点 (cost90_low,5%) (cost70_low,15%) (close,获利比例) (cost70_high,85%) (cost90_high,95%)
+ *     做分段线性插值近似（单调、带真实锚点）。
+ */
+export function zjTaijiao(bars: OhlcBar[], chips?: ChipRow[]) {
+  const len = bars.length
+  const zj: IndSeries = new Array(len).fill(null)
+  const start: IndSeries = new Array(len).fill(null)
+  const colors: (SubColor | null)[] = new Array(len).fill(null)
+  const tags: (string | null)[] = new Array(len).fill(null)
+  if (len < 12) return { zj, start, colors, tags }
+  const closes = bars.map((b) => b.close)
+  const e1 = ema(closes, 9)
+  const e2 = ema(e1.map((x) => x ?? 0), 9)
+  const chipMap = new Map<string, ChipRow>()
+  for (const c of chips || []) if (c && c.date) chipMap.set(String(c.date), c)
+
+  const winner = (chip: ChipRow, close: number, px: number): number | null => {
+    const pts: [number, number][] = []
+    if (chip.cost90_low) pts.push([chip.cost90_low, 5])
+    if (chip.cost70_low) pts.push([chip.cost70_low, 15])
+    if (chip.profit_ratio != null && Number.isFinite(chip.profit_ratio)) pts.push([close, chip.profit_ratio * 100])
+    if (chip.cost70_high) pts.push([chip.cost70_high, 85])
+    if (chip.cost90_high) pts.push([chip.cost90_high, 95])
+    if (pts.length < 2) return null
+    pts.sort((a, b) => a[0] - b[0])
+    if (px <= pts[0][0]) return pts[0][1]
+    if (px >= pts[pts.length - 1][0]) return pts[pts.length - 1][1]
+    for (let k = 1; k < pts.length; k++) {
+      if (px <= pts[k][0]) {
+        const [x0, y0] = pts[k - 1]
+        const [x1, y1] = pts[k]
+        return x1 > x0 ? y0 + ((y1 - y0) * (px - x0)) / (x1 - x0) : y0
+      }
+    }
+    return null
+  }
+
+  for (let i = 10; i < len; i++) {
+    const prev = e2[i - 1]
+    const cur = e2[i]
+    if (prev == null || cur == null || prev === 0) continue
+    const v = ((cur - prev) / prev) * 1000
+    zj[i] = +v.toFixed(3)
+    if ((zj[i - 1] ?? 0) <= 0 && v > 0) {
+      start[i] = 5
+      tags[i] = '开始控盘'
+    }
+    if (v < 0) {
+      colors[i] = 'dim'
+      tags[i] = tags[i] ? tags[i] + '·无庄' : '无庄控盘'
+    } else if (v > 0) {
+      const rising = v > (zj[i - 1] ?? 0)
+      let strong = false
+      const d = typeof bars[i].time === 'string' ? String(bars[i].time) : ''
+      const chip = d ? chipMap.get(d) : undefined
+      if (chip) {
+        const var2 = winner(chip, bars[i].close, bars[i].close * 0.95)
+        const cost85 = chip.cost70_high ?? null
+        strong = var2 != null && var2 > 50 && cost85 != null && cost85 < bars[i].close
+      }
+      if (!rising) {
+        colors[i] = 'down'
+        tags[i] = tags[i] ? tags[i] + '·出货' : '主力出货'
+      } else if (strong) {
+        colors[i] = 'accent'
+        tags[i] = tags[i] ? tags[i] + '·高度控盘' : '高度控盘'
+      } else {
+        colors[i] = 'up'
+        tags[i] = tags[i] ? tags[i] + '·有庄' : '有庄控盘'
+      }
+    }
+  }
+  return { zj, start, colors, tags }
+}
+
 // ---- 副图注册表：加指标只改这里 + SUB_SPECS ----
 export interface SubSeriesDef { key: string; label: string; hist?: boolean }
 export interface SubParamDef { key: string; label: string; def: number; min?: number; max?: number }
-export interface SubSpec { label: string; series: SubSeriesDef[]; params: SubParamDef[] }
+/** 逐点颜色（语义键，具体色值由主题决定） */
+export type SubColor = 'up' | 'down' | 'dim' | 'accent' | 'warn' | 'info' | 'gold'
+/** 副图计算结果：数据 + 可选逐点颜色 + 可选逐点状态标签 */
+export interface SubResult {
+  data: Record<string, IndSeries>
+  colors?: Record<string, (SubColor | null)[]>
+  tags?: Record<string, (string | null)[]>
+}
+/** 筹码分布行（/api/kline/cyq 的字段） */
+export interface ChipRow {
+  date: string
+  profit_ratio?: number
+  avg_cost?: number
+  conc70?: number
+  conc90?: number
+  cost70_low?: number
+  cost70_high?: number
+  cost90_low?: number
+  cost90_high?: number
+}
+export interface SubSpec { label: string; series: SubSeriesDef[]; params: SubParamDef[]; help?: string }
 export type SubParams = Record<string, number>
 
 export const SUB_SPECS: Record<string, SubSpec> = {
@@ -426,6 +530,8 @@ export const SUB_SPECS: Record<string, SubSpec> = {
     series: [{ key: 'ar', label: 'AR' }, { key: 'br', label: 'BR' }] },
   roc: { label: 'ROC', params: [{ key: 'n', label: 'N', def: 12 }, { key: 'm', label: '均线', def: 6 }],
     series: [{ key: 'roc', label: 'ROC' }, { key: 'ma', label: 'MAROC' }] },
+  zj: { label: '庄家抬轿', params: [], help: '白=无庄控盘(控盘<0) · 红=有庄控盘(控盘>0 且上行) · 绿=主力出货(控盘>0 但下行) · 高亮=高度控盘(获利盘>50% 且 85% 筹码成本<现价) · 金柱=开始控盘(上穿 0)。控盘=EMA(EMA(C,9),9) 日变化率×1000；筹码条件用每日分位数据近似（COST(85) 取 70% 区间上沿，WINNER 用分位线性插值）。',
+    series: [{ key: 'zj', label: '控盘', hist: true }, { key: 'start', label: '开始控盘', hist: true }] },
 }
 
 /** 按注册表计算副图数据（键与 SUB_SPECS[key].series[].key 对应） */
@@ -442,26 +548,30 @@ export function resolveParams(kind: string, params?: SubParams): SubParams {
 }
 
 /** 按注册表计算副图数据（键与 SPEC.series[].key 对应；params 缺省=默认参数） */
-export function computeSub(kind: string, bars: OhlcBar[], params?: SubParams): Record<string, IndSeries> | null {
+export function computeSub(kind: string, bars: OhlcBar[], params?: SubParams, chips?: ChipRow[]): SubResult | null {
   if (!SUB_SPECS[kind] || !bars.length) return null
   const closes = bars.map((b) => b.close)
   const P = resolveParams(kind, params)
   switch (kind) {
-    case 'macd': { const { dif, dea, hist } = macd(closes, P.fast, P.slow, P.signal); return { dif, dea, hist } }
-    case 'kdj': { const { k, d, j } = kdj(bars, P.n, P.m1, P.m2); return { k, d, j } }
-    case 'rsi': return { rsi1: rsi(closes, P.n1), rsi2: rsi(closes, P.n2), rsi3: rsi(closes, P.n3) }
-    case 'obv': { const { obv: o, ma } = obv(bars, P.ma); return { obv: o, ma } }
-    case 'cci': return { cci: cci(bars, P.n) }
-    case 'wr': return { wr1: wr(bars, P.n1), wr2: wr(bars, P.n2) }
-    case 'dmi': { const { pdi, mdi, adx } = dmi(bars, P.n); return { pdi, mdi, adx } }
-    case 'bias': return { b1: bias(closes, P.n1), b2: bias(closes, P.n2), b3: bias(closes, P.n3) }
-    case 'atr': return { atr: atrLine(bars, P.n) }
-    case 'psy': { const { psy: p, ma } = psy(closes, P.n, P.m); return { psy: p, ma } }
-    case 'vr': return { vr: vrLine(bars, P.n) }
-    case 'trix': { const { trix, ma } = trixLine(closes, P.n, P.m); return { trix, ma } }
-    case 'mtm': { const { mtm: m2, ma } = mtm(closes, P.n, P.m); return { mtm: m2, ma } }
-    case 'arbr': { const { ar, br } = arbr(bars, P.n); return { ar, br } }
-    case 'roc': { const { roc: r2, ma } = roc(closes, P.n, P.m); return { roc: r2, ma } }
+    case 'macd': { const { dif, dea, hist } = macd(closes, P.fast, P.slow, P.signal); return { data: { dif, dea, hist } } }
+    case 'kdj': { const { k, d, j } = kdj(bars, P.n, P.m1, P.m2); return { data: { k, d, j } } }
+    case 'rsi': return { data: { rsi1: rsi(closes, P.n1), rsi2: rsi(closes, P.n2), rsi3: rsi(closes, P.n3) } }
+    case 'obv': { const { obv: o, ma } = obv(bars, P.ma); return { data: { obv: o, ma } } }
+    case 'cci': return { data: { cci: cci(bars, P.n) } }
+    case 'wr': return { data: { wr1: wr(bars, P.n1), wr2: wr(bars, P.n2) } }
+    case 'dmi': { const { pdi, mdi, adx } = dmi(bars, P.n); return { data: { pdi, mdi, adx } } }
+    case 'bias': return { data: { b1: bias(closes, P.n1), b2: bias(closes, P.n2), b3: bias(closes, P.n3) } }
+    case 'atr': return { data: { atr: atrLine(bars, P.n) } }
+    case 'psy': { const { psy: p, ma } = psy(closes, P.n, P.m); return { data: { psy: p, ma } } }
+    case 'vr': return { data: { vr: vrLine(bars, P.n) } }
+    case 'trix': { const { trix, ma } = trixLine(closes, P.n, P.m); return { data: { trix, ma } } }
+    case 'mtm': { const { mtm: m2, ma } = mtm(closes, P.n, P.m); return { data: { mtm: m2, ma } } }
+    case 'arbr': { const { ar, br } = arbr(bars, P.n); return { data: { ar, br } } }
+    case 'roc': { const { roc: r2, ma } = roc(closes, P.n, P.m); return { data: { roc: r2, ma } } }
+    case 'zj': {
+      const r = zjTaijiao(bars, chips)
+      return { data: { zj: r.zj, start: r.start }, colors: { zj: r.colors }, tags: { zj: r.tags } }
+    }
     default: return null
   }
 }

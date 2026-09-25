@@ -16,6 +16,7 @@ import Icon from '@/components/Icon.vue'
 import { getIndices, getSectors, getNorthFlow, getKline, getKlineMinute, getKlineAnalysis, getCyq, searchStock, getFundFlow } from '@/api'
 import type { IndexQuote, KlineBar, KlinePeriod, MinuteBar, StockRef, FundFlowBar, AutoAnalysis } from '@/api'
 import { SUB_SPECS } from '@/lib/indicators'
+import type { ChipRow } from '@/lib/indicators'
 import { usePersistedRef } from '@/composables/usePersistedRef'
 
 type Tab = 'market' | 'stock' | 'etf'
@@ -48,7 +49,7 @@ const PERIOD_OPTIONS = [
   { value: 'weekly', label: '周K' },
   { value: 'monthly', label: '月K' },
 ]
-type SubKind = 'macd' | 'kdj' | 'rsi' | 'obv' | 'cci' | 'wr' | 'dmi' | 'bias' | 'atr' | 'psy' | 'vr' | 'trix' | 'mtm' | 'arbr' | 'roc' | 'none'
+type SubKind = 'macd' | 'kdj' | 'rsi' | 'obv' | 'cci' | 'wr' | 'dmi' | 'bias' | 'atr' | 'psy' | 'vr' | 'trix' | 'mtm' | 'arbr' | 'roc' | 'zj' | 'none'
 const SUB_OPTIONS = [
   { value: 'macd', label: 'MACD' },
   { value: 'kdj', label: 'KDJ' },
@@ -65,6 +66,7 @@ const SUB_OPTIONS = [
   { value: 'mtm', label: 'MTM' },
   { value: 'arbr', label: 'ARBR' },
   { value: 'roc', label: 'ROC' },
+  { value: 'zj', label: '庄家抬轿' },
   { value: 'none', label: '无' },
 ]
 const MA_CHOICES = [5, 10, 20, 30, 60, 120, 250]
@@ -92,7 +94,8 @@ const bollOn = usePersistedRef('market.boll', false)
 const sarOn = usePersistedRef('market.sar', false)
 // 筹码分布（最新快照叠加 + 卡片）
 const chipOn = usePersistedRef('market.chip', false)
-const cyq = ref<Record<string, unknown> | null>(null)
+const cyqRows = ref<ChipRow[]>([])
+const cyq = computed(() => cyqRows.value[0] ?? null)
 // 副图参数（按指标存，缺省=注册表默认值）
 const subParams = usePersistedRef<Record<string, Record<string, number>>>('market.subParams', {})
 const paramOpen = ref(false)
@@ -289,15 +292,27 @@ async function loadAnalysis() {
 }
 
 async function loadChips() {
-  if (!chipOn.value || !code.value) {
-    cyq.value = null
+  // 筹码序列：筹码叠加开关 或 庄家抬轿指标 需要
+  const need = chipOn.value || subIndicator.value === 'zj'
+  if (!need || !code.value) {
+    cyqRows.value = []
     return
   }
   try {
-    const rows = await getCyq(code.value)
-    cyq.value = rows && rows.length ? rows[0] : null
+    const rows = (await getCyq(code.value)) || []
+    cyqRows.value = rows.map((r) => ({
+      date: String(r.date || ''),
+      profit_ratio: Number(r.profit_ratio),
+      avg_cost: Number(r.avg_cost),
+      conc70: Number(r.conc70),
+      conc90: Number(r.conc90),
+      cost70_low: Number(r.cost70_low),
+      cost70_high: Number(r.cost70_high),
+      cost90_low: Number(r.cost90_low),
+      cost90_high: Number(r.cost90_high),
+    }))
   } catch {
-    cyq.value = null
+    cyqRows.value = []
   }
 }
 
@@ -366,6 +381,7 @@ watch(tab, (v) => {
 watch(days, () => { if (code.value) loadKline() })
 watch(autoOn, () => { void loadAnalysis() })
 watch(chipOn, () => { void loadChips() })
+watch(subIndicator, () => { void loadChips() })
 watch(period, () => { if (code.value) loadKline() })
 watch(
   () => route.query,
@@ -593,6 +609,7 @@ onMounted(() => {
             :sar="sarOn"
             :sub-params="curParams"
             :chips="chipOverlay"
+            :chips-rows="cyqRows"
             :sub="subIndicator"
             :intraday="isMinute"
             :timeshare="isTimeshare"
@@ -608,6 +625,7 @@ onMounted(() => {
               <span>{{ SUB_SPECS[subIndicator].label }} 参数</span>
               <button class="ui-btn ui-btn--ghost" style="padding:2px 8px;font-size:11px" @click="resetParams">重置</button>
             </div>
+            <div v-if="SUB_SPECS[subIndicator].help" class="param-pop__help">{{ SUB_SPECS[subIndicator].help }}</div>
             <div class="param-pop__body">
               <label v-for="p in SUB_SPECS[subIndicator].params" :key="p.key" class="param-pop__item">
                 <span>{{ p.label }}</span>
@@ -800,6 +818,7 @@ onMounted(() => {
 }
 .param-pop__head { display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 600; color: var(--text); }
 .param-pop__body { display: flex; flex-wrap: wrap; gap: 8px 12px; }
+.param-pop__help { font-size: 11px; color: var(--text-sub); line-height: 1.6; border-bottom: 1px dashed var(--border); padding-bottom: 6px; }
 .param-pop__item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-sub); }
 .param-pop__item input {
   width: 52px;
