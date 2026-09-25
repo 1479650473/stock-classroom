@@ -27,6 +27,8 @@ const direction = usePersistedRef<string>('arb.direction', 'all')
 const minSpace = usePersistedRef<number>('arb.minSpace', 0)
 const onlyOpen = usePersistedRef<boolean>('arb.onlyOpen', false)
 const showCfg = ref(false)
+/** 总览面板：平时折叠，只作一个功能块 */
+const showOverview = usePersistedRef<boolean>('arb.showOverview', false)
 
 interface Cfg { amount: number; commission_rate: number; commission_min: number; buy_fee_discount: number; transfer_fee: number; slippage_ticks: number; premium_days: number; discount_days: number }
 const DEFAULT_CFG: Cfg = {
@@ -252,12 +254,25 @@ const columns = [
       </div>
     </template>
 
-    <div class="arb-tiles">
-      <StatTile label="溢价机会（扣费后为正）" :value="counts.premProfitable" unit="只" :hint="`共 ${counts.prem} 只溢价`" trend="up" />
-      <StatTile label="折价机会（扣费后为正）" :value="counts.discProfitable" unit="只" :hint="`共 ${counts.disc} 只折价`" trend="down" />
-      <StatTile label="最大净空间" :value="Number.isFinite(counts.maxSpace) && counts.maxSpace > -9 ? counts.maxSpace.toFixed(3) : '—'" unit="%" hint="已扣全部费用" />
-      <StatTile label="覆盖 LOF" :value="Number(stats?.lof_count ?? 0)" unit="只" :hint="`净值 ${Number(stats?.nav_rows ?? 0).toLocaleString()} 条`" />
-    </div>
+    <!-- 总览：可折叠功能块（默认收起） -->
+    <section class="arb-ov" :class="{ 'is-open': showOverview }">
+      <button class="arb-ov__head" @click="showOverview = !showOverview">
+        <Icon :name="showOverview ? 'chevron-down' : 'chevron-right'" :size="16" />
+        <b>总览</b>
+        <span class="arb-ov__sum">
+          溢价机会 <em class="up">{{ counts.premProfitable }}</em> 只 · 折价机会 <em class="down">{{ counts.discProfitable }}</em> 只 ·
+          最大净空间 <em>{{ Number.isFinite(counts.maxSpace) && counts.maxSpace > -9 ? counts.maxSpace.toFixed(2) + '%' : '—' }}</em> ·
+          覆盖 LOF {{ Number(stats?.lof_count ?? 0) }} 只
+        </span>
+        <span class="arb-ov__hint">{{ showOverview ? '收起' : '展开' }}</span>
+      </button>
+      <div v-if="showOverview" class="arb-tiles">
+        <StatTile label="溢价机会（扣费后为正）" :value="counts.premProfitable" unit="只" :hint="`共 ${counts.prem} 只溢价`" trend="up" />
+        <StatTile label="折价机会（扣费后为正）" :value="counts.discProfitable" unit="只" :hint="`共 ${counts.disc} 只折价`" trend="down" />
+        <StatTile label="最大净空间" :value="Number.isFinite(counts.maxSpace) && counts.maxSpace > -9 ? counts.maxSpace.toFixed(3) : '—'" unit="%" hint="已扣全部费用" />
+        <StatTile label="覆盖 LOF" :value="Number(stats?.lof_count ?? 0)" unit="只" :hint="`净值 ${Number(stats?.nav_rows ?? 0).toLocaleString()} 条`" />
+      </div>
+    </section>
 
     <SectionCard v-if="showCfg" title="成本参数" desc="改这里 = 改全站口径：机会表与明细都会按这套参数重算">
       <div class="cfg-grid">
@@ -288,7 +303,8 @@ const columns = [
           最小净空间
           <input v-model.number="minSpace" type="number" step="0.1" />%
         </label>
-        <span class="arb-count">共 {{ total }} 只 · 显示前 {{ rows.length }}</span>
+        <span class="arb-sub">默认只看扣费后仍为正的机会（把上方改成负数可看全部）</span>
+        <span class="arb-count">共 {{ total }} 只可盈利<template v-if="total !== rows.length">（显示前 {{ rows.length }}）</template></span>
       </div>
 
       <DataTable
@@ -482,7 +498,23 @@ const columns = [
 .arb-btn--mini { padding: 2px 8px; font-size: 11.5px; }
 .arb-btn--mini.is-on { border-color: var(--accent); color: var(--accent); }
 
-.arb-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 14px 0; }
+.arb-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 0 0 12px; }
+
+/* 总览折叠块 */
+.arb-ov {
+  margin: 14px 0; border: 1px solid var(--border-soft); border-radius: 12px;
+  background: linear-gradient(var(--bg-raised), var(--bg-panel)); overflow: hidden;
+}
+.arb-ov__head {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 14px;
+  background: transparent; border: 0; cursor: pointer; color: var(--text); font-size: 13px; text-align: left;
+}
+.arb-ov__head:hover { background: var(--bg-hover); }
+.arb-ov__head b { font-size: 13px; }
+.arb-ov__sum { color: var(--text-dim); font-size: 12.5px; }
+.arb-ov__sum em { font-style: normal; color: var(--text); font-weight: 600; }
+.arb-ov__hint { margin-left: auto; font-size: 11.5px; color: var(--text-dim); }
+.arb-ov.is-open .arb-tiles { margin: 0 14px 14px; }
 
 .cfg-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
 .cfg-item { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-dim); }
@@ -500,6 +532,7 @@ const columns = [
   background: var(--bg-raised); color: var(--text); font-size: 12.5px;
 }
 .arb-count { margin-left: auto; font-size: 12px; color: var(--text-dim); }
+.arb-sub { font-size: 11.5px; color: var(--text-dim); opacity: .85; }
 .arb-name { font-weight: 500; }
 .arb-weak { color: var(--warn, #d08770); }
 .arb-suspend { color: var(--down); }
