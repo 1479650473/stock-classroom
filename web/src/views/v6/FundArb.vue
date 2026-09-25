@@ -11,6 +11,7 @@ import StatTile from '@/components/ui/StatTile.vue'
 import DataTable from '@/components/ui/DataTable.vue'
 import Drawer from '@/components/ui/Drawer.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
+import EmptyGuide from '@/components/ui/EmptyGuide.vue'
 import Icon from '@/components/Icon.vue'
 import { usePersistedRef } from '@/composables/usePersistedRef'
 import { useEChart } from '@/composables/useEChart'
@@ -27,8 +28,8 @@ const direction = usePersistedRef<string>('arb.direction', 'all')
 const minSpace = usePersistedRef<number>('arb.minSpace', 0)
 const onlyOpen = usePersistedRef<boolean>('arb.onlyOpen', false)
 const showCfg = ref(false)
-/** 总览面板：平时折叠，只作一个功能块 */
-const showOverview = usePersistedRef<boolean>('arb.showOverview', false)
+/** 全部机会明细（大表）：平时折叠，只作一个功能块 */
+const showTable = usePersistedRef<boolean>('arb.showTable', false)
 
 interface Cfg { amount: number; commission_rate: number; commission_min: number; buy_fee_discount: number; transfer_fee: number; slippage_ticks: number; premium_days: number; discount_days: number }
 const DEFAULT_CFG: Cfg = {
@@ -77,8 +78,30 @@ async function loadStats() {
   try { stats.value = await getArbStats() } catch { /* 忽略 */ }
 }
 
-onMounted(() => { load(); loadStats() })
+onMounted(() => { load(); loadOpps(); loadStats() })
 watch([direction, minSpace, onlyOpen], load)
+
+// ---------------- 可执行机会面板（主区域） ----------------
+const opps = ref<ArbItem[]>([])
+const oppsTotal = ref(0)
+const oppsLoading = ref(false)
+/** 口径：扣费后净空间 > 0 且 申购/赎回开放 且 成交额 ≥ 50 万（能真正做得了的那部分） */
+async function loadOpps() {
+  oppsLoading.value = true
+  try {
+    const r = await getArbList({
+      min_space: 0, executable_only: 1, liquid_only: 1, limit: 30, ...cfgParams.value,
+    })
+    opps.value = r.items
+    oppsTotal.value = r.total
+  } catch {
+    opps.value = []
+  } finally {
+    oppsLoading.value = false
+  }
+}
+/** 另有：算术有空间但不可执行/流动性不足的数量 */
+const oppsHidden = computed(() => Math.max(0, total.value - oppsTotal.value))
 
 const counts = computed(() => {
   const prem = rows.value.filter((r) => r.direction === 'premium')
@@ -108,7 +131,7 @@ async function sync(mode: 'daily' | 'fees' = 'daily') {
 }
 watch(
   () => jobs.byKind('fund_arb').map((j) => j.doneTick ?? 0).join(','),
-  () => { if (!syncing.value) { load(); loadStats() } },
+  () => { if (!syncing.value) { load(); loadOpps(); loadStats() } },
 )
 
 // ---------------- 明细抽屉 ----------------
@@ -254,25 +277,45 @@ const columns = [
       </div>
     </template>
 
-    <!-- 总览：可折叠功能块（默认收起） -->
-    <section class="arb-ov" :class="{ 'is-open': showOverview }">
-      <button class="arb-ov__head" @click="showOverview = !showOverview">
-        <Icon :name="showOverview ? 'chevron-down' : 'chevron-right'" :size="16" />
-        <b>总览</b>
-        <span class="arb-ov__sum">
-          溢价机会 <em class="up">{{ counts.premProfitable }}</em> 只 · 折价机会 <em class="down">{{ counts.discProfitable }}</em> 只 ·
-          最大净空间 <em>{{ Number.isFinite(counts.maxSpace) && counts.maxSpace > -9 ? counts.maxSpace.toFixed(2) + '%' : '—' }}</em> ·
-          覆盖 LOF {{ Number(stats?.lof_count ?? 0) }} 只
-        </span>
-        <span class="arb-ov__hint">{{ showOverview ? '收起' : '展开' }}</span>
-      </button>
-      <div v-if="showOverview" class="arb-tiles">
-        <StatTile label="溢价机会（扣费后为正）" :value="counts.premProfitable" unit="只" :hint="`共 ${counts.prem} 只溢价`" trend="up" />
-        <StatTile label="折价机会（扣费后为正）" :value="counts.discProfitable" unit="只" :hint="`共 ${counts.disc} 只折价`" trend="down" />
-        <StatTile label="最大净空间" :value="Number.isFinite(counts.maxSpace) && counts.maxSpace > -9 ? counts.maxSpace.toFixed(3) : '—'" unit="%" hint="已扣全部费用" />
-        <StatTile label="覆盖 LOF" :value="Number(stats?.lof_count ?? 0)" unit="只" :hint="`净值 ${Number(stats?.nav_rows ?? 0).toLocaleString()} 条`" />
+    <!-- 总览（常显） -->
+    <div class="arb-tiles">
+      <StatTile label="溢价机会（扣费后为正）" :value="counts.premProfitable" unit="只" :hint="`共 ${counts.prem} 只溢价`" trend="up" />
+      <StatTile label="折价机会（扣费后为正）" :value="counts.discProfitable" unit="只" :hint="`共 ${counts.disc} 只折价`" trend="down" />
+      <StatTile label="最大净空间" :value="Number.isFinite(counts.maxSpace) && counts.maxSpace > -9 ? counts.maxSpace.toFixed(3) : '—'" unit="%" hint="已扣全部费用" />
+      <StatTile label="覆盖 LOF" :value="Number(stats?.lof_count ?? 0)" unit="只" :hint="`净值 ${Number(stats?.nav_rows ?? 0).toLocaleString()} 条`" />
+    </div>
+
+    <!-- 主区域：可执行机会 -->
+    <SectionCard title="可执行机会" desc="口径：扣费后净空间 > 0 · 申购/赎回开放 · 场内成交额 ≥ 50 万">
+      <template #actions>
+        <span class="arb-count">共 {{ oppsTotal }} 只</span>
+      </template>
+      <div v-if="oppsLoading" class="arb-loading">加载中…</div>
+      <div v-else-if="opps.length" class="arb-opps">
+        <button v-for="o in opps" :key="o.code" class="arb-opp" @click="openDetail(o)">
+          <span class="arb-opp__dir" :class="o.direction === 'premium' ? 'up' : 'down'">
+            {{ o.direction === 'premium' ? '溢价' : '折价' }}
+          </span>
+          <span class="arb-opp__name">{{ o.name }}</span>
+          <span class="arb-opp__code">{{ o.code }}</span>
+          <span class="arb-opp__space" :class="sign(o.space_pct)">{{ pct(o.space_pct) }}</span>
+          <span class="arb-opp__meta">
+            每万元 {{ yuan(o.profit_per_10k) }} 元 · {{ planOf(o)?.days }} 天 · 成交额 {{ amountText(o.amount) }}
+            <template v-if="o.min_amount"> · 起点 {{ yuan(o.min_amount, 0) }} 元</template>
+            <template v-if="o.daily_limit && o.daily_limit < 1e10"> · 日限 {{ limitText(o.daily_limit) }}</template>
+          </span>
+          <span class="arb-opp__tags">
+            <span v-for="t in o.tags" :key="t" class="arb-tag">{{ t }}</span>
+          </span>
+        </button>
       </div>
-    </section>
+      <EmptyGuide
+        v-else
+        icon="info"
+        title="今日没有可执行的套利机会"
+        :desc="`另有 ${oppsHidden} 只算术上有空间，但卡在暂停申购 / 限大额 / 流动性不足——展开下方「全部机会明细」可核对。也可能是今天数据还没同步。`"
+      />
+    </SectionCard>
 
     <SectionCard v-if="showCfg" title="成本参数" desc="改这里 = 改全站口径：机会表与明细都会按这套参数重算">
       <div class="cfg-grid">
@@ -291,7 +334,15 @@ const columns = [
       </div>
     </SectionCard>
 
-    <SectionCard padded>
+    <!-- 全部机会明细（大表）：折叠功能块 -->
+    <section class="arb-ov" :class="{ 'is-open': showTable }">
+      <button class="arb-ov__head" @click="showTable = !showTable">
+        <Icon :name="showTable ? 'chevron-down' : 'chevron-right'" :size="16" />
+        <b>全部机会明细</b>
+        <span class="arb-ov__sum">按净空间排序的全量列表（含暂停申购 / 流动性不足） · 共 {{ total }} 只</span>
+        <span class="arb-ov__hint">{{ showTable ? '收起' : '展开' }}</span>
+      </button>
+      <div v-if="showTable" class="arb-ov__body">
       <div class="arb-filters">
         <SegmentedControl v-model="direction" size="sm" :options="[
           { value: 'all', label: '全部' }, { value: 'premium', label: '溢价' }, { value: 'discount', label: '折价' },
@@ -304,7 +355,7 @@ const columns = [
           <input v-model.number="minSpace" type="number" step="0.1" />%
         </label>
         <span class="arb-sub">默认只看扣费后仍为正的机会（把上方改成负数可看全部）</span>
-        <span class="arb-count">共 {{ total }} 只可盈利<template v-if="total !== rows.length">（显示前 {{ rows.length }}）</template></span>
+        <span class="arb-count">共 {{ total }} 只<template v-if="total > rows.length">（显示前 {{ rows.length }}）</template></span>
       </div>
 
       <DataTable
@@ -353,7 +404,8 @@ const columns = [
         相对本金的收益率；年化按资金占用天数折算（不是承诺收益）。溢价套利要承担 T+2~T+3 内溢价消失的风险，
         折价套利要承担净值波动 + 赎回费（7 天内通常 1.5%）。
       </div>
-    </SectionCard>
+      </div>
+    </section>
 
     <Drawer :open="detailOpen" :title="detail ? `${detail.name}（${detail.code}）` : '加载中…'"
             :desc="detail ? `${detail.ftype ?? ''} · ${detail.exchange.toUpperCase()}` : ''"
@@ -498,7 +550,32 @@ const columns = [
 .arb-btn--mini { padding: 2px 8px; font-size: 11.5px; }
 .arb-btn--mini.is-on { border-color: var(--accent); color: var(--accent); }
 
-.arb-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 0 0 12px; }
+.arb-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 14px 0; }
+
+/* 可执行机会面板 */
+.arb-opps { display: flex; flex-direction: column; gap: 6px; }
+.arb-opp {
+  display: grid; grid-template-columns: 46px minmax(120px, 1.2fr) 62px 84px minmax(200px, 2fr) auto;
+  align-items: center; gap: 10px; width: 100%; padding: 8px 12px; cursor: pointer; text-align: left;
+  border: 1px solid var(--border-soft); border-radius: 10px; background: var(--bg-raised); color: var(--text);
+  font-size: 13px;
+}
+.arb-opp:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+.arb-opp__dir {
+  display: inline-block; text-align: center; padding: 1px 0; border-radius: 6px; font-size: 11.5px;
+  border: 1px solid var(--border-soft);
+}
+.arb-opp__dir.up { color: var(--up); border-color: color-mix(in srgb, var(--up) 40%, transparent); }
+.arb-opp__dir.down { color: var(--down); border-color: color-mix(in srgb, var(--down) 40%, transparent); }
+.arb-opp__name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.arb-opp__code { color: var(--text-dim); font-size: 12px; }
+.arb-opp__space { font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
+.arb-opp__meta { color: var(--text-dim); font-size: 12px; }
+.arb-opp__tags { display: flex; gap: 4px; justify-content: flex-end; flex-wrap: wrap; }
+@media (max-width: 900px) {
+  .arb-opp { grid-template-columns: 46px 1fr 84px; grid-auto-rows: auto; }
+  .arb-opp__meta, .arb-opp__tags { grid-column: 2 / -1; }
+}
 
 /* 总览折叠块 */
 .arb-ov {
@@ -515,6 +592,7 @@ const columns = [
 .arb-ov__sum em { font-style: normal; color: var(--text); font-weight: 600; }
 .arb-ov__hint { margin-left: auto; font-size: 11.5px; color: var(--text-dim); }
 .arb-ov.is-open .arb-tiles { margin: 0 14px 14px; }
+.arb-ov__body { padding: 0 14px 14px; }
 
 .cfg-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
 .cfg-item { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-dim); }

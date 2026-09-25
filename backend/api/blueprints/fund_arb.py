@@ -56,10 +56,13 @@ def listing():
     except ValueError:
         min_space = 0.0
     only_open = request.args.get("only_open") in ("1", "true", "yes")
+    executable_only = request.args.get("executable_only") in ("1", "true", "yes")
+    liquid_only = request.args.get("liquid_only") in ("1", "true", "yes")
     limit = int_arg(request.args.get("limit"), 300, 1, 2000)
     try:
         res = arb.opportunities(_cfg_from_args(request.args), direction=direction,
-                                min_space=min_space, only_open=only_open, limit=limit)
+                                min_space=min_space, only_open=only_open, limit=limit,
+                                executable_only=executable_only, liquid_only=liquid_only)
         return ok(res)
     except Exception as e:  # noqa: BLE001
         return err(500, "arb_error", str(e))

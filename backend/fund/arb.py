@@ -213,7 +213,8 @@ def _merge_cfg(**over) -> Dict:
 
 
 def opportunities(cfg_over: Optional[Dict] = None, direction: Optional[str] = None,
-                  min_space: float = 0.0, only_open: bool = False, limit: int = 500) -> Dict:
+                  min_space: float = 0.0, only_open: bool = False, limit: int = 500,
+                  executable_only: bool = False, liquid_only: bool = False) -> Dict:
     """全量 LOF 折溢价机会表（按净空间排序）。"""
     cfg = _merge_cfg(**(cfg_over or {}))
     rows = store.latest_snapshot()
@@ -280,7 +281,9 @@ def opportunities(cfg_over: Optional[Dict] = None, direction: Optional[str] = No
         item["space_best_pct"] = item["discount_best"]["space_pct"] if item["direction"] == "discount" else None
         if space < min_space:
             continue
-        if only_open and "暂停" in ps:
+        if (only_open or executable_only) and not item.get("executable"):
+            continue
+        if liquid_only and not item.get("liquidity_ok"):
             continue
         out.append(item)
     out.sort(key=lambda x: -(x.get("space_pct") or 0))
