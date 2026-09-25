@@ -82,24 +82,34 @@ onMounted(() => { load(); loadOpps(); loadStats() })
 watch([direction, minSpace, onlyOpen], load)
 
 // ---------------- 可执行机会面板（主区域） ----------------
-const opps = ref<ArbItem[]>([])
 const oppsTotal = ref(0)
 const oppsLoading = ref(false)
 /** 口径：扣费后净空间 > 0 且 申购/赎回开放 且 成交额 ≥ 50 万（能真正做得了的那部分） */
+const oppsRaw = ref<ArbItem[]>([])
 async function loadOpps() {
   oppsLoading.value = true
   try {
     const r = await getArbList({
-      min_space: 0, executable_only: 1, liquid_only: 1, limit: 30, ...cfgParams.value,
+      min_space: 0, executable_only: 1, liquid_only: 1, limit: 200, ...cfgParams.value,
     })
-    opps.value = r.items
+    oppsRaw.value = r.items
     oppsTotal.value = r.total
   } catch {
-    opps.value = []
+    oppsRaw.value = []
   } finally {
     oppsLoading.value = false
   }
 }
+/** 面板阈值：净空间低于此值视为「空间太薄」，不值得动手 */
+const panelMinSpace = usePersistedRef<number>('arb.panelMinSpace', 0.5)
+/** 面板显示：可执行 + 本金窗口够用 + 空间不薄 */
+const opps = computed(() => oppsRaw.value.filter(
+  (o) => windowState(o) === 'ok' && o.space_pct >= panelMinSpace.value,
+))
+/** 被面板过滤掉的（可执行但窗口窄/空间薄） */
+const oppsExcluded = computed(() => oppsRaw.value.filter(
+  (o) => !(windowState(o) === 'ok' && o.space_pct >= panelMinSpace.value),
+))
 /** 另有：算术有空间但不可执行/流动性不足的数量 */
 const oppsHidden = computed(() => Math.max(0, total.value - oppsTotal.value))
 
@@ -302,9 +312,16 @@ const columns = [
     </div>
 
     <!-- 主区域：可执行机会 -->
-    <SectionCard title="可执行机会" desc="口径：扣费后净空间 > 0 · 申购/赎回开放 · 场内成交额 ≥ 50 万（净空间是「T 日快照」，历史平均会因溢价收敛打折——明细里有该基金实测）">
+    <SectionCard
+      title="可执行机会"
+      desc="口径：申购/赎回开放 · 成交额 ≥ 50 万 · 净空间 ≥ 阈值 · 本金窗口够用（保本金额 ≤ 上限/1.5）。净空间是「T 日快照」，历史平均会因溢价收敛打折——明细里有该基金实测"
+    >
       <template #actions>
-        <span class="arb-count">共 {{ oppsTotal }} 只</span>
+        <span class="arb-panelctl">
+          净空间 ≥
+          <input v-model.number="panelMinSpace" type="number" step="0.1" min="0" />%
+        </span>
+        <span class="arb-count">共 {{ opps.length }} 只</span>
       </template>
       <div v-if="oppsLoading" class="arb-loading">加载中…</div>
       <div v-else-if="opps.length" class="arb-opps">
@@ -332,9 +349,12 @@ const columns = [
       <EmptyGuide
         v-else
         icon="info"
-        title="今日没有可执行的套利机会"
-        :desc="`另有 ${oppsHidden} 只算术上有空间，但卡在暂停申购 / 限大额 / 流动性不足——展开下方「全部机会明细」可核对。也可能是今天数据还没同步。`"
+        title="今日没有值得动手的套利机会"
+        :desc="`可执行的有 ${oppsTotal} 只，但都不满足「本金窗口够用 + 空间 ≥ ${panelMinSpace}%」；另有 ${oppsHidden} 只卡在暂停申购 / 限大额 / 流动性不足。展开下方「全部机会明细」可逐只核对。也可能是今天数据还没同步。`"
       />
+      <div v-if="opps.length && oppsExcluded.length" class="arb-excluded">
+        另有 {{ oppsExcluded.length }} 只可执行但被过滤：{{ oppsExcluded.slice(0, 6).map((o) => `${o.name}(${pct(o.space_pct)})`).join('、') }}{{ oppsExcluded.length > 6 ? ' 等' : '' }}
+      </div>
     </SectionCard>
 
     <SectionCard v-if="showCfg" title="成本参数" desc="改这里 = 改全站口径：机会表与明细都会按这套参数重算">
@@ -695,6 +715,12 @@ const columns = [
   background: var(--bg-raised); color: var(--text); font-size: 12.5px;
 }
 .arb-count { margin-left: auto; font-size: 12px; color: var(--text-dim); }
+.arb-panelctl { font-size: 12px; color: var(--text-dim); display: inline-flex; align-items: center; gap: 4px; }
+.arb-panelctl input {
+  width: 56px; padding: 3px 6px; border-radius: 7px; border: 1px solid var(--border-soft);
+  background: var(--bg-raised); color: var(--text); font-size: 12px;
+}
+.arb-excluded { margin-top: 10px; font-size: 11.5px; color: var(--text-dim); }
 .arb-sub { font-size: 11.5px; color: var(--text-dim); opacity: .85; }
 .arb-name { font-weight: 500; }
 .arb-weak { color: var(--warn, #d08770); }
