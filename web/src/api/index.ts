@@ -835,3 +835,98 @@ export interface SimAccount {
 export interface SimSnapshot { generated: string; data_date: string; accounts: SimAccount[] }
 export const getSimAccounts = () => api.get<SimSnapshot>('/api/sim/accounts')
 export const refreshSim = () => api.post<SimSnapshot>('/api/sim/refresh')
+
+// ---- 基金套利（LOF 折溢价：场内价 vs 单位净值，含费率/门槛/成本拆解） ----
+export interface ArbPlan {
+  kind: 'premium' | 'discount'
+  amount: number
+  shares: number
+  buy_fee?: number
+  commission: number
+  redeem_fee?: number
+  redeem_rate_pct?: number
+  tier_label?: string | null
+  transfer_fee: number
+  slippage_cost?: number
+  gross_in: number
+  net_back: number
+  profit: number
+  space_pct: number
+  days: number
+  annual_pct: number
+  fee_pct: number
+  costs?: number
+}
+export interface ArbTier { min_days: number; max_days: number; rate_pct: number; label: string }
+export interface ArbItem {
+  code: string
+  name: string
+  exchange: string
+  ftype?: string | null
+  price: number
+  price_date: string
+  nav: number
+  nav_date: string
+  nav_lag_days: number | null
+  premium_pct: number
+  direction: 'premium' | 'discount'
+  amount?: number | null
+  liquidity_ok: boolean
+  purchase_status?: string | null
+  redeem_status?: string | null
+  min_amount?: number | null
+  daily_limit?: number | null
+  fee_rate_pct?: number | null
+  is_qdii: boolean
+  tags: string[]
+  premium: ArbPlan
+  discount: ArbPlan
+  discount_best: ArbPlan
+  space_pct: number
+  profit_per_10k: number
+  executable?: boolean
+  space_best_pct?: number | null
+}
+export interface ArbList { total: number; cfg: Record<string, number>; items: ArbItem[] }
+export interface ArbHistPoint { date: string; close: number; nav: number; nav_date: string; premium_pct: number }
+export interface ArbDetail {
+  code: string
+  name: string
+  exchange: string
+  ftype?: string | null
+  price: number
+  price_date: string
+  nav: number
+  nav_date: string
+  premium_pct: number | null
+  amount?: number | null
+  purchase_status?: string | null
+  redeem_status?: string | null
+  min_amount?: number | null
+  daily_limit?: number | null
+  fee_rate_pct?: number | null
+  redeem_tiers: ArbTier[]
+  buy_tiers: { amount: string; rate: string; rate_pct?: number | null }[]
+  cfg: Record<string, number>
+  history: ArbHistPoint[]
+  nav_history: { date: string; nav: number }[]
+  price_history: { date: string; close: number; amount?: number | null }[]
+  plans: { premium?: ArbPlan; discount?: ArbPlan; discount_best?: ArbPlan }
+  stats?: {
+    n: number; median_pct: number; p90_pct: number; p10_pct: number
+    max_pct: number; min_pct: number; days_above_1pct: number; days_above_2pct: number
+  }
+}
+export interface ArbOverview {
+  stats: Record<string, unknown>
+  count: { all: number; premium: number; discount: number; premium_profitable: number; discount_profitable: number }
+  top_premium: { code: string; name: string; premium_pct: number; space_pct: number; days: number; purchase_status?: string | null; tags: string[] }[]
+  top_discount: { code: string; name: string; premium_pct: number; space_pct: number; days: number; tags: string[] }[]
+}
+export const getArbOverview = () => api.get<ArbOverview>('/api/fund-arb/overview')
+export const getArbList = (params: Record<string, unknown>) => api.get<ArbList>('/api/fund-arb/list', params)
+export const getArbDetail = (code: string, params: Record<string, unknown> = {}) =>
+  api.get<ArbDetail>(`/api/fund-arb/fund/${code}`, params)
+export const getArbStats = () => api.get<Record<string, unknown>>('/api/fund-arb/stats')
+export const syncArb = (mode: 'daily' | 'fees' | 'backfill' | 'list' = 'daily') =>
+  api.post<{ job: JobHandle; mode: string }>('/api/fund-arb/sync', { mode })

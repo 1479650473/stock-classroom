@@ -584,6 +584,29 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
             out['steps']['paper_portfolio'] = {'error': str(e)[:120]}
             lg.warning('  组合纸面盘失败: %s', str(e)[:80])
 
+        # ㉒ 基金套利（LOF 折溢价）：名单/申购门槛/日线增量/净值增量 + 费率轮换
+        try:
+            from backend.fund import sync as _fa_sync
+            _fa = _fa_sync.run_daily(workers=4)
+            try:
+                _fee = _fa_sync.refresh_fees(workers=2)
+            except Exception as _e:  # noqa: BLE001
+                _fee = {'error': str(_e)[:80]}
+            out['steps']['fund_arb'] = {
+                'stats': _fa.get('stats'),
+                'daily': {k: _fa.get('daily', {}).get(k) for k in ('ok', 'fail', 'rows')},
+                'nav': {k: _fa.get('nav', {}).get(k) for k in ('ok', 'fail', 'rows')},
+                'fees': {k: _fee.get(k) for k in ('ok', 'fail')},
+                'elapsed': _fa.get('elapsed'),
+            }
+            lg.info('  基金套利: LOF %s 只 | 日线 +%s 净值 +%s | %ss',
+                    (_fa.get('stats') or {}).get('lof_count'),
+                    (_fa.get('daily') or {}).get('rows'), (_fa.get('nav') or {}).get('rows'),
+                    _fa.get('elapsed'))
+        except Exception as e:
+            out['steps']['fund_arb'] = {'error': str(e)[:120]}
+            lg.warning('  基金套利同步失败: %s', str(e)[:80])
+
     out['finished'] = datetime.now().isoformat(timespec='seconds')
     out['elapsed'] = round(time.time() - t0, 1)
     out['ok'] = True

@@ -7,6 +7,7 @@ const viewModules: Record<string, () => Promise<{ default: unknown }>> = {
   market: () => import('@/views/v6/Market.vue'),
   strategy: () => import('@/views/v6/Strategy.vue'),
   trade: () => import('@/views/v6/Trade.vue'),
+  fundarb: () => import('@/views/v6/FundArb.vue'),
   ai: () => import('@/views/v6/AI.vue'),
   data: () => import('@/views/v6/Data.vue'),
   settings: () => import('@/views/Settings.vue'),
@@ -17,6 +18,7 @@ const ALL_ROUTES: RouteRecordRaw[] = [
   { path: '/market', name: 'market', component: viewModules.market, meta: { title: '行情' } },
   { path: '/strategy', name: 'strategy', component: viewModules.strategy, meta: { title: '策略' } },
   { path: '/trade', name: 'trade', component: viewModules.trade, meta: { title: '交易' } },
+  { path: '/arb', name: 'fundarb', component: viewModules.fundarb, meta: { title: '基金套利' } },
   { path: '/ai', name: 'ai', component: viewModules.ai, meta: { title: 'AI' } },
   { path: '/data', name: 'data', component: viewModules.data, meta: { title: '数据' } },
 
