@@ -233,6 +233,19 @@ function limitText(v: unknown): string {
   if (n < 1e4) return `${Math.round(n)}元`
   return `${Math.round(n / 1e4)}万`
 }
+/** 面板行 hover 提示：把明细放进 tooltip，不占版面 */
+function oppTitle(o: ArbItem): string {
+  const p = planOf(o)
+  return [
+    `${o.direction === 'premium' ? '溢价套利' : '折价套利'} · 净空间 ${pct(o.space_pct)}（已扣费）`,
+    `每万元 ${yuan(o.profit_per_10k)} 元 · 占用 ${p?.days} 天 · 成交额 ${amountText(o.amount)}`,
+    `保本本金 ${p?.breakeven ? yuan(p.breakeven, 0) + ' 元' : '—'} · 本金上限 ${o.max_amount ? yuan(o.max_amount, 0) + ' 元' : '无明确上限'}`,
+    o.min_amount ? `起点 ${yuan(o.min_amount, 0)} 元` : '',
+    o.daily_limit && o.daily_limit < 1e10 ? `日限额 ${limitText(o.daily_limit)}` : '',
+    o.tags.length ? `标签：${o.tags.join('、')}` : '',
+    '点击查看成本拆解 / 历史实测',
+  ].filter(Boolean).join('\n')
+}
 function sign(v: unknown): string {
   const n = Number(v)
   return Number.isFinite(n) ? (n > 0 ? 'up' : n < 0 ? 'down' : '') : ''
@@ -314,7 +327,7 @@ const columns = [
     <!-- 主区域：可执行机会 -->
     <SectionCard
       title="可执行机会"
-      desc="口径：申购/赎回开放 · 成交额 ≥ 50 万 · 净空间 ≥ 阈值 · 本金窗口够用（保本金额 ≤ 上限/1.5）。净空间是「T 日快照」，历史平均会因溢价收敛打折——明细里有该基金实测"
+      desc="申购/赎回开放 · 成交额 ≥ 50 万 · 净空间 ≥ 阈值 · 本金窗口够用；净空间为 T 日快照，历史实现见明细"
     >
       <template #actions>
         <span class="arb-panelctl">
@@ -325,25 +338,14 @@ const columns = [
       </template>
       <div v-if="oppsLoading" class="arb-loading">加载中…</div>
       <div v-else-if="opps.length" class="arb-opps">
-        <button v-for="o in opps" :key="o.code" class="arb-opp" @click="openDetail(o)">
+        <button v-for="o in opps" :key="o.code" class="arb-opp" :title="oppTitle(o)" @click="openDetail(o)">
           <span class="arb-opp__dir" :class="o.direction === 'premium' ? 'up' : 'down'">
             {{ o.direction === 'premium' ? '溢价' : '折价' }}
           </span>
           <span class="arb-opp__name">{{ o.name }}</span>
           <span class="arb-opp__code">{{ o.code }}</span>
           <span class="arb-opp__space" :class="sign(o.space_pct)">{{ pct(o.space_pct) }}</span>
-          <span class="arb-opp__meta">
-            每万元 {{ yuan(o.profit_per_10k) }} 元 · {{ planOf(o)?.days }} 天 ·
-            保本本金 {{ planOf(o)?.breakeven ? yuan(planOf(o)?.breakeven, 0) + ' 元' : '—' }} · 成交额 {{ amountText(o.amount) }}
-            <template v-if="o.min_amount"> · 起点 {{ yuan(o.min_amount, 0) }} 元</template>
-            <template v-if="o.daily_limit && o.daily_limit < 1e10"> · 日限 {{ limitText(o.daily_limit) }}</template>
-          </span>
-          <span class="arb-opp__tags">
-            <span v-for="t in o.tags" :key="t" class="arb-tag">{{ t }}</span>
-            <span v-if="windowState(o) === 'none'" class="arb-tag arb-tag--warn">无论多少本金都不赚</span>
-            <span v-else-if="windowState(o) === 'narrow'" class="arb-tag arb-tag--warn">窗口窄 {{ sizeRange(o) }}</span>
-            <span v-else class="arb-tag arb-tag--ok">可做 {{ sizeRange(o) }}</span>
-          </span>
+          <span class="arb-opp__window">可做 {{ sizeRange(o) }}</span>
         </button>
       </div>
       <EmptyGuide
@@ -660,8 +662,8 @@ const columns = [
 /* 可执行机会面板 */
 .arb-opps { display: flex; flex-direction: column; gap: 6px; }
 .arb-opp {
-  display: grid; grid-template-columns: 46px minmax(120px, 1.2fr) 62px 84px minmax(200px, 2fr) auto;
-  align-items: center; gap: 10px; width: 100%; padding: 8px 12px; cursor: pointer; text-align: left;
+  display: grid; grid-template-columns: 46px minmax(120px, 1fr) 66px 96px 170px;
+  align-items: center; gap: 12px; width: 100%; padding: 8px 12px; cursor: pointer; text-align: left;
   border: 1px solid var(--border-soft); border-radius: 10px; background: var(--bg-raised); color: var(--text);
   font-size: 13px;
 }
@@ -675,11 +677,10 @@ const columns = [
 .arb-opp__name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .arb-opp__code { color: var(--text-dim); font-size: 12px; }
 .arb-opp__space { font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
-.arb-opp__meta { color: var(--text-dim); font-size: 12px; }
-.arb-opp__tags { display: flex; gap: 4px; justify-content: flex-end; flex-wrap: wrap; }
-@media (max-width: 900px) {
-  .arb-opp { grid-template-columns: 46px 1fr 84px; grid-auto-rows: auto; }
-  .arb-opp__meta, .arb-opp__tags { grid-column: 2 / -1; }
+.arb-opp__window { text-align: right; color: var(--text-dim); font-size: 12px; white-space: nowrap; }
+@media (max-width: 760px) {
+  .arb-opp { grid-template-columns: 46px 1fr 96px; }
+  .arb-opp__code, .arb-opp__window { display: none; }
 }
 
 /* 总览折叠块 */
