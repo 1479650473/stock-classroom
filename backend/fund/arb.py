@@ -114,10 +114,16 @@ def parse_redeem_tiers(tiers: List[dict]) -> List[dict]:
 
 
 def redeem_rate_for(tiers: List[dict], hold_days: int) -> Optional[dict]:
+    """按持有天数取赎回费率档。找不到匹配时：
+    早于最低档覆盖范围 → 用**第一档（最严）**，保守；晚于所有档 → 用最后一档（最宽）。"""
     for t in tiers:
         if t["min_days"] <= hold_days < t["max_days"]:
             return t
-    return tiers[-1] if tiers else None
+    if not tiers:
+        return None
+    if hold_days < tiers[0]["min_days"]:
+        return tiers[0]
+    return tiers[-1]
 
 
 def _annualize(ret: float, days: int, annual_days: int = 250) -> float:
