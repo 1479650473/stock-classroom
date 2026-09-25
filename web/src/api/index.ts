@@ -870,6 +870,9 @@ export interface ArbItem {
   nav: number
   nav_date: string
   nav_lag_days: number | null
+  lag_bars?: number
+  aligned?: boolean
+  price_latest_date?: string
   premium_pct: number
   direction: 'premium' | 'discount'
   amount?: number | null

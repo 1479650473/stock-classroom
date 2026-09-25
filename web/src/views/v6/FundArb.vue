@@ -123,8 +123,11 @@ const counts = computed(() => {
     maxSpace: rows.value.reduce((m, r) => Math.max(m, planOf(r)?.space_pct ?? -9), -9),
   }
 })
-const dataDate = computed(() => (stats.value?.daily_last as string) || (rows.value[0]?.price_date ?? '—'))
-const navDate = computed(() => (stats.value?.nav_last as string) || '')
+/** 数据日期 = 各行「价格/净值对齐日」的最大值（净值未公布时自动回退，不是错配口径） */
+const dataDate = computed(() => rows.value.reduce((m, r) => (r.price_date && r.price_date > m ? r.price_date : m), '')
+  || (stats.value?.daily_last as string) || '—')
+/** 有多少只还在等当日净值（全量口径，来自后端 stats） */
+const lagging = computed(() => Number(stats.value?.nav_lagging ?? 0))
 
 // ---------------- 同步数据 ----------------
 const syncing = computed(() => jobs.activeByKind('fund_arb') !== null)
@@ -333,7 +336,7 @@ const columns = [
     <template #actions>
       <div class="arb-actions">
         <span class="arb-date">
-          数据：行情 {{ dataDate }}<template v-if="navDate"> · 净值 {{ navDate }}</template>
+          数据：{{ dataDate }}（价格/净值对齐）<template v-if="lagging"> · <em class="arb-lag">{{ lagging }} 只当日净值未公布，已回退</em></template>
           <template v-if="lastLoaded"> · 刷新 {{ lastLoaded }}</template>
         </span>
         <button class="arb-btn" :disabled="syncing" @click="sync('daily')">
@@ -680,6 +683,7 @@ const columns = [
 <style scoped>
 .arb-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .arb-date { font-size: 12px; color: var(--text-dim); margin-right: 4px; }
+.arb-lag { font-style: normal; color: var(--up); }
 .arb-btn {
   display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; border-radius: 8px;
   border: 1px solid var(--border-soft); background: var(--bg-raised); color: var(--text);

@@ -278,10 +278,13 @@ def opportunities(cfg_over: Optional[Dict] = None, direction: Optional[str] = No
                 lag_days = (_dt.date.fromisoformat(r["price_date"]) - _dt.date.fromisoformat(r["nav_date"])).days
             except Exception:
                 lag_days = None
+        lag_bars = int(r.get("lag_bars") or 0)     # 相对最新价格日落后几个交易日（对齐口径）
         item = {
             "code": r["code"], "name": r["name"], "exchange": r["exchange"], "ftype": r.get("ftype"),
             "price": round(price, 4), "price_date": r.get("price_date"),
             "nav": round(nav, 4), "nav_date": r.get("nav_date"), "nav_lag_days": lag_days,
+            "lag_bars": lag_bars, "aligned": bool(r.get("aligned")),
+            "price_latest_date": r.get("price_latest_date"),
             "premium_pct": round(prem, 3),
             "direction": "premium" if prem > 0 else "discount",
             "amount": r.get("amount"),
@@ -299,8 +302,8 @@ def opportunities(cfg_over: Optional[Dict] = None, direction: Optional[str] = No
             item["tags"].append("限大额")
         if item["is_qdii"]:
             item["tags"].append("QDII")
-        if lag_days is not None and lag_days >= 2:
-            item["tags"].append(f"净值滞后{lag_days}天")
+        if lag_bars >= 1:
+            item["tags"].append(f"净值未出·回退{lag_bars}日")
         if not item["liquidity_ok"]:
             item["tags"].append("流动性弱")
         if (r.get("daily_limit") or 0) < 1e6 and (r.get("daily_limit") or 0) > 0:

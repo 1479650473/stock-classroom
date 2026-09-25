@@ -170,25 +170,51 @@ def last_nav_date(code: str) -> Optional[str]:
 
 
 def latest_snapshot() -> List[dict]:
-    """每只 LOF 的：最新场内收盘 + 最新净值 + 申购/费率信息（单条 SQL，供套利表用）。"""
+    """每只 LOF 的「对齐快照」：价格与净值取**同一天**（最后一个两者都有的交易日）。
+
+    为什么要对齐：净值通常 T 日 19:00 后才公布 —— 若直接拿「最新价 + 最新净值」，
+    盘中/傍晚会得到「价格 T + 净值 T-1」的错配口径，折溢价率是错的。
+    这里从最新价格日往回找第一个有净值的日子；找不到才退化为「价格 + ≤该日净值」并打标记。
+    返回额外字段：aligned(是否同日)、lag_bars(相对最新价格日落后几个交易日)、price_latest_date。
+    """
     c = conn()
-    rows = c.execute("""
-        SELECT l.code, l.name, l.exchange,
-               d.date AS price_date, d.close AS price, d.amount AS amount,
-               n.nav_date, n.nav,
-               p.purchase_status, p.redeem_status, p.min_amount, p.daily_limit, p.fee_rate, p.ftype,
-               f.redeem_tiers, f.buy_tiers
-        FROM lof_list l
-        LEFT JOIN lof_daily d ON d.code = l.code AND d.date = (SELECT MAX(date) FROM lof_daily WHERE code = l.code)
-        LEFT JOIN fund_nav  n ON n.code = l.code AND n.nav_date = (SELECT MAX(nav_date) FROM fund_nav WHERE code = l.code)
-        LEFT JOIN fund_purchase p ON p.code = l.code
-        LEFT JOIN fund_fee f ON f.code = l.code
-        ORDER BY l.code
-    """).fetchall()
-    keys = ("code", "name", "exchange", "price_date", "price", "amount", "nav_date", "nav",
-            "purchase_status", "redeem_status", "min_amount", "daily_limit", "fee_rate", "ftype",
-            "redeem_tiers", "buy_tiers")
-    return [dict(zip(keys, r)) for r in rows]
+    lofs = c.execute("SELECT code,name,exchange FROM lof_list ORDER BY code").fetchall()
+    pur = {r[0]: r[1:] for r in c.execute(
+        "SELECT code,purchase_status,redeem_status,min_amount,daily_limit,fee_rate,ftype FROM fund_purchase").fetchall()}
+    fees = {r[0]: (r[1], r[2]) for r in c.execute("SELECT code,buy_tiers,redeem_tiers FROM fund_fee").fetchall()}
+    out = []
+    for code, name, exchange in lofs:
+        px = c.execute("SELECT date, close, amount FROM lof_daily WHERE code=? ORDER BY date DESC LIMIT 25",
+                       (code,)).fetchall()
+        if not px:
+            continue
+        navs = dict(c.execute("SELECT nav_date, nav FROM fund_nav WHERE code=? ORDER BY nav_date DESC LIMIT 45",
+                              (code,)).fetchall())
+        aligned = None
+        for i, (d, close, amt) in enumerate(px):
+            if d in navs:
+                aligned = (i, d, close, amt, navs[d])
+                break
+        if aligned:
+            lag, price_date, price, amount, nav = aligned
+            nav_date, ok = price_date, True
+        else:
+            lag, price_date, price, amount = 0, px[0][0], px[0][1], px[0][2]
+            row = c.execute("SELECT nav_date, nav FROM fund_nav WHERE code=? AND nav_date<=? "
+                            "ORDER BY nav_date DESC LIMIT 1", (code, price_date)).fetchone()
+            nav_date, nav, ok = (row[0], row[1], False) if row else (None, None, False)
+        p = pur.get(code) or (None, None, None, None, None, None)
+        f = fees.get(code) or (None, None)
+        out.append({
+            "code": code, "name": name, "exchange": exchange,
+            "price_date": price_date, "price": price, "amount": amount,
+            "nav_date": nav_date, "nav": nav,
+            "aligned": ok, "lag_bars": lag, "price_latest_date": px[0][0],
+            "purchase_status": p[0], "redeem_status": p[1], "min_amount": p[2],
+            "daily_limit": p[3], "fee_rate": p[4], "ftype": p[5],
+            "redeem_tiers": f[1], "buy_tiers": f[0],
+        })
+    return out
 
 
 def nav_series(code: str, days: int = 500) -> List[dict]:
@@ -234,4 +260,8 @@ def stats() -> dict:
         "fee_count": q("SELECT COUNT(*) FROM fund_fee"),
         "purchase_count": q("SELECT COUNT(*) FROM fund_purchase"),
         "purchase_updated": q("SELECT MAX(updated_at) FROM fund_purchase"),
+        # 当日净值还没公布（最新净值日 < 最新行情日）的基金数 —— 面板"已回退 N 只"用
+        "nav_lagging": q("SELECT COUNT(*) FROM lof_list l WHERE "
+                         "(SELECT MAX(date) FROM lof_daily WHERE code=l.code) > "
+                         "(SELECT MAX(nav_date) FROM fund_nav WHERE code=l.code)"),
     }

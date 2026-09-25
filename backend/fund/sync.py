@@ -93,13 +93,30 @@ def sync_purchase() -> dict:
     return {"funds": len(rows), "written": n}
 
 
+def _norm_date(d) -> Optional[str]:
+    """kline.db 里日期有 YYYYMMDD / YYYY-MM-DD 两种写法，统一成后者（否则字符串比较永远不等）。"""
+    if not d:
+        return None
+    s = str(d).strip()
+    if len(s) == 8 and s.isdigit():
+        return f"{s[:4]}-{s[4:6]}-{s[6:]}"
+    return s
+
+
 def market_last_date() -> Optional[str]:
-    """本库已知的最近交易日（用 market_daily 表，失败则返回 None）。"""
+    """本库已知的最近交易日（market_daily 为主，etf_daily 兜底；格式统一 YYYY-MM-DD）。"""
     try:
         from ..api.paths import KLINE_DB
         con = sqlite3.connect(KLINE_DB, timeout=10)
-        row = con.execute("SELECT MAX(date) FROM market_daily").fetchone()
-        return row[0] if row and row[0] else None
+        for tbl in ("market_daily", "etf_daily"):
+            try:
+                row = con.execute(f"SELECT MAX(date) FROM {tbl}").fetchone()
+                d = _norm_date(row[0] if row else None)
+                if d:
+                    return d
+            except Exception:
+                continue
+        return None
     except Exception:
         return None
 
