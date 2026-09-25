@@ -148,6 +148,18 @@ watch(
 const detailOpen = ref(false)
 const detail = ref<ArbDetail | null>(null)
 const detailLoading = ref(false)
+/** 试算：本金 + 腿（点开某只时自动切到该只的方向） */
+const calcAmount = usePersistedRef<number>('arb.calcAmount', 10000)
+const calcLeg = ref<'premium' | 'discount'>('premium')
+let calcTimer: ReturnType<typeof setTimeout> | null = null
+
+async function refreshDetail(code?: string) {
+  const c = code || detail.value?.code
+  if (!c) return
+  detail.value = await getArbDetail(c, { ...cfgParams.value, amount: calcAmount.value, hist_days: histDays.value })
+  await nextTick()
+  drawDetail()
+}
 const detailChartEl = ref<HTMLElement | null>(null)
 const histDays = usePersistedRef<number>('arb.histDays', 250)
 
@@ -172,8 +184,9 @@ const { draw: drawDetail } = useEChart(detailChartEl, () => {
 async function openDetail(item: ArbItem) {
   detailOpen.value = true
   detailLoading.value = true
+  calcLeg.value = item.direction === 'discount' ? 'discount' : 'premium'
   try {
-    detail.value = await getArbDetail(item.code, { ...cfgParams.value, hist_days: histDays.value })
+    detail.value = await getArbDetail(item.code, { ...cfgParams.value, amount: calcAmount.value, hist_days: histDays.value })
     detailLoading.value = false   // 先切到详情分支，图表容器才会挂载
     await nextTick()
     drawDetail()
@@ -181,17 +194,34 @@ async function openDetail(item: ArbItem) {
     detailLoading.value = false
   }
 }
-watch(histDays, async () => {
-  if (detail.value) {
-    detail.value = await getArbDetail(detail.value.code, { ...cfgParams.value, hist_days: histDays.value })
-    await nextTick(); drawDetail()
-  }
+
+/** 试算输入变化（防抖 300ms）后重算 */
+function onCalcInput() {
+  if (calcTimer) clearTimeout(calcTimer)
+  calcTimer = setTimeout(() => { void refreshDetail() }, 300)
+}
+watch(histDays, () => { if (detail.value) void refreshDetail() })
+watch([() => cfg.value.amount, () => cfg.value.commission_rate, () => cfg.value.buy_fee_discount, calcAmount], () => {
+  if (detail.value && detailOpen.value) void refreshDetail()
 })
-watch([() => cfg.value.amount, () => cfg.value.commission_rate, () => cfg.value.buy_fee_discount], async () => {
-  if (detail.value && detailOpen.value) {
-    detail.value = await getArbDetail(detail.value.code, { ...cfgParams.value, hist_days: histDays.value })
-    await nextTick(); drawDetail()
+
+/** 试算结果（当前腿） */
+const calcPlan = computed(() => {
+  if (!detail.value) return null
+  return calcLeg.value === 'premium' ? (detail.value.plans.premium ?? null) : (detail.value.plans.discount ?? null)
+})
+/** 试算提示：保本金额 / 本金上限 */
+const calcHint = computed(() => {
+  const p = calcPlan.value
+  if (!p || !detail.value) return ''
+  const msgs: string[] = []
+  if (p.breakeven && calcAmount.value < p.breakeven) {
+    msgs.push(`低于保本金额 ${yuan(p.breakeven, 0)} 元：手续费吃掉空间，这笔是亏的`)
   }
+  if (detail.value.max_amount && calcAmount.value > detail.value.max_amount) {
+    msgs.push(`超过本金上限 ${yuan(detail.value.max_amount, 0)} 元（日限额 / 成交额×10%），超出部分要承担冲击成本`)
+  }
+  return msgs.join('；')
 })
 
 // ---------------- 格式化 ----------------
@@ -475,47 +505,51 @@ const columns = [
           </div>
         </div>
 
-        <!-- 成本拆解 -->
-        <div class="arb-plans">
-          <div v-if="detail.plans.premium" class="arb-plan">
-            <div class="arb-plan__head">
-              <b>溢价套利</b><span class="arb-plan__sub">申购净值 → 场内卖出 · 约 {{ detail.plans.premium.days }} 天</span>
-            </div>
-            <div class="arb-plan__rows">
-              <div><span>申购费</span><i>{{ yuan(detail.plans.premium.buy_fee, 2) }} 元<template v-if="detail.fee_rate_pct !== null && detail.fee_rate_pct !== undefined">（{{ pctPlain(detail.fee_rate_pct * (detail.cfg?.buy_fee_discount ?? 1), 2) }}）</template></i></div>
-              <div><span>卖出佣金</span><i>{{ yuan(detail.plans.premium.commission, 2) }} 元</i></div>
-              <div><span>滑点成本</span><i>{{ yuan(detail.plans.premium.slippage_cost, 2) }} 元</i></div>
-              <div><span>转托管费</span><i>{{ yuan(detail.plans.premium.transfer_fee, 2) }} 元</i></div>
-              <div><span>费用合计</span><i>{{ pctPlain(detail.plans.premium.fee_pct, 3) }}</i></div>
-              <div class="arb-plan__net">
-                <span>净空间</span>
-                <i :class="sign(detail.plans.premium.space_pct)">{{ pct(detail.plans.premium.space_pct) }} · 每万元 {{ yuan(detail.plans.premium.profit, 1) }} 元</i>
-              </div>
-              <div><span>折算年化</span><i :class="sign(detail.plans.premium.annual_pct)">{{ pct(detail.plans.premium.annual_pct) }}</i></div>
+        <!-- 试算器：输入本金 → 份额 / 费用 / 净赚 -->
+        <div class="arb-calc">
+          <div class="arb-calc__head">
+            <b>试算</b>
+            <div class="arb-calc__ctl">
+              <span>本金</span>
+              <input v-model.number="calcAmount" type="number" step="500" min="100" @input="onCalcInput" @change="onCalcInput" />
+              <span>元</span>
+              <SegmentedControl v-model="calcLeg" size="sm" :options="[
+                { value: 'premium', label: '溢价腿' }, { value: 'discount', label: '折价腿' },
+              ]" />
             </div>
           </div>
-
-          <div v-if="detail.plans.discount" class="arb-plan">
-            <div class="arb-plan__head">
-              <b>折价套利</b><span class="arb-plan__sub">场内买入 → 赎回 · 最短 {{ detail.plans.discount.days }} 天</span>
-            </div>
-            <div class="arb-plan__rows">
-              <div><span>买入佣金</span><i>{{ yuan(detail.plans.discount.commission, 2) }} 元</i></div>
+          <template v-if="calcPlan">
+            <div class="arb-calc__rows">
               <div>
-                <span>赎回费</span>
-                <i>{{ yuan(detail.plans.discount.redeem_fee, 2) }} 元（{{ pctPlain(detail.plans.discount.redeem_rate_pct, 2) }}<template v-if="detail.plans.discount.tier_label">，{{ detail.plans.discount.tier_label }}</template>）</i>
+                <span>{{ calcLeg === 'premium' ? '申购份额' : '买入份额' }}</span>
+                <i>{{ Math.round(calcPlan.shares).toLocaleString() }} 份
+                  <em>（{{ calcLeg === 'premium' ? '按净值 ' + num(detail.nav, 4) + ' 申购' : '按场内价 ' + num(detail.price, 3) + ' 买入' }}）</em>
+                </i>
               </div>
-              <div v-if="detail.plans.discount_best">
-                <span>持满 {{ detail.plans.discount_best.days }} 天后赎回</span>
-                <i :class="sign(detail.plans.discount_best.space_pct)">{{ pct(detail.plans.discount_best.space_pct) }}（费率 {{ pctPlain(detail.plans.discount_best.redeem_rate_pct, 2) }}）</i>
-              </div>
-              <div class="arb-plan__net">
-                <span>净空间</span>
-                <i :class="sign(detail.plans.discount.space_pct)">{{ pct(detail.plans.discount.space_pct) }} · 每万元 {{ yuan(detail.plans.discount.profit, 1) }} 元</i>
-              </div>
-              <div><span>折算年化</span><i :class="sign(detail.plans.discount.annual_pct)">{{ pct(detail.plans.discount.annual_pct) }}</i></div>
+              <div v-if="calcPlan.buy_fee !== undefined"><span>申购费</span><i>{{ yuan(calcPlan.buy_fee, 2) }} 元</i></div>
+              <div><span>场内佣金</span><i>{{ yuan(calcPlan.commission, 2) }} 元</i></div>
+              <div v-if="calcPlan.slippage_cost"><span>卖出滑点</span><i>{{ yuan(calcPlan.slippage_cost, 2) }} 元</i></div>
+              <div v-if="calcPlan.redeem_fee !== undefined"><span>赎回费</span><i>{{ yuan(calcPlan.redeem_fee, 2) }} 元（{{ pctPlain(calcPlan.redeem_rate_pct, 2) }}）</i></div>
+              <div><span>费用合计</span><i>{{ yuan(calcPlan.costs, 2) }} 元（占本金 {{ pctPlain(calcPlan.fee_pct, 2) }}）</i></div>
             </div>
-          </div>
+            <div class="arb-calc__result">
+              <span class="arb-calc__label">{{ calcLeg === 'premium' ? '申购→卖出' : '买入→赎回' }}净赚</span>
+              <span class="arb-calc__value" :class="sign(calcPlan.profit)">{{ yuan(calcPlan.profit, 1) }} 元</span>
+              <span class="arb-calc__sub">
+                收益率 <b :class="sign(calcPlan.space_pct)">{{ pct(calcPlan.space_pct) }}</b>
+                · 占用 {{ calcPlan.days }} 天
+                · 折算年化 <b :class="sign(calcPlan.annual_pct)">{{ pct(calcPlan.annual_pct) }}</b>
+              </span>
+            </div>
+            <div v-if="calcHint" class="arb-calc__hint">{{ calcHint }}</div>
+            <div class="arb-calc__other">
+              换成另一条腿：<b :class="sign(calcLeg === 'premium' ? detail.plans.discount?.profit : detail.plans.premium?.profit)">
+                {{ yuan(calcLeg === 'premium' ? detail.plans.discount?.profit : detail.plans.premium?.profit, 1) }} 元
+              </b>
+              <span class="arb-calc__note">（保本本金 {{ calcPlan.breakeven ? yuan(calcPlan.breakeven, 0) + ' 元' : '—' }}）</span>
+            </div>
+          </template>
+          <div v-else class="arb-muted">该腿没有可用价格/净值，无法试算</div>
         </div>
 
         <!-- 本金与盈亏 -->
@@ -554,7 +588,7 @@ const columns = [
         <div v-if="detail.hist_arb && detail.hist_arb.length" class="arb-sec">
           <div class="arb-sec__head">
             <b>该基金历史同类信号</b>
-            <span class="arb-sec__sub">T+3 卖出 · 扣费后 · 用本基金自己的历史算</span>
+            <span class="arb-sec__sub">T+3 卖出 · 扣费后 · 按 1 万元本金 · 用本基金自己的历史算</span>
           </div>
           <table class="arb-table">
             <thead>
@@ -742,6 +776,35 @@ const columns = [
 .arb-d-meta { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--text-dim); }
 .arb-d-meta b { color: var(--text); }
 .arb-d-tags { display: flex; gap: 4px; flex-wrap: wrap; }
+
+.arb-calc {
+  margin-top: 10px; padding: 12px; border-radius: 10px;
+  border: 1px solid var(--border-soft); background: var(--bg-raised);
+}
+.arb-calc__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.arb-calc__ctl { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-dim); }
+.arb-calc__ctl input {
+  width: 96px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--border-strong);
+  background: var(--bg-panel); color: var(--text); font-size: 14px; font-weight: 600; text-align: right;
+}
+.arb-calc__rows { margin-top: 10px; display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; }
+.arb-calc__rows > div { display: flex; justify-content: space-between; gap: 12px; }
+.arb-calc__rows span { color: var(--text-dim); }
+.arb-calc__rows i { font-style: normal; text-align: right; }
+.arb-calc__rows em { font-style: normal; color: var(--text-dim); }
+.arb-calc__result {
+  margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border-soft);
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+}
+.arb-calc__label { font-size: 12.5px; color: var(--text-dim); }
+.arb-calc__value { font-size: 24px; font-weight: 700; }
+.arb-calc__sub { font-size: 12px; color: var(--text-dim); }
+.arb-calc__hint {
+  margin-top: 8px; padding: 6px 9px; border-radius: 8px; font-size: 12px; line-height: 1.6;
+  color: var(--up); border: 1px solid color-mix(in srgb, var(--up) 35%, transparent);
+}
+.arb-calc__other { margin-top: 8px; font-size: 12px; color: var(--text-dim); }
+.arb-calc__note { margin-left: 4px; }
 
 .arb-plans { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
 @media (max-width: 620px) { .arb-plans { grid-template-columns: 1fr; } }

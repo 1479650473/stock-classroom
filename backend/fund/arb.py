@@ -429,7 +429,8 @@ def fund_detail(code: str, cfg_over: Optional[Dict] = None, hist_days: int = 250
         "history": store.premium_series(code, hist_days),
         "nav_history": store.nav_series(code, hist_days),
         "price_history": store.daily_series(code, hist_days),
-        "hist_arb": fund_hist_arb(code, cfg),
+        # 历史实测固定按 1 万元本金（否则 5 元最低佣金会随用户输入本金漂移，统计口径不稳定）
+        "hist_arb": fund_hist_arb(code, {**cfg, "amount": 10000}),
         "sizing": sizing_table(price, nav, tiers_raw, snap.get("fee_rate"), cfg) if (price and nav) else [],
         "plans": {},
     }
