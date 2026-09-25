@@ -200,6 +200,51 @@ def best_discount_plan(price: float, nav: float, cfg: Dict, tiers_raw: List[dict
 
 # ---------------- 机会表 ----------------
 
+def _breakeven(make_plan, lo: float = 100.0, hi: float = 2_000_000.0, iters: int = 40):
+    """二分求「覆盖手续费开始盈利」的最小申购金额（profit 随金额单调增）。
+
+    来源：场内佣金有 5 元最低值 → 本金越小、固定成本占比越高；低于保本金额时净空间为负。
+    """
+    try:
+        if make_plan(hi)["profit"] <= 0:
+            return None          # 再大也不赚（费率型成本吃掉了空间）
+        if make_plan(lo)["profit"] > 0:
+            return round(lo, 0)
+        for _ in range(iters):
+            mid = (lo + hi) / 2
+            if make_plan(mid)["profit"] > 0:
+                hi = mid
+            else:
+                lo = mid
+        return round(hi, 0)
+    except Exception:
+        return None
+
+
+def max_amount_hint(daily_limit, turnover, liquidity_share: float = 0.10):
+    """本金上限提示：申购日限额 与「当日成交额 × 10%」取小（卖出冲击的经验口径）。"""
+    caps = []
+    if daily_limit and 0 < daily_limit < 1e10:
+        caps.append(float(daily_limit))
+    if turnover and turnover > 0:
+        caps.append(float(turnover) * liquidity_share)
+    return round(min(caps), 0) if caps else None
+
+
+def sizing_table(price: float, nav: float, tiers_raw, buy_fee_pct, cfg: Dict,
+                 amounts=(1000, 5000, 10000, 50000, 100000)) -> List[Dict]:
+    """不同本金下的净赚与收益率（两条腿都算），给明细页用。"""
+    out = []
+    for a in amounts:
+        c = dict(cfg); c["amount"] = float(a)
+        prem = premium_plan(price, nav, c, buy_fee_pct)
+        disc = discount_plan(price, nav, c, tiers_raw)
+        out.append({"amount": a,
+                    "premium": {"profit": prem["profit"], "space_pct": prem["space_pct"], "fee_pct": prem["fee_pct"]},
+                    "discount": {"profit": disc["profit"], "space_pct": disc["space_pct"], "fee_pct": disc["fee_pct"]}})
+    return out
+
+
 def _merge_cfg(**over) -> Dict:
     cfg = dict(DEFAULT_CFG)
     for k, v in over.items():
@@ -266,6 +311,12 @@ def opportunities(cfg_over: Optional[Dict] = None, direction: Optional[str] = No
         item["premium"] = premium_plan(price, nav, cfg, r.get("fee_rate"))
         item["discount"] = discount_plan(price, nav, cfg, tiers_raw)
         item["discount_best"] = best_discount_plan(price, nav, cfg, tiers_raw)
+        # 保本金额（覆盖 5 元最低佣金等固定成本）与本金上限提示
+        item["premium"]["breakeven"] = _breakeven(
+            lambda a: premium_plan(price, nav, {**cfg, "amount": a}, r.get("fee_rate")))
+        item["discount"]["breakeven"] = _breakeven(
+            lambda a: discount_plan(price, nav, {**cfg, "amount": a}, tiers_raw))
+        item["max_amount"] = max_amount_hint(r.get("daily_limit"), r.get("amount"))
 
         # 方向过滤 + 空间过滤（取该方向的主方案）
         if direction in ("premium", "discount") and item["direction"] != direction:
@@ -379,12 +430,18 @@ def fund_detail(code: str, cfg_over: Optional[Dict] = None, hist_days: int = 250
         "nav_history": store.nav_series(code, hist_days),
         "price_history": store.daily_series(code, hist_days),
         "hist_arb": fund_hist_arb(code, cfg),
+        "sizing": sizing_table(price, nav, tiers_raw, snap.get("fee_rate"), cfg) if (price and nav) else [],
         "plans": {},
     }
     if price and nav:
         detail["plans"]["premium"] = premium_plan(price, nav, cfg, snap.get("fee_rate"))
         detail["plans"]["discount"] = discount_plan(price, nav, cfg, tiers_raw)
         detail["plans"]["discount_best"] = best_discount_plan(price, nav, cfg, tiers_raw)
+        detail["plans"]["premium"]["breakeven"] = _breakeven(
+            lambda a: premium_plan(price, nav, {**cfg, "amount": a}, snap.get("fee_rate")))
+        detail["plans"]["discount"]["breakeven"] = _breakeven(
+            lambda a: discount_plan(price, nav, {**cfg, "amount": a}, tiers_raw))
+    detail["max_amount"] = max_amount_hint(snap.get("daily_limit"), snap.get("amount"))
     hist = detail["history"]
     if hist:
         ps = sorted(x["premium_pct"] for x in hist)

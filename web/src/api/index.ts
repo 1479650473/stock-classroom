@@ -856,6 +856,8 @@ export interface ArbPlan {
   annual_pct: number
   fee_pct: number
   costs?: number
+  /** 覆盖手续费开始盈利的最小申购金额（元） */
+  breakeven?: number | null
 }
 export interface ArbTier { min_days: number; max_days: number; rate_pct: number; label: string }
 export interface ArbItem {
@@ -886,6 +888,8 @@ export interface ArbItem {
   profit_per_10k: number
   executable?: boolean
   space_best_pct?: number | null
+  /** 本金上限提示：申购日限额 与 当日成交额×10% 取小 */
+  max_amount?: number | null
 }
 export interface ArbList { total: number; cfg: Record<string, number>; items: ArbItem[] }
 export interface ArbHistPoint { date: string; close: number; nav: number; nav_date: string; premium_pct: number }
@@ -912,6 +916,12 @@ export interface ArbDetail {
   nav_history: { date: string; nav: number }[]
   price_history: { date: string; close: number; amount?: number | null }[]
   plans: { premium?: ArbPlan; discount?: ArbPlan; discount_best?: ArbPlan }
+  sizing?: {
+    amount: number
+    premium: { profit: number; space_pct: number; fee_pct: number }
+    discount: { profit: number; space_pct: number; fee_pct: number }
+  }[]
+  max_amount?: number | null
   hist_arb?: {
     threshold: number; n: number; mean_pct: number; median_pct: number
     win_pct: number; premium_t: number; premium_t3: number | null

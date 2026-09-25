@@ -233,6 +233,21 @@ function statusText(v: unknown): string {
   return s.replace('开放申购', '开放').replace('开放赎回', '开放')
 }
 function num(v: unknown, d = 4): number { const n = Number(v); return Number.isFinite(n) ? n : 0 }
+/** 本金窗口：ok=够用 / narrow=窄（上限不到保本的 1.5 倍）/ none=做不出利润 */
+function windowState(o: ArbItem): 'ok' | 'narrow' | 'none' {
+  const be = planOf(o)?.breakeven
+  if (!be) return 'none'
+  if (!o.max_amount) return 'ok'
+  return be * 1.5 <= o.max_amount ? 'ok' : 'narrow'
+}
+/** 建议本金区间（窗口可用时：保本 ~ 上限取一个整数档） */
+function sizeRange(o: ArbItem): string {
+  const be = planOf(o)?.breakeven
+  if (!be) return '—'
+  const up = o.max_amount
+  const upper = up ? Math.floor(up / 1000) * 1000 : null
+  return upper && upper > be ? `${Math.round(be)}~${upper.toLocaleString()} 元` : `${Math.round(be)} 元起`
+}
 
 const columns = [
   { key: 'code', title: '代码', width: '72px' },
@@ -252,6 +267,7 @@ const columns = [
   { key: 'annual_pct', title: '年化(折)', width: '88px', align: 'right' as const, sortable: true },
   { key: 'fee_pct', title: '费用', width: '80px', align: 'right' as const, sortable: true },
   { key: 'days', title: '占用', width: '62px', align: 'right' as const },
+  { key: 'breakeven', title: '最小本金', width: '84px', align: 'right' as const, sortable: true },
   { key: 'amount', title: '成交额', width: '84px', align: 'right' as const, sortable: true },
   { key: 'purchase_status', title: '申购', width: '76px' },
   { key: 'min_amount', title: '起点', width: '72px', align: 'right' as const },
@@ -300,12 +316,16 @@ const columns = [
           <span class="arb-opp__code">{{ o.code }}</span>
           <span class="arb-opp__space" :class="sign(o.space_pct)">{{ pct(o.space_pct) }}</span>
           <span class="arb-opp__meta">
-            每万元 {{ yuan(o.profit_per_10k) }} 元 · {{ planOf(o)?.days }} 天 · 成交额 {{ amountText(o.amount) }}
+            每万元 {{ yuan(o.profit_per_10k) }} 元 · {{ planOf(o)?.days }} 天 ·
+            保本本金 {{ planOf(o)?.breakeven ? yuan(planOf(o)?.breakeven, 0) + ' 元' : '—' }} · 成交额 {{ amountText(o.amount) }}
             <template v-if="o.min_amount"> · 起点 {{ yuan(o.min_amount, 0) }} 元</template>
             <template v-if="o.daily_limit && o.daily_limit < 1e10"> · 日限 {{ limitText(o.daily_limit) }}</template>
           </span>
           <span class="arb-opp__tags">
             <span v-for="t in o.tags" :key="t" class="arb-tag">{{ t }}</span>
+            <span v-if="windowState(o) === 'none'" class="arb-tag arb-tag--warn">无论多少本金都不赚</span>
+            <span v-else-if="windowState(o) === 'narrow'" class="arb-tag arb-tag--warn">窗口窄 {{ sizeRange(o) }}</span>
+            <span v-else class="arb-tag arb-tag--ok">可做 {{ sizeRange(o) }}</span>
           </span>
         </button>
       </div>
@@ -387,6 +407,9 @@ const columns = [
         </template>
         <template #cell-fee_pct="{ row }">{{ pctPlain(planOf(row as unknown as ArbItem)?.fee_pct, 2) }}</template>
         <template #cell-days="{ row }">{{ planOf(row as unknown as ArbItem)?.days }} 天</template>
+        <template #cell-breakeven="{ row }">
+          <span>{{ planOf(row as unknown as ArbItem)?.breakeven ? yuan(planOf(row as unknown as ArbItem)?.breakeven, 0) : '—' }}</span>
+        </template>
         <template #cell-amount="{ row }">
           <span :class="{ 'arb-weak': !(row as unknown as ArbItem).liquidity_ok }">{{ amountText(row.amount) }}</span>
         </template>
@@ -470,6 +493,38 @@ const columns = [
               </div>
               <div><span>折算年化</span><i :class="sign(detail.plans.discount.annual_pct)">{{ pct(detail.plans.discount.annual_pct) }}</i></div>
             </div>
+          </div>
+        </div>
+
+        <!-- 本金与盈亏 -->
+        <div v-if="detail.sizing && detail.sizing.length" class="arb-sec">
+          <div class="arb-sec__head">
+            <b>本金与盈亏</b>
+            <span class="arb-sec__sub">佣金有 5 元最低值 → 本金越小、费用占比越高</span>
+          </div>
+          <table class="arb-table">
+            <thead>
+              <tr>
+                <th>申购金额</th><th class="r">溢价腿净赚</th><th class="r">收益率</th>
+                <th class="r">费用占比</th><th class="r">折价腿净赚</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="sg in detail.sizing" :key="sg.amount">
+                <td>{{ sg.amount.toLocaleString() }} 元</td>
+                <td class="r" :class="sign(sg.premium.profit)">{{ yuan(sg.premium.profit) }} 元</td>
+                <td class="r" :class="sign(sg.premium.space_pct)">{{ pct(sg.premium.space_pct) }}</td>
+                <td class="r">{{ pctPlain(sg.premium.fee_pct, 2) }}</td>
+                <td class="r" :class="sign(sg.discount.profit)">{{ yuan(sg.discount.profit) }} 元</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="arb-warn" style="margin-top:8px">
+            保本金额（覆盖手续费的最低申购金额）：
+            <b>溢价腿 {{ detail.plans.premium?.breakeven ? yuan(detail.plans.premium?.breakeven, 0) + ' 元' : '无论多少都不赚' }}</b>；
+            折价腿 {{ detail.plans.discount?.breakeven ? yuan(detail.plans.discount?.breakeven, 0) + ' 元' : '无论多少都不赚' }}。
+            本金上限（日限额 与 成交额×10% 取小）：{{ detail.max_amount ? yuan(detail.max_amount, 0) + ' 元' : '无明确上限' }}。
+            上限之外的部分要承担冲击成本（卖出会砸价）。
           </div>
         </div>
 
@@ -648,6 +703,8 @@ const columns = [
   display: inline-block; margin: 1px 4px 1px 0; padding: 1px 6px; border-radius: 6px; font-size: 11px;
   background: var(--bg-raised); border: 1px solid var(--border-soft); color: var(--text-dim);
 }
+.arb-tag--ok { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.arb-tag--warn { color: var(--up); border-color: color-mix(in srgb, var(--up) 45%, transparent); }
 .arb-note { margin-top: 12px; font-size: 12px; color: var(--text-dim); line-height: 1.75; }
 
 .arb-loading { padding: 24px; color: var(--text-dim); }
