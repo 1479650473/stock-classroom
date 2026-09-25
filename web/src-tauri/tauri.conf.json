@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/nicedoc/tauri/v2/core/tauri-config-schema/schema.json",
   "productName": "股票教室",
   "mainBinaryName": "StockClassroom",
-  "version": "5.2.0",
+  "version": "5.3.0",
   "identifier": "com.stockclassroom.app",
   "build": {
     "frontendDist": "../dist",

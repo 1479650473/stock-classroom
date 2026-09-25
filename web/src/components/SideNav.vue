@@ -25,7 +25,7 @@ const route = useRoute()
       </router-link>
     </div>
     <div class="spacer" />
-    <div class="foot muted">v5.2 · {{ isTauri() ? '桌面端' : 'Web' }}</div>
+    <div class="foot muted">v5.3 · {{ isTauri() ? '桌面端' : 'Web' }}</div>
   </nav>
 </template>
 
