@@ -286,7 +286,7 @@ const columns = [
     </div>
 
     <!-- 主区域：可执行机会 -->
-    <SectionCard title="可执行机会" desc="口径：扣费后净空间 > 0 · 申购/赎回开放 · 场内成交额 ≥ 50 万">
+    <SectionCard title="可执行机会" desc="口径：扣费后净空间 > 0 · 申购/赎回开放 · 场内成交额 ≥ 50 万（净空间是「T 日快照」，历史平均会因溢价收敛打折——明细里有该基金实测）">
       <template #actions>
         <span class="arb-count">共 {{ oppsTotal }} 只</span>
       </template>
@@ -470,6 +470,36 @@ const columns = [
               </div>
               <div><span>折算年化</span><i :class="sign(detail.plans.discount.annual_pct)">{{ pct(detail.plans.discount.annual_pct) }}</i></div>
             </div>
+          </div>
+        </div>
+
+        <!-- 该基金历史同类信号实测 -->
+        <div v-if="detail.hist_arb && detail.hist_arb.length" class="arb-sec">
+          <div class="arb-sec__head">
+            <b>该基金历史同类信号</b>
+            <span class="arb-sec__sub">T+3 卖出 · 扣费后 · 用本基金自己的历史算</span>
+          </div>
+          <table class="arb-table">
+            <thead>
+              <tr>
+                <th>入场阈值</th><th class="r">样本</th><th class="r">平均</th>
+                <th class="r">中位</th><th class="r">胜率</th><th class="r">溢价收敛</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="h in detail.hist_arb" :key="h.threshold">
+                <td>溢价 ≥{{ h.threshold }}%</td>
+                <td class="r">{{ h.n }}</td>
+                <td class="r" :class="sign(h.mean_pct)">{{ pct(h.mean_pct) }}</td>
+                <td class="r" :class="sign(h.median_pct)">{{ pct(h.median_pct) }}</td>
+                <td class="r">{{ h.win_pct }}%</td>
+                <td class="r">{{ h.premium_t }}% → {{ h.premium_t3 }}%</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="arb-warn" style="margin-top:8px">
+            读法：T 日看到的溢价（第一列右上角）在 3 天里平均会收敛掉大半 —— 「净空间」是当天快照，
+            历史实现才是这类信号的真实水平。统计含样本重叠、不含历史申购状态与限额约束（高溢价样本常出现在暂停申购期）。
           </div>
         </div>
 

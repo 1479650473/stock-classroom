@@ -86,21 +86,17 @@ def parse_redeem_tiers(tiers: List[dict]) -> List[dict]:
         if rate is None:
             continue
         lo = hi = None
-        mm = re.search(r"小于\s*([^，,、]*)", term)
-        if mm:
-            lo, hi = 0, _to_days(mm.group(1), mm.group(1))
-        else:
-            parts = re.split(r"[，,、]", term)
-            for p in parts:
-                d = _to_days(p, p)
-                if d is None:
-                    continue
-                if "大于等于" in p or "以上" in p or "起" in p:
-                    lo = d if lo is None else max(lo, d)
-                elif "小于" in p:
-                    hi = d if hi is None else min(hi, d)
-                elif "大于" in p:
-                    lo = d + 1 if lo is None else max(lo, d + 1)
+        # 逐段解析（一段可能同时含上下界，如「大于等于15天，小于30天」）
+        for p in re.split(r"[，,、;；]", term):
+            d = _to_days(p, p)
+            if d is None:
+                continue
+            if "小于" in p:
+                hi = d if hi is None else min(hi, d)
+            elif "大于等于" in p or "以上" in p or "起" in p:
+                lo = d if lo is None else max(lo, d)
+            elif "大于" in p:
+                lo = d + 1 if lo is None else max(lo, d + 1)
         if lo is None and hi is not None:
             lo = 0
         if hi is None and lo is not None:
@@ -290,6 +286,64 @@ def opportunities(cfg_over: Optional[Dict] = None, direction: Optional[str] = No
     return {"total": len(out), "cfg": cfg, "items": out[:limit]}
 
 
+def fund_hist_arb(code: str, cfg_over: Optional[Dict] = None, hold: int = 3,
+                  thresholds=(0.5, 1.0, 2.0, 3.0, 5.0)) -> List[Dict]:
+    """该基金历史上「溢价 ≥ 阈值」信号的 T+hold 实现收益（按本项目成本模型扣费）。
+
+    注意：这是**该基金自身**的历史统计（样本重叠、无历史申购状态/限额约束），
+    只作"这类信号大概能拿到多少"的参照，不是对未来收益的承诺。
+    """
+    cfg = _merge_cfg(**(cfg_over or {}))
+    px = store.daily_series(code, 5000)
+    nvs = store.nav_series(code, 5000)
+    if len(px) < 80 or len(nvs) < 80:
+        return []
+    import bisect
+    nav_dates = [x["date"] for x in nvs]
+    nav_vals = [x["nav"] for x in nvs]
+    fee_pct = None
+    snap = [r for r in store.latest_snapshot() if r["code"] == code]
+    if snap:
+        fee_pct = snap[0].get("fee_rate")
+    f = (fee_pct if fee_pct is not None else 1.5) / 100.0
+    out = []
+    for thr in thresholds:
+        rs, prems_t, prems_f = [], [], []
+        for i in range(len(px) - hold):
+            d = px[i]["date"]
+            j = bisect.bisect_right(nav_dates, d) - 1
+            if j < 0:
+                continue
+            nav_t = nav_vals[j]
+            if not nav_t or not px[i]["close"]:
+                continue
+            prem = px[i]["close"] / nav_t - 1
+            if prem * 100 < thr:
+                continue
+            k = bisect.bisect_right(nav_dates, px[i + hold]["date"]) - 1
+            nav_f = nav_vals[k] if k >= 0 else None
+            plan = premium_plan(px[i + hold]["close"], nav_t, cfg, (fee_pct if fee_pct is not None else 1.5))
+            rs.append(plan["space_pct"] / 100.0)
+            prems_t.append(prem * 100)
+            if nav_f:
+                prems_f.append((px[i + hold]["close"] / nav_f - 1) * 100)
+        if len(rs) >= 5:
+            import numpy as _np
+            r = np_clip(rs)
+            out.append({"threshold": thr, "n": len(r),
+                        "mean_pct": round(float(_np.mean(r)) * 100, 3),
+                        "median_pct": round(float(_np.median(r)) * 100, 3),
+                        "win_pct": round(float((_np.array(r) > 0).mean()) * 100, 1),
+                        "premium_t": round(float(_np.mean(prems_t)), 2),
+                        "premium_t3": round(float(_np.mean(prems_f)), 2) if prems_f else None})
+    return out
+
+
+def np_clip(arr, w: float = 0.20):
+    import numpy as _np
+    return _np.clip(_np.array(arr, dtype=float), -w, w)
+
+
 def fund_detail(code: str, cfg_over: Optional[Dict] = None, hist_days: int = 250) -> Optional[Dict]:
     """单只明细：快照 + 两条腿成本拆解 + 费率表 + 历史折溢价序列。"""
     cfg = _merge_cfg(**(cfg_over or {}))
@@ -324,6 +378,7 @@ def fund_detail(code: str, cfg_over: Optional[Dict] = None, hist_days: int = 250
         "history": store.premium_series(code, hist_days),
         "nav_history": store.nav_series(code, hist_days),
         "price_history": store.daily_series(code, hist_days),
+        "hist_arb": fund_hist_arb(code, cfg),
         "plans": {},
     }
     if price and nav:

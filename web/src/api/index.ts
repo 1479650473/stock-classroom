@@ -912,6 +912,10 @@ export interface ArbDetail {
   nav_history: { date: string; nav: number }[]
   price_history: { date: string; close: number; amount?: number | null }[]
   plans: { premium?: ArbPlan; discount?: ArbPlan; discount_best?: ArbPlan }
+  hist_arb?: {
+    threshold: number; n: number; mean_pct: number; median_pct: number
+    win_pct: number; premium_t: number; premium_t3: number | null
+  }[]
   stats?: {
     n: number; median_pct: number; p90_pct: number; p10_pct: number
     max_pct: number; min_pct: number; days_above_1pct: number; days_above_2pct: number
