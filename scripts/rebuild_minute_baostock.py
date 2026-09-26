@@ -125,15 +125,15 @@ def _init_worker():
 
 
 def _reconnect(bs) -> bool:
-    """断线重建会话 (logout+login). 返回是否成功."""
+    """断线重建会话 (logout+login). 返回是否成功. 被限流(10001011)时放缓节奏."""
     global _SESSION_READY
     _SESSION_READY = False
     try:
         bs.logout()
     except Exception:
         pass
-    time.sleep(1.5)
-    for _ in range(2):
+    for wait in (3.0, 15.0, 40.0):
+        time.sleep(wait)
         try:
             lg = bs.login()
             if lg.error_code == "0":
@@ -141,7 +141,6 @@ def _reconnect(bs) -> bool:
                 return True
         except Exception:
             pass
-        time.sleep(2.0)
     return False
 
 
@@ -160,6 +159,7 @@ def _worker(args) -> dict:
     failed = []
     conn = get_minute_db()
     year_list = list(range(int(start_date[:4]), int(end_date[:4]) + 1))
+    consec_fail = 0
     try:
         for i, code in enumerate(codes):
             sym = bs_symbol(code)
@@ -211,17 +211,52 @@ def _worker(args) -> dict:
             if code_fail:
                 failed.append(code)
                 fail += 1
-                print(f"    [{pid}] FAIL {code}", flush=True)
-            elif n_code == 0:
-                skipped += 1
+                consec_fail += 1
+                print(f"    [{pid}] FAIL {code} (连败{consec_fail})", flush=True)
+                if consec_fail >= 2:
+                    print(f"    [{pid}] 连续失败, 疑似被限流, 等待 120s ...", flush=True)
+                    time.sleep(120)
+                    _reconnect(bs)
             else:
-                ok += 1
+                consec_fail = 0
+                if n_code == 0:
+                    skipped += 1
+                else:
+                    ok += 1
             time.sleep(0.05)
             if (i + 1) % 4 == 0 or i + 1 == len(codes):
                 print(f"    [{pid}] {i+1}/{len(codes)} ok={ok} fail={fail} rows={rows}", flush=True)
     finally:
         conn.close()
     return {"ok": ok, "fail": fail, "rows": rows, "skipped": skipped, "failed": failed}
+
+
+def _probe_login(max_min: float) -> bool:
+    """登录门: 轮询直到 baostock 可登录(限流解除)才开跑. 返回是否可用."""
+    import baostock as bs
+    t0 = time.time()
+    while True:
+        ok = False
+        try:
+            lg = bs.login()
+            ok = lg.error_code == "0"
+            if not ok:
+                msg = getattr(lg, "error_msg", "")
+        except Exception as e:
+            msg = str(e)[:40]
+        try:
+            bs.logout()
+        except Exception:
+            pass
+        if ok:
+            print(f"  baostock 可登录 (等待 {int(time.time()-t0)}s)", flush=True)
+            return True
+        waited = (time.time() - t0) / 60
+        print(f"  baostock 暂不可用(限流中), 5min 后重试 (已等 {waited:.0f}min)", flush=True)
+        if time.time() - t0 > max_min * 60:
+            print("  等待超时, 退出 (稍后重跑即可续拉)", flush=True)
+            return False
+        time.sleep(300)
 
 
 def main():
@@ -231,7 +266,9 @@ def main():
     ap.add_argument("--source", default="all", choices=["all", "mid"])
     ap.add_argument("--codes", default="")
     ap.add_argument("--limit", type=int, default=0)
-    ap.add_argument("--procs", type=int, default=6)
+    ap.add_argument("--procs", type=int, default=3)
+    ap.add_argument("--rounds", type=int, default=3)
+    ap.add_argument("--wait-max-min", type=float, default=360)
     ap.add_argument("--check-only", action="store_true")
     args = ap.parse_args()
 
@@ -252,32 +289,48 @@ def main():
     if args.check_only or not todo:
         return
 
-    tasks = [todo[i:i + CHUNK] for i in range(0, len(todo), CHUNK)]
-    t0 = time.time()
-    agg = {"ok": 0, "fail": 0, "rows": 0, "skipped": 0}
+    t_start = time.time()
+    grand = {"ok": 0, "fail": 0, "rows": 0, "skipped": 0}
     failed_all = []
-    with ProcessPoolExecutor(max_workers=args.procs, initializer=_init_worker) as ex:
-        futs = {ex.submit(_worker, (t, args.freq, args.start, end_date)): t for t in tasks}
-        for k, fut in enumerate(as_completed(futs), 1):
-            try:
-                r = fut.result()
-            except Exception as e:
-                r = {"ok": 0, "fail": len(futs[fut]), "rows": 0, "skipped": 0,
-                     "failed": futs[fut]}
-                print(f"  TASK EXC: {str(e)[:100]}", flush=True)
-            for kk in agg:
-                agg[kk] += r.get(kk, 0)
-            failed_all += r.get("failed", [])
-            mins = (time.time() - t0) / 60
-            print(f"[{k}/{len(tasks)}] {mins:.1f}min 累计: ok={agg['ok']} fail={agg['fail']} "
-                  f"rows={agg['rows']:,} 空={agg['skipped']}", flush=True)
+    rnd = 0
+    while todo and rnd < args.rounds:
+        rnd += 1
+        tasks = [todo[i:i + CHUNK] for i in range(0, len(todo), CHUNK)]
+        print(f"[round {rnd}] 待拉 {len(todo)} 只 ({len(tasks)} 任务); 检查 baostock 可用性 ...", flush=True)
+        if not _probe_login(args.wait_max_min):
+            break
+        t0 = time.time()
+        agg = {"ok": 0, "fail": 0, "rows": 0, "skipped": 0}
+        failed_round = []
+        with ProcessPoolExecutor(max_workers=args.procs, initializer=_init_worker) as ex:
+            futs = {ex.submit(_worker, (t, args.freq, args.start, end_date)): t for t in tasks}
+            for k, fut in enumerate(as_completed(futs), 1):
+                try:
+                    r = fut.result()
+                except Exception as e:
+                    r = {"ok": 0, "fail": len(futs[fut]), "rows": 0, "skipped": 0,
+                         "failed": futs[fut]}
+                    print(f"  TASK EXC: {str(e)[:100]}", flush=True)
+                for kk in agg:
+                    agg[kk] += r.get(kk, 0)
+                failed_round += r.get("failed", [])
+                mins = (time.time() - t0) / 60
+                print(f"[r{rnd} {k}/{len(tasks)}] {mins:.1f}min 累计: ok={agg['ok']} fail={agg['fail']} "
+                      f"rows={agg['rows']:,} 空={agg['skipped']}", flush=True)
+        for kk in grand:
+            grand[kk] += agg[kk]
+        failed_all = failed_round
+        todo = failed_round
+        if todo:
+            print(f"[round {rnd}] 失败 {len(todo)} 只, 10min 后重试 ...", flush=True)
+            time.sleep(600)
 
     os.makedirs(os.path.join(ROOT, "data", "logs"), exist_ok=True)
     fail_file = os.path.join(ROOT, "data", "logs", f"min_rebuild_failed_{args.freq}.txt")
     with open(fail_file, "w", encoding="utf-8") as f:
         f.write("\n".join(failed_all))
-    print(f"完成: ok={agg['ok']} fail={agg['fail']} rows={agg['rows']:,} 空={agg['skipped']} "
-          f"耗时{(time.time()-t0)/60:.1f}min; 失败清单 {fail_file}", flush=True)
+    print(f"完成: ok={grand['ok']} fail={grand['fail']} rows={grand['rows']:,} 空={grand['skipped']} "
+          f"耗时{(time.time()-t_start)/60:.1f}min; 剩余失败 {len(failed_all)} 只 → {fail_file}", flush=True)
 
 
 if __name__ == "__main__":
