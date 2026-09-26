@@ -26,6 +26,7 @@ else:
     DATA_DIR = os.environ.get("SC_DATA_DIR") or os.path.join(os.path.dirname(BASE_DIR), "data")
 KLINE_DB = os.path.join(DATA_DIR, "kline.db")
 CACHE_DB = os.path.join(DATA_DIR, "stock_cache.db")
+MINUTE_DB = os.path.join(DATA_DIR, "minute.db")  # 分钟线独立库(体量大, 便于备份/迁移)
 
 # basicConfig 只在 CLI 入口执行（见 __main__），避免 import 时污染根 logger
 log = logging.getLogger("data_mgr")
@@ -40,6 +41,48 @@ def get_kline_db():
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA cache_size=-400000")
     return conn
+
+
+def get_minute_db():
+    conn = sqlite3.connect(MINUTE_DB, timeout=60)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA cache_size=-200000")
+    return conn
+
+
+def ensure_minute_tables(freqs=(5,)):
+    """建分钟线表 kline_min{freq}: code + dt('YYYYMMDDHHMM') + OHLCVA(不复权, volume=股/amount=元)."""
+    conn = get_minute_db()
+    try:
+        for f in freqs:
+            conn.execute(
+                f"""CREATE TABLE IF NOT EXISTS kline_min{f} (
+                    code TEXT NOT NULL,
+                    dt   TEXT NOT NULL,
+                    open REAL, high REAL, low REAL, close REAL,
+                    volume REAL, amount REAL,
+                    PRIMARY KEY (code, dt)
+                ) WITHOUT ROWID"""
+            )
+            conn.execute(f"CREATE INDEX IF NOT EXISTS idx_min{f}_dt ON kline_min{f}(dt)")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def insert_minute_rows(conn, freq, rows):
+    """批量 upsert 分钟线行 [(code, dt, o,h,l,c, v,a)]. 返回写入行数."""
+    if not rows:
+        return 0
+    table = f"kline_min{int(freq)}"
+    conn.executemany(
+        f"INSERT OR REPLACE INTO {table} (code,dt,open,high,low,close,volume,amount) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        rows,
+    )
+    return len(rows)
 
 
 # ════════════════════════════════════════════════════════
