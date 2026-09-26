@@ -925,6 +925,8 @@ export interface ArbDetail {
     discount: { profit: number; space_pct: number; fee_pct: number }
   }[]
   max_amount?: number | null
+  curve?: { premium: { amount: number; profit: number; space_pct: number; fee_pct: number }[]
+            discount: { amount: number; profit: number; space_pct: number; fee_pct: number }[] }
   hist_arb?: {
     threshold: number; n: number; mean_pct: number; median_pct: number
     win_pct: number; premium_t: number; premium_t3: number | null

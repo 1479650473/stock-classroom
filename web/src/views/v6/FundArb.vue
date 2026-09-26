@@ -14,7 +14,7 @@ import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import EmptyGuide from '@/components/ui/EmptyGuide.vue'
 import Icon from '@/components/Icon.vue'
 import { usePersistedRef } from '@/composables/usePersistedRef'
-import { useEChart } from '@/composables/useEChart'
+import { useEChart, cssVar } from '@/composables/useEChart'
 import { useJobsStore } from '@/stores/jobs'
 import {
   getArbList, getArbDetail, getArbStats, syncArb,
@@ -162,7 +162,68 @@ async function refreshDetail(code?: string) {
   detail.value = await getArbDetail(c, { ...cfgParams.value, amount: calcAmount.value, hist_days: histDays.value })
   await nextTick()
   drawDetail()
+  drawCurve()
 }
+
+// ---- 本金-收益曲线 ----
+const curveChartEl = ref<HTMLElement | null>(null)
+const { draw: drawCurve } = useEChart(curveChartEl, () => {
+  const pts = (detail.value?.curve?.[calcLeg.value] ?? []) as {
+    amount: number; profit: number; space_pct: number; fee_pct: number
+  }[]
+  if (!pts.length) return {}
+  const be = calcPlan.value?.breakeven ?? null
+  const cap = detail.value?.max_amount ?? null
+  const marks: Record<string, unknown>[] = []
+  if (be) marks.push({ xAxis: be, name: '保本', lineStyle: { color: cssVar('--up', '#d08770'), type: 'dashed' } })
+  if (cap) marks.push({ xAxis: cap, name: '上限', lineStyle: { color: cssVar('--down', '#8fbc8f'), type: 'dashed' } })
+  const cur = Number(calcAmount.value)
+  const near = pts.reduce((b, p) => (Math.abs(p.amount - cur) < Math.abs(b.amount - cur) ? p : b), pts[0])
+  const fmt = (v: number) => (v >= 10000 ? `${(v / 10000).toFixed(0)}万` : `${Math.round(v)}`)
+  return {
+    grid: { left: 4, right: 10, top: 30, bottom: 18, containLabel: true },
+    legend: { top: 0, itemWidth: 12, itemHeight: 8, textStyle: { fontSize: 10 } },
+    tooltip: {
+      trigger: 'axis',
+      valueFormatter: (v: unknown) => String(v),
+      formatter: (ps: unknown) => {
+        const arr = ps as { dataIndex?: number }[]
+        const p = pts[arr?.[0]?.dataIndex ?? 0]
+        if (!p) return ''
+        return `本金 ${Math.round(p.amount).toLocaleString()} 元<br/>净赚 <b>${p.profit.toFixed(1)}</b> 元`
+          + `<br/>收益率 ${p.space_pct.toFixed(3)}% · 费用占比 ${p.fee_pct.toFixed(2)}%`
+      },
+    },
+    xAxis: {
+      type: 'log', name: '本金(元)', nameTextStyle: { fontSize: 10 },
+      axisLabel: { fontSize: 10, formatter: (v: number) => fmt(v) },
+      splitLine: { lineStyle: { opacity: 0.15 } },
+    },
+    yAxis: [
+      { type: 'value', name: '净赚(元)', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 },
+        splitLine: { lineStyle: { opacity: 0.2 } } },
+      { type: 'value', name: '收益率(%)', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10, formatter: '{value}%' },
+        splitLine: { show: false } },
+    ],
+    series: [
+      {
+        name: '净赚(元)', type: 'line', data: pts.map((p) => [p.amount, p.profit]), showSymbol: false,
+        lineStyle: { width: 2, color: cssVar('--accent', '#d4a574') }, itemStyle: { color: cssVar('--accent', '#d4a574') },
+        areaStyle: { opacity: 0.10, color: cssVar('--accent', '#d4a574') },
+        markLine: { silent: true, symbol: 'none', label: { fontSize: 9 }, data: marks },
+      },
+      {
+        name: '收益率(%)', type: 'line', yAxisIndex: 1, data: pts.map((p) => [p.amount, p.space_pct]),
+        showSymbol: false, lineStyle: { width: 1, type: 'dashed', color: cssVar('--gold', '#c0a062') },
+        itemStyle: { color: cssVar('--gold', '#c0a062') },
+      },
+      {
+        name: '当前本金', type: 'scatter', data: [[near.amount, near.profit]], symbolSize: 9,
+        itemStyle: { color: cssVar('--accent', '#d4a574'), borderColor: '#fff', borderWidth: 1 },
+      },
+    ],
+  }
+})
 const detailChartEl = ref<HTMLElement | null>(null)
 const histDays = usePersistedRef<number>('arb.histDays', 250)
 
@@ -193,6 +254,7 @@ async function openDetail(item: ArbItem) {
     detailLoading.value = false   // 先切到详情分支，图表容器才会挂载
     await nextTick()
     drawDetail()
+    drawCurve()
   } catch {
     detailLoading.value = false
   }
@@ -204,6 +266,7 @@ function onCalcInput() {
   calcTimer = setTimeout(() => { void refreshDetail() }, 300)
 }
 watch(histDays, () => { if (detail.value) void refreshDetail() })
+watch(calcLeg, async () => { await nextTick(); drawCurve() })
 watch([() => cfg.value.amount, () => cfg.value.commission_rate, () => cfg.value.buy_fee_discount, calcAmount], () => {
   if (detail.value && detailOpen.value) void refreshDetail()
 })
@@ -544,6 +607,7 @@ const columns = [
                 · 折算年化 <b :class="sign(calcPlan.annual_pct)">{{ pct(calcPlan.annual_pct) }}</b>
               </span>
             </div>
+            <div ref="curveChartEl" class="arb-curve" />
             <div v-if="calcHint" class="arb-calc__hint">{{ calcHint }}</div>
             <div class="arb-calc__other">
               换成另一条腿：<b :class="sign(calcLeg === 'premium' ? detail.plans.discount?.profit : detail.plans.premium?.profit)">
@@ -803,6 +867,7 @@ const columns = [
 .arb-calc__label { font-size: 12.5px; color: var(--text-dim); }
 .arb-calc__value { font-size: 24px; font-weight: 700; }
 .arb-calc__sub { font-size: 12px; color: var(--text-dim); }
+.arb-curve { height: 200px; margin-top: 8px; }
 .arb-calc__hint {
   margin-top: 8px; padding: 6px 9px; border-radius: 8px; font-size: 12px; line-height: 1.6;
   color: var(--up); border: 1px solid color-mix(in srgb, var(--up) 35%, transparent);

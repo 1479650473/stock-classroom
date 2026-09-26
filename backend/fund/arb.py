@@ -237,6 +237,28 @@ def max_amount_hint(daily_limit, turnover, liquidity_share: float = 0.10):
     return round(min(caps), 0) if caps else None
 
 
+def sizing_curve(price: float, nav: float, tiers_raw, buy_fee_pct, cfg: Dict,
+                 kind: str = "premium", n: int = 48, upper: Optional[float] = None) -> List[Dict]:
+    """本金-收益曲线（试算图用）：本金 100 元 →上限（对数均匀取点）。
+
+    kind: premium（申购→卖出）| discount（买入→赎回）
+    """
+    if not price or not nav or price <= 0 or nav <= 0:
+        return []
+    hi = float(upper or 1_000_000.0)
+    hi = max(20000.0, min(hi, 5_000_000.0))
+    lo = min(100.0, hi / 10)
+    out = []
+    for i in range(n):
+        a = lo * (hi / lo) ** (i / (n - 1))
+        c = {**cfg, "amount": a}
+        plan = (premium_plan(price, nav, c, buy_fee_pct) if kind == "premium"
+                else discount_plan(price, nav, c, tiers_raw))
+        out.append({"amount": round(a, 0), "profit": plan["profit"],
+                    "space_pct": plan["space_pct"], "fee_pct": plan["fee_pct"]})
+    return out
+
+
 def sizing_table(price: float, nav: float, tiers_raw, buy_fee_pct, cfg: Dict,
                  amounts=(1000, 5000, 10000, 50000, 100000)) -> List[Dict]:
     """不同本金下的净赚与收益率（两条腿都算），给明细页用。"""
@@ -441,6 +463,9 @@ def fund_detail(code: str, cfg_over: Optional[Dict] = None, hist_days: int = 250
         # 历史实测固定按 1 万元本金（否则 5 元最低佣金会随用户输入本金漂移，统计口径不稳定）
         "hist_arb": fund_hist_arb(code, {**cfg, "amount": 10000}),
         "sizing": sizing_table(price, nav, tiers_raw, snap.get("fee_rate"), cfg) if (price and nav) else [],
+        "curve": ({"premium": sizing_curve(price, nav, tiers_raw, snap.get("fee_rate"), cfg, "premium"),
+                   "discount": sizing_curve(price, nav, tiers_raw, snap.get("fee_rate"), cfg, "discount")}
+                  if (price and nav) else {}),
         "plans": {},
     }
     if price and nav:
