@@ -16,6 +16,12 @@ export function useEChart(el: Ref<HTMLElement | null>, buildOption: () => echart
       chart.value = null
       return
     }
+    // 容器被重建（如抽屉/弹层关闭再打开、v-if 切换）：旧实例挂在已移除的 DOM 上，
+    // 若不重新 init，setOption 会画到脱离文档的容器里 → 新容器永远空白。
+    if (chart.value && chart.value.getDom() !== el.value) {
+      chart.value.dispose()
+      chart.value = null
+    }
     if (!chart.value) chart.value = echarts.init(el.value, ensureEChartsTheme())
     chart.value.setOption(buildOption(), true)
   }
