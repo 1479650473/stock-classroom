@@ -87,12 +87,11 @@ def _cal_window(cal, today: str, lookback: int, gap_days: int | None):
 
 
 def _table_dates(conn, table: str, col: str, start: str) -> set:
-    """表内 >= start 的已有日期集合(兼容 YYYYMMDD 与 YYYY-MM-DD 两种格式)."""
+    """表内 >= start 的已有日期集合(兼容 YYYYMMDD 与 YYYY-MM-DD; 用横线格式作统一下界,
+    对两种格式都是"超集"且可走日期索引 — 用于判断窗口内日期是否缺失, 超集不影响判定)."""
     dash = _dash(start)
     try:
-        rows = conn.execute(
-            f"SELECT DISTINCT {col} FROM {table} WHERE {col} >= ? OR {col} >= ?",
-            (start, dash)).fetchall()
+        rows = conn.execute(f"SELECT DISTINCT {col} FROM {table} WHERE {col} >= ?", (dash,)).fetchall()
         return {_d8(r[0]) for r in rows if r[0]}
     except Exception:
         return set()
@@ -119,6 +118,37 @@ def _kline_coverage(dates: list) -> dict:
         return counts
     finally:
         conn.close()
+
+
+def minute_status(freq: int = 5) -> dict:
+    """分钟线库(独立 minute.db)状态: {exists, max, kline_max, lag(bool)}."""
+    from data_manager import MINUTE_DB, get_minute_db
+    if not os.path.exists(MINUTE_DB):
+        return {"exists": False}
+    try:
+        mc = get_minute_db()
+        try:
+            r = mc.execute(f"SELECT MAX(dt) FROM kline_min{int(freq)}").fetchone()
+        finally:
+            mc.close()
+        mmax = _d8(r[0]) if r and r[0] else ""
+    except Exception:
+        return {"exists": True, "max": "", "kline_max": "", "lag": False}
+    kmax = ""
+    try:
+        conn = get_kline_db()
+        try:
+            try:
+                k = conn.execute(f"SELECT MAX(date) FROM kline_{time.strftime('%Y')}").fetchone()
+            except Exception:
+                k = conn.execute("SELECT MAX(date) FROM kline_daily").fetchone()
+            kmax = _d8(k[0]) if k and k[0] else ""
+        finally:
+            conn.close()
+    except Exception:
+        pass
+    return {"exists": True, "max": mmax, "kline_max": kmax,
+            "lag": bool(mmax and kmax and mmax < kmax)}
 
 
 def audit(cal, today: str, marker_path: str, lookback: int = LOOKBACK) -> dict:
@@ -161,7 +191,13 @@ def audit(cal, today: str, marker_path: str, lookback: int = LOOKBACK) -> dict:
         kmax = max(cov) if cov else (_d8(ref) if ref else "")
         for table in SOFT_TABLES:
             try:
-                r = conn.execute(f"SELECT MAX(date) FROM {table}").fetchone()
+                if table == "fund_flow_daily":
+                    # 13.6M 行无 date 索引 → 用流动票(走 code 索引前缀)近似全场最新
+                    r = conn.execute(
+                        "SELECT MAX(date) FROM fund_flow_daily WHERE code IN "
+                        "('600036','000001','000002','600519','601318')").fetchone()
+                else:
+                    r = conn.execute(f"SELECT MAX(date) FROM {table}").fetchone()
                 tmax = _d8(r[0]) if r and r[0] else ""
                 lag = None
                 if kmax and tmax and tmax < kmax:
@@ -171,6 +207,15 @@ def audit(cal, today: str, marker_path: str, lookback: int = LOOKBACK) -> dict:
             out["soft"][table] = {"max": tmax, "kline_max": kmax, "lag": lag}
     finally:
         conn.close()
+    # 分钟线(独立库 minute.db)
+    try:
+        ms = minute_status()
+        if ms.get("exists"):
+            out["soft"]["kline_min5"] = {
+                "max": ms.get("max"), "kline_max": ms.get("kline_max"),
+                "lag": (f"{ms.get('max')} → {ms.get('kline_max')}" if ms.get("lag") else None)}
+    except Exception:
+        pass
     return out
 
 
@@ -295,6 +340,36 @@ def run_catchup(a: dict, cal, today: str, lg=None, kline=True) -> dict:
         res["paper_portfolio"] = heal_paper_portfolio(lg=lg)
     except Exception as e:
         res["paper_portfolio"] = {"error": str(e)[:100]}
+
+    # ⑤ 分钟线(5min): 库存在且落后于日K → 拉最近窗口补齐(子进程, baostock 低并发)
+    try:
+        ms = minute_status(5)
+        if ms.get("exists") and ms.get("lag"):
+            import subprocess
+            import sys
+            root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            script = os.path.join(root, "scripts", "rebuild_minute_baostock.py")
+            logdir = os.path.join(os.path.dirname(KLINE_DB), "logs")
+            os.makedirs(logdir, exist_ok=True)
+            gap_days = 30
+            try:
+                gap_days = (datetime.now() - datetime.strptime(ms["max"], "%Y%m%d")).days + 5
+            except Exception:
+                pass
+            recent = min(60, max(12, gap_days))
+            t0 = time.time()
+            with open(os.path.join(logdir, "step_minute.log"), "w",
+                      encoding="utf-8", errors="replace") as lf:
+                r = subprocess.run(
+                    [sys.executable, script, "--freq", "5", "--source", "minute",
+                     "--recent-days", str(recent), "--procs", "3", "--wait-max-min", "120"],
+                    cwd=root, stdout=lf, stderr=subprocess.STDOUT, timeout=7200)
+            res["minute5"] = {"rc": r.returncode, "days": recent,
+                              "elapsed": round(time.time() - t0, 1)}
+            _log(f"分钟线增量: rc={r.returncode} 窗口{recent}天 ({res['minute5']['elapsed']}s)")
+    except Exception as e:
+        res["minute5"] = {"error": str(e)[:100]}
+        _log(f"分钟线增量失败: {str(e)[:80]}")
     return res
 
 

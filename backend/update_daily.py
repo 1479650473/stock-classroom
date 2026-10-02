@@ -663,6 +663,25 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
             out['steps']['fund_arb'] = {'error': str(e)[:120]}
             lg.warning('  基金套利同步失败: %s', str(e)[:80])
 
+        # ㉓ 分钟线(5min)每日增量: baostock 低并发(3进程), 只拉最近窗口; 停机缺口按 gap 放大
+        try:
+            import subprocess as _sp
+            _min_script = os.path.join(ROOT, 'scripts', 'rebuild_minute_baostock.py')
+            _min_log = os.path.join(LOGDIR, 'step_minute.log')
+            _min_days = min(60, max(12, _gap_cal + 5))
+            _t0m = time.time()
+            with open(_min_log, 'w', encoding='utf-8', errors='replace') as _lf:
+                _r = _sp.run([sys.executable, _min_script, '--freq', '5', '--source', 'minute',
+                              '--recent-days', str(_min_days), '--procs', '3',
+                              '--wait-max-min', '120'],
+                             cwd=ROOT, stdout=_lf, stderr=_sp.STDOUT, timeout=7200)
+            out['steps']['minute'] = {'rc': _r.returncode, 'days': _min_days,
+                                      'elapsed': round(time.time() - _t0m, 1)}
+            lg.info('  分钟线(5min): %s', out['steps']['minute'])
+        except Exception as e:
+            out['steps']['minute'] = str(e)[:120]
+            lg.warning('  分钟线增量失败: %s', str(e)[:80])
+
     out['finished'] = datetime.now().isoformat(timespec='seconds')
     out['elapsed'] = round(time.time() - t0, 1)
     out['ok'] = True

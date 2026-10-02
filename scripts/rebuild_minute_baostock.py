@@ -23,6 +23,7 @@ import sqlite3
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from datetime import datetime, timedelta
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -49,30 +50,38 @@ def bs_symbol(code: str):
     return None
 
 
-def load_universe(source: str, only_codes: list | None, limit: int | None) -> list:
-    """来源: all=全市场active(沪深) / mid=成交额排名 601~1800(近似项目中盘域)."""
+def load_universe(source: str, only_codes: list | None, limit: int | None, freq: int = 5) -> list:
+    """来源: all=全市场active(沪深) / mid=成交额排名 601~1800(近似项目中盘域) / minute=minute.db 已有代码."""
     from data_manager import get_kline_db
 
     if only_codes:
         codes = [c.strip() for c in only_codes if c.strip()]
     else:
-        conn = get_kline_db()
-        try:
-            if source == "mid":
-                last_dates = [r[0] for r in conn.execute(
-                    "SELECT DISTINCT date FROM kline_daily ORDER BY date DESC LIMIT 20")]
-                ph = ",".join("?" * len(last_dates))
-                rows = conn.execute(
-                    f"SELECT code, AVG(amount) a FROM kline_daily WHERE date IN ({ph}) "
-                    "GROUP BY code HAVING COUNT(*)>=10 ORDER BY a DESC LIMIT 600, 1400",
-                    last_dates).fetchall()
-                codes = [r[0] for r in rows][:1200]
-            else:
-                rows = conn.execute(
-                    "SELECT code FROM stock_list WHERE status='active' ORDER BY code").fetchall()
-                codes = [r[0] for r in rows]
-        finally:
-            conn.close()
+        if source == "minute":
+            from data_manager import get_minute_db
+            conn = get_minute_db()
+            try:
+                codes = [str(r[0]) for r in conn.execute(f"SELECT DISTINCT code FROM kline_min{int(freq)}")]
+            finally:
+                conn.close()
+        else:
+            conn = get_kline_db()
+            try:
+                if source == "mid":
+                    last_dates = [r[0] for r in conn.execute(
+                        "SELECT DISTINCT date FROM kline_daily ORDER BY date DESC LIMIT 20")]
+                    ph = ",".join("?" * len(last_dates))
+                    rows = conn.execute(
+                        f"SELECT code, AVG(amount) a FROM kline_daily WHERE date IN ({ph}) "
+                        "GROUP BY code HAVING COUNT(*)>=10 ORDER BY a DESC LIMIT 600, 1400",
+                        last_dates).fetchall()
+                    codes = [r[0] for r in rows][:1200]
+                else:
+                    rows = conn.execute(
+                        "SELECT code FROM stock_list WHERE status='active' ORDER BY code").fetchall()
+                    codes = [r[0] for r in rows]
+            finally:
+                conn.close()
     # 过滤北交所 (baostock 不支持)
     codes = [c for c in codes if bs_symbol(c) is not None]
     if limit:
@@ -227,6 +236,10 @@ def _worker(args) -> dict:
             if (i + 1) % 4 == 0 or i + 1 == len(codes):
                 print(f"    [{pid}] {i+1}/{len(codes)} ok={ok} fail={fail} rows={rows}", flush=True)
     finally:
+        try:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")   # 收尾合并 WAL, 防下次打开卡顿
+        except Exception:
+            pass
         conn.close()
     return {"ok": ok, "fail": fail, "rows": rows, "skipped": skipped, "failed": failed}
 
@@ -263,19 +276,23 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--freq", type=int, default=5, choices=[5, 15, 30, 60])
     ap.add_argument("--start", default=START_DEFAULT)
-    ap.add_argument("--source", default="all", choices=["all", "mid"])
+    ap.add_argument("--source", default="all", choices=["all", "mid", "minute"])
     ap.add_argument("--codes", default="")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--procs", type=int, default=3)
     ap.add_argument("--rounds", type=int, default=3)
+    ap.add_argument("--recent-days", type=int, default=0, help=">0 时只拉最近 N 天(每日增量模式)")
     ap.add_argument("--wait-max-min", type=float, default=360)
     ap.add_argument("--check-only", action="store_true")
     args = ap.parse_args()
 
     only = [c for c in args.codes.split(",") if c.strip()] if args.codes else None
-    codes = load_universe(args.source, only, args.limit or None)
+    codes = load_universe(args.source, only, args.limit or None, args.freq)
     tgt = target_date()
     end_date = f"{tgt[:4]}-{tgt[4:6]}-{tgt[6:]}" if tgt else time.strftime("%Y-%m-%d")
+    if args.recent_days and args.recent_days > 0:
+        args.start = (datetime.strptime(end_date, "%Y-%m-%d")
+                      - timedelta(days=int(args.recent_days))).strftime("%Y-%m-%d")
 
     print(f"[分钟线首拉] freq={args.freq}min source={args.source} 股票数={len(codes)} "
           f"start={args.start} end={end_date} procs={args.procs}", flush=True)
