@@ -152,8 +152,33 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
     # 交易日检查(节假日/周末空跑幂等, 但跳过更干净)
     cal = _trade_calendar()
     today = datetime.now().strftime('%Y-%m-%d')
+
+    # ── 数据补全审计: 检测停机期间遗留缺口(某日缺数据/某日只有部分股票/整日缺失) ──
+    #    主流程据此动态放大拉取窗口; 非交易日检测到缺口也会执行补全(平时跳过)
+    _cu, _audit = None, None
+    try:
+        from backend import catchup as _cu
+        _audit = _cu.audit(cal, today, MARKER)
+        _win = _audit.get('window') or ['-', '-']
+        out['audit'] = {'last_run': _audit.get('last_run'), 'gap_days': _audit.get('gap_days'),
+                        'ref': _audit.get('ref'), 'summary': _cu.audit_text(_audit)}
+        lg.info('补全审计: 上次运行=%s (%s天前), 窗口 %s~%s → %s',
+                _audit.get('last_run'), _audit.get('gap_days'), _win[0], _win[1],
+                _cu.audit_text(_audit))
+    except Exception as e:
+        lg.warning('补全审计失败(不影响正常更新): %s', str(e)[:100])
+    _gap_cal = int((_audit or {}).get('gap_days') or 0)   # 距上次运行的自然日数(动态窗口用)
+
     if cal is not None and today not in cal:
         lg.info('  今日 %s 非交易日 → 跳过(日历 %d 天)', today, len(cal))
+        if _cu is not None and _audit and _audit.get('missing_total'):
+            lg.info('  非交易日但检测到数据缺口 → 执行补全 ...')
+            try:
+                out['catchup'] = _cu.run_catchup(_audit, cal, today, lg=lg)
+                lg.info('  非交易日补全完成: %s', out['catchup'])
+            except Exception as e:
+                out['catchup'] = {'error': str(e)[:150]}
+                lg.warning('  非交易日补全失败: %s', str(e)[:100])
         out['skipped'] = True
         out['finished'] = datetime.now().isoformat(timespec='seconds')
         out['elapsed'] = round(time.time() - t0, 1)
@@ -215,7 +240,13 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
         #（2026-09-11 实测：全库最新已是 09-11，但 5194 只里只更新了 1689 只，
         #  gap=0 导致后续每天都不会补），所以固定回看 10 天保证补齐。
         try:
-            rk = update_codes(all_codes, catch_up_days=10, workers=16, progress=_plog)
+            _ck = 10   # 默认回看 10 条: 修复"某天只有部分股票"的残缺
+            if _cu is not None and _audit:
+                _w = _cu.kline_window_days(_audit, cal, today)
+                if _w:
+                    _ck = max(_ck, _w)
+                    lg.info('  K线窗口因缺口放大: %d 条 (审计: %s)', _ck, _cu.audit_text(_audit))
+            rk = update_codes(all_codes, catch_up_days=_ck, workers=16, progress=_plog)
             out['steps']['kline'] = {k: rk[k] for k in ('updated', 'skipped', 'errors', 'rows_added', 'total', 'elapsed') if k in rk}
             lg.info('  K线全市场: %s', out['steps']['kline'])
         except Exception as e:
@@ -414,16 +445,22 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
                 _mkt['lhb'] = cache_lhb_from_akshare()
             except Exception as e:
                 _mkt['lhb'] = 'err: %s' % str(e)[:50]
-            # 涨停: 最近 5 个交易日逐个回补(东财按日查询)
+            # 涨停: 最近 5 个交易日 + 审计缺口日, 逐个回补(东财按日查询)
             _limit_n = 0
             try:
                 _cal = _trade_calendar()
                 _today = datetime.now().strftime('%Y-%m-%d')   # 与日历同格式(YYYY-MM-DD)
                 _last5 = sorted([d for d in (_cal or set()) if d <= _today])[-5:] or [_today]
-                for _d in _last5:
+                _lud = set(_last5)
+                if _cu is not None and _audit:
+                    _lud |= {_cu._dash(x) for x in
+                             (_audit.get('tables', {}).get('limit_up', {}).get('missing') or [])[:40]}
+                for _d in sorted(_lud):
                     _n = cache_limit_up_from_akshare(_d.replace('-', ''))
                     _limit_n += _n or 0
                 _mkt['limit_up'] = _limit_n
+                if len(_lud) > 5:
+                    _mkt['limit_up_days'] = len(_lud)
             except Exception as e:
                 _mkt['limit_up'] = 'err: %s' % str(e)[:50]
             try:
@@ -475,39 +512,51 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
         except Exception as e:
             out['steps']['fund_flow'] = str(e)[:120]
             lg.warning('  资金流失败: %s', str(e)[:80])
-        # ⑭ 周K/月K (从日K聚合增量重建最近60天)
+        # ⑭ 周K/月K (从日K聚合增量重建最近 60 天; 停机后按 gap 放大)
         try:
             from data_manager import rebuild_period_kline
-            _pk = rebuild_period_kline(recent_days=60,
+            _pk_days = max(60, _gap_cal + 5)
+            _pk = rebuild_period_kline(recent_days=min(_pk_days, 400),
                                        progress=lambda m, p=None: lg.info('  ' + str(m)))
             out['steps']['period_kline'] = _pk
             lg.info('  周K/月K: weekly=%s monthly=%s (%ss)', _pk.get('weekly'), _pk.get('monthly'), _pk.get('elapsed'))
         except Exception as e:
             out['steps']['period_kline'] = str(e)[:120]
             lg.warning('  周K/月K失败: %s', str(e)[:80])
-        # ⑮ 龙虎榜(近5交易日回补) + 融资融券(近5交易日回补, T+1发布)
+        # ⑮ 龙虎榜 + 融资融券(近5交易日 + 审计缺口日, T+1发布)
         try:
             from data_manager import init_lhb_margin_tables, update_lhb_range, update_margin_dates
             init_lhb_margin_tables()
             _cal = _trade_calendar()
             _today = datetime.now().strftime('%Y-%m-%d')
             _last5 = sorted([d for d in (_cal or set()) if d <= _today])[-5:] or [_today]
+            _lhbd = set(_last5)
+            _mgd = set(_last5)
+            if _cu is not None and _audit:
+                _lhbd |= {_cu._dash(x) for x in
+                          (_audit.get('tables', {}).get('lhb_daily', {}).get('missing') or [])[:40]}
+                _mgd |= {_cu._dash(x) for x in
+                         (_audit.get('tables', {}).get('margin_daily', {}).get('missing') or [])[:40]}
             _lhb_n = 0
-            for _d in _last5:
+            for _d in sorted(_lhbd):
                 _lhb_n += update_lhb_range(_d.replace('-', ''), _d.replace('-', '')) or 0
-            _mg = update_margin_dates([d.replace('-', '') for d in _last5])
-            out['steps']['lhb_margin'] = {'lhb_rows': _lhb_n, **{k: _mg.get(k) for k in ('ok', 'rows')}}
-            lg.info('  龙虎榜+融资融券: lhb=%d行, margin=%s天/%s行', _lhb_n, _mg.get('ok'), _mg.get('rows'))
+            _mg = update_margin_dates([d.replace('-', '') for d in sorted(_mgd)])
+            out['steps']['lhb_margin'] = {'lhb_rows': _lhb_n, 'lhb_days': len(_lhbd),
+                                          **{k: _mg.get(k) for k in ('ok', 'rows')}}
+            lg.info('  龙虎榜+融资融券: lhb=%d行/%d天, margin=%s天/%s行', _lhb_n, len(_lhbd), _mg.get('ok'), _mg.get('rows'))
         except Exception as e:
             out['steps']['lhb_margin'] = str(e)[:120]
             lg.warning('  龙虎榜/融资融券失败: %s', str(e)[:80])
-        # ⑯ 行业市盈率(巨潮证监会行业分类 120 行业, 日频)
+        # ⑯ 行业市盈率(巨潮证监会行业分类 120 行业, 日频; 含审计缺口日)
         try:
             from data_manager import init_industry_pe_table, cache_industry_pe
             init_industry_pe_table()
-            _ipe = cache_industry_pe()   # 默认今日
-            out['steps']['industry_pe'] = {'rows': _ipe}
-            lg.info('  行业PE: %d 行业', _ipe)
+            _ipe_dates = [datetime.now().strftime('%Y%m%d')]
+            if _cu is not None and _audit:
+                _ipe_dates += (_audit.get('tables', {}).get('industry_pe', {}).get('missing') or [])[:40]
+            _ipe = sum(cache_industry_pe(_d) or 0 for _d in dict.fromkeys(_ipe_dates))
+            out['steps']['industry_pe'] = {'rows': _ipe, 'days': len(set(_ipe_dates))}
+            lg.info('  行业PE: %d 行业 / %d 天', _ipe, len(set(_ipe_dates)))
         except Exception as e:
             out['steps']['industry_pe'] = str(e)[:120]
             lg.warning('  行业PE失败: %s', str(e)[:80])
@@ -525,13 +574,14 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
         except Exception as e:
             out['steps']['chip'] = str(e)[:120]
             lg.warning('  筹码分布失败: %s', str(e)[:80])
-        # ⑱ 大盘情绪(涨停/跌停家数, 本地K线派生最近5天 — 东财涨停池历史不可用)
+        # ⑱ 大盘情绪(涨停/跌停家数, 本地K线派生 — 覆盖审计缺口)
         try:
             import subprocess as _sp
             _md_script = os.path.join(ROOT, 'scripts', 'rebuild_market_daily.py')
             _md_log = os.path.join(LOGDIR, 'step_market_daily.log')
+            _md_days = max(5, _gap_cal + 2)
             with open(_md_log, 'w', encoding='utf-8', errors='replace') as _lf:
-                _r = _sp.run([sys.executable, _md_script, '--days', '5'],
+                _r = _sp.run([sys.executable, _md_script, '--days', str(_md_days)],
                              cwd=ROOT, stdout=_lf, stderr=_sp.STDOUT, timeout=900)
             out['steps']['market_daily'] = 'ok' if _r.returncode == 0 else 'rc=%s' % _r.returncode
             lg.info('  大盘情绪(涨停/跌停家数): %s', out['steps']['market_daily'])
@@ -551,12 +601,12 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
         except Exception as e:
             out['steps']['holder'] = str(e)[:120]
             lg.warning('  股东/基金持仓失败: %s', str(e)[:80])
-        # ⑳ 概念/行业板块指数增量(THS 375概念+90行业, 最近10天)
+        # ⑳ 概念/行业板块指数增量(THS 375概念+90行业; 停机后按 gap 放大)
         try:
             from data_manager import init_board_tables, cache_board_list, update_board_daily
             init_board_tables()
             cache_board_list()
-            _bd = update_board_daily(recent_days=10, workers=8,
+            _bd = update_board_daily(recent_days=max(10, _gap_cal + 2), workers=8,
                                      progress=lambda m, p=None: None)
             out['steps']['board'] = {k: _bd.get(k) for k in ('updated', 'errors', 'rows_added', 'total', 'elapsed')}
             lg.info('  板块指数: 更新%s 失败%s 新增%d行', _bd.get('updated'), _bd.get('errors'), _bd.get('rows_added'))
@@ -564,12 +614,18 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
             out['steps']['board'] = str(e)[:120]
             lg.warning('  板块指数失败: %s', str(e)[:80])
 
-        # ㉑ 组合纸面盘（K=20/H=10 中盘域，每日 1/H 分仓）—— 把回测结论变成前瞻记录，同日幂等
+        # ㉑ 组合纸面盘（K=20/H=10 中盘域，每日 1/H 分仓）—— 前瞻记录，同日幂等;
+        #    停机错过的交易日由 heal_paper_portfolio 逐日回放补齐
         try:
-            from backend.alpha.paper_portfolio import run_once as _pp_run, check_staleness as _pp_stale
+            from backend.alpha.paper_portfolio import _load_state as _pp_state, check_staleness as _pp_stale
+            from backend import catchup as _cu2
             _pp_info = {}
             for _tag in ('', 'rank2'):     # v1 等权 / v2 rank2 加权（两条独立的前瞻记录）
-                _st = _pp_run(tag=_tag)
+                try:
+                    _cu2.heal_paper_portfolio(_tag, lg=lg)
+                except Exception as _e:
+                    lg.warning('  纸面盘回放补缺失败[%s]: %s', _tag or 'v1', str(_e)[:80])
+                _st = _pp_state(_tag) or {}
                 _stale = _pp_stale(tag=_tag)
                 _nav = (_st.get('nav_history') or [{}])[-1].get('nav')
                 _pp_info[_tag or 'v1'] = {'nav': _nav,

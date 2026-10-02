@@ -391,7 +391,8 @@ Tauri Shell (web/src-tauri, frameless, 启动时拉起 stock-api.exe sidecar)
 | Backend | `backend/agent/toolkit.py` | **对话 Agent 工具集(16)**: 交易6/研究4/策略6, `execute_tool(name, args)` |
 | Backend | `backend/trader/` | **AI 操盘手** (见上节) |
 | Backend | `backend/trade_engine/` | **Simulated trading engine** (accounts/orders/positions/trades/account_nav) |
-| Backend | `backend/update_daily.py` | **每日自动化(11步)**: 名录刷新+新股首拉+全市场K线(自动缺口检测≥60根缓冲)+指数/hs300/regime+基本面(3日轮换)+纸面盘+事件池+深挖+守护+净值+AI操盘手+收盘后数据(涨停5日回补/北向/龙虎榜/新高/板块快照)+宏观; 全局异常兜底+stderr落盘, 支持 `--pool-only/--skip-paper/--skip-kline` |
+| Backend | `backend/update_daily.py` | **每日自动化(11步)**: 名录刷新+新股首拉+全市场K线(自动缺口检测≥60根缓冲)+指数/hs300/regime+基本面(3日轮换)+纸面盘+事件池+深挖+守护+净值+AI操盘手+收盘后数据(涨停5日回补/北向/龙虎榜/新高/板块快照)+宏观; 全局异常兜底+stderr落盘, 支持 `--pool-only/--skip-paper/--skip-kline`; **补全审计**(见 catchup.py): 开机先检测停机遗留缺口, 非交易日有缺口也执行补全 |
+| Backend | `backend/catchup.py` | **数据补全审计/自愈**(2026-10-02): `audit()` 扫最近20交易日, 检测 K线残缺日(覆盖率<80%中位数)/整日缺失 + limit_up/lhb_daily/margin_daily/industry_pe/market_daily/board_daily 的缺失交易日(T+1表给1日宽限); `run_catchup()` 按缺口逐项补拉(动态窗口/缺失日期/派生子进程/纸面盘逐日回放); 配合任务计划的 StartWhenAvailable 实现"关机错过→开机自动补齐"; `scripts/register_daily_task.ps1` 一键注册(错过补跑/电池不跳过/10h时限) |
 | Scripts | `scripts/rebuild_kline_unified.py` | 新浪qfq多进程全库重拉(统一qfq基准=最新 + volume=股/amount=元, 2026-09-11 修复2022/2023边界断层24%与2023缺2600只); `backfill_gaps.py --year/--days/--codes` 补缺; `check_data_health.py` 健康报告 |
 | Backend | `backend/resilience.py` | akshare_wait 改随机分散(2026-09-11 修复 RateLimiter 无锁齐射致 py_mini_racer/V8 并发崩溃 = update_daily 多次3秒静默死亡根因) |
 | Backend | `backend/api/blueprints/etf.py` | **ETF**: `/api/etf/{list,kline,compare}` 全市场ETF列表/单只K线/多只归一化对比; 数据在 kline.db `etf_list`+`etf_daily` 独立表(新浪qfq主源, 股/元口径) |
