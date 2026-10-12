@@ -512,6 +512,79 @@ HTTPS 200、`ls-remote` 3.2s 成功；几分钟后又变 21s 超时。我那次�
 - **推送状态**：远端 `origin/master` 已含 `50b3ef2`（PM 分批推完）。此后本地又新增 5 个提交
   （`826de63`/`2ccec3d`/`f960a42`/`c8da53f`/`ac9c0af`）**尚未推送**，按 PM 指示「不再推送」，等指示。
 
+## 2026-10-13 战略决策：**停用 AI 操盘手**（配置层，可逆）
+
+> ## ⚠️ 这不是 bug，是产品决策 —— 请勿当故障去"修"
+> 将来若看到 `trader_profile.enabled = 0`、⑨ 步显示 `skipped`、
+> 或 `run_all_daily_decisions()` 返回空数组，**这是有意为之**，不是坏了。
+
+- **决策人**：董事长　**时间**：2026-10-13 凌晨
+- **原话**：「先停止 ai 操盘手这一项，他是通过 llm 逐天推理，收益太低了，立即放弃」
+- **理由（LLM 逐日推理，收益太低）** —— 可引用的既有量化结论（见本文件前几节）：
+  - **5 日尺度**：LLM 选票**点估计不弱**（+1.110% vs 机械组合 +0.503%），
+    但**置信区间极宽（±17~20%）→ 样本不足以判定显著**；
+  - **10 日**：LLM −0.068% vs 组合 +0.038%（**转负**）；**20 日**：LLM −0.442% vs 组合 −0.467%
+    → **10/20 日两者都归零或转负**；
+  - 与组合 Top50 重叠 **0%**（互补而非冗余），但**长期拿不出可证实的净 alpha**；
+  - 叠加成本后更无优势：组合研究结论是"多头端没有可证实的净 alpha，alpha 主要在空头端"。
+  → 与董事长判断一致：**逐日 LLM 推理的收益不足以支撑其成本与风险**。
+- **性质**：**停用（配置层，可逆）**，**不是废弃**。代码、`ai_trader.db`、
+  584 条历史决策、回放档案、记忆与纪律规则**全部保留**，随时可恢复。
+
+### 具体改了什么（最小改动）
+1. **把 3 个启用中的 live 档案置 `enabled=0`**（用现有 profile 机制 `store.update_profile`，
+   **不改代码逻辑**）：`[1,5,6] AI操盘手/趋势派/价值派` → **enabled 总数 0**。
+   `run_all_daily_decisions()` 本就只遍历 `enabled` 档案 → **自然跳过**（配置停用，非代码移除）。
+2. **⑨ 步无 enabled 档案时写 `'skipped'`**（原 `'no_enabled'`），并把
+   `'skipped'`/`'disabled'` 加入 `_step_bad` 的正常白名单 → **不算失败、不告警、不影响 ok**。
+3. **未削弱任何原判定**：`trader` **仍留在 `CRITICAL_STEPS`**；
+   "**有 enabled 档案却全部失败 → ok=false + error 告警**"**原样保留**（将来重启后仍能报警）。
+4. **余额体检（⑨-0）保留** —— 它是本轮附带的价值证明（上线第一次跑就抓到低余额），
+   停用后不再消耗任何东西，留作将来重启的前置检查。
+
+### 如何恢复（一行级）
+```bash
+# 方式一：前端 AI 页「AI 操盘手」档案里把 enabled 打开（等价）
+# 方式二：
+python -c "import sys; sys.path.insert(0,'.'); from backend.trader import store as S; S.update_profile(1, enabled=True)"
+# 恢复后 ⑨ 步会重新写 list（而非 'skipped'），critical 判定自动恢复
+```
+
+### 验收（**25 项断言全 PASS**，全程未触发任何真实 LLM 调用）
+| PM 验收标准 | 结果 |
+|---|---|
+| ① 模拟 ⑨ 步：**0 次 LLM 调用 / 0 error / 该步为 `skipped`** | ✅ `run_all_daily_decisions()` 返回 `[]`；假 `run_daily_decision` **未被调用**（calls=[]）；`'skipped'` 判为正常、不进 bad_steps / critical |
+| ② 不再有 402 风险：跑完**余额不变** | ✅ `12.34 → 12.34`（差值 0） |
+| ③ 数据管道其余步骤不受影响 | ✅ `CRITICAL_STEPS` 仍含 kline/fund_flow/etf 且判定未变；余额体检仍在 ⑨-0 |
+| ③b **原判定未被削弱**（有 enabled 却全失败仍须 ok=false） | ✅ 注入 trader 全失败 → `ok=False` + 归因 `trader` + error 级通知 |
+| ④ `git status` 干净 | ✅ 仅剩 tushare 那对（有意保留） |
+| ⑤ **可逆性**：临时启用 → 确认恢复运行 → 改回停用 | ✅ 临时 `enabled=True` 后 `run_all_daily_decisions()` **确实调用**了 id=1（calls=[1]）→ 改回 `False` → 最终 enabled=0 |
+
+### 附：余额口径（供将来核对）
+- 我 00:34 查到 **3.12 CNY**；PM 00:56 查到 **2.37 CNY**；我 01:0x 再查 **12.34 CNY**
+  → 期间**有人充值约 10 CNY**（`is_available=true`、`low=false`）。
+- 本次停用动作与整轮验收**均未消耗余额**（前后一致，差值 0）。
+- 结论：**停用与充值互不冲突** —— 停用按董事长决策执行；充值使 402 风险同时解除。
+
+### 已知残留 / 待办
+
+- **T-ENC-01（P1）**：`trainer_engine` 空头账务符号修正 + `backend/api/blueprints/trainer.py:118`
+  `side` 缺枚举白名单（现在传 `"foo"` 也会被当空头）+ 空头往返单元测试。
+  正确写法：整段 if/else + `balance -= exit_commission` 可换成 `self.balance += order.pnl`。
+  （PM 2026-10-13 裁决：**暂不开工** —— 与实盘无关。）
+- **T-ODO-01（已下调优先级）**：`backend/tushare_source.py` + `scripts/rebuild_tushare.py`。
+  董事长明确「**不依赖 tushare**」（"数据是多个聚到凑齐的"）→ **不必接线**，
+  那对文件保持 untracked 即可。
+- **T-ENV-01（已转 dev-env-health）**：`C:\Python314` 的 `import pydantic` 因用户级孤儿
+  `pydantic_core 2.41.4` SystemError（系统级是配套的 2.41.5）→ 用该解释器起开发后端时所有 LLM 功能炸；
+  **不影响管道**（管道走 `.update-venv`，依赖自洽）。
+- **✅ 已修（第三轮）**：发现 1（`tool_choice` 400）、裁决 6（分离超时）、
+  T-DATA-01（跑后复核）、T-LLM-02（trace 计时）、发现 2（余额体检）。
+- **✅ 已修（第二轮）**：T-DATA-02（取数异常记前 3 条样例并入库）、T-DATA-03（非交易日早退分支走 `_finalize_run`）。
+- **推送状态**：远端 `origin/master` 已含 `826de63`（含 `tool_choice` 修复）。
+  此后本地新增 6 个提交（`2ccec3d`/`f960a42`/`c8da53f`/`ac9c0af`/`7a888b8` + 本次停用提交）
+  **尚未推送**；PM 实测当前网络窗口关闭（10 轮连续失败），**继续停手**等窗口重开统一推。
+
 ---
 
 *说明见 [RESEARCH_AGENT.md](RESEARCH_AGENT.md)。*
