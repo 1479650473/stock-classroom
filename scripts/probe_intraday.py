@@ -154,4 +154,17 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    while True:
+        try:
+            main()
+            break
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            try:
+                with open(LOG, "a", encoding="utf-8") as f:
+                    f.write(f"[{datetime.now().strftime('%H:%M:%S')}] PROBE CRASH: "
+                            f"{type(e).__name__}: {str(e)[:120]}\n")
+            except Exception:
+                pass
+            time.sleep(60)

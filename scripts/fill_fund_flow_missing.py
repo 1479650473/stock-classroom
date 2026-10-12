@@ -19,24 +19,35 @@ def main():
     import requests
     interval = 1.5
     thin = False
+    stale = False
     args = sys.argv[1:]
     for i, a in enumerate(args):
         if a == "--interval" and i + 1 < len(args):
             interval = float(args[i + 1])
         if a == "--thin":
             thin = True
+        if a == "--stale":
+            stale = True
 
     con = sqlite3.connect(DB)
     if thin:
         # 重拉"数据不全"的股票(早期东财源残留 120 行 / 拉取不全)
         codes = [str(r[0]) for r in con.execute(
             "SELECT code FROM fund_flow_daily GROUP BY code HAVING COUNT(*) < 500 ORDER BY code").fetchall()]
+    elif stale:
+        # 落后于日K最新交易日的股票(含当日行需重拉)
+        latest = con.execute("SELECT MAX(date) FROM kline_2026").fetchone()[0] or ""
+        codes = [str(r[0]) for r in con.execute(
+            "SELECT s.code FROM stock_list s WHERE s.status='active' "
+            "AND substr(s.code,1,2) IN ('00','30','60','68') "
+            "AND COALESCE((SELECT MAX(date) FROM fund_flow_daily f WHERE f.code=s.code),'') < ? "
+            "ORDER BY s.code", (latest,)).fetchall()]
     else:
         codes = [str(r[0]) for r in con.execute(
             "SELECT code FROM stock_list WHERE status='active' AND substr(code,1,2) IN ('00','30','60','68') "
             "AND code NOT IN (SELECT DISTINCT code FROM fund_flow_daily) ORDER BY code").fetchall()]
     con.close()
-    print(f"补漏 {len(codes)} 只 @ {interval}s (thin={thin})", flush=True)
+    print(f"补漏 {len(codes)} 只 @ {interval}s (thin={thin} stale={stale})", flush=True)
 
     ok = fail = rows_n = 0
     failed = []
