@@ -396,27 +396,121 @@ error 统计：42 × 操盘手未能给出正式决策   ← 最高频
 不联网；`akshare_source` 取数函数替换为必失败版本以复现 10-12 现场；`notify`/`marker` 落临时目录，
 **不碰 data/**。提交：`6029129` / `5e803ab` / `50b3ef2`。
 
+## 2026-10-13 第三轮：推送结案 + 发现1修复 + 裁决6落地 + T-DATA-01/T-LLM-02/发现2
+
+> PM 验收第二轮后下达：发现 1 修复（最高优先）、流式 timeout 实测、裁决 6 落地、
+> T-DATA-01、T-LLM-02、发现 2。**不再推送**（PM 已代为推完）。
+
+### 〇. 推送结案：`github.com:443` 是**间歇性**阻断，策略是「小批 + 自动重试」
+我这边推失败（`Failed to connect to github.com port 443 after 21089 ms`，EXIT=128）的同时，
+PM 那边网络窗口开了、用**增量分批**推完：
+```
+推送前 origin/master = 30e428d，领先 316
+分批：50 提交 × 3 批 → 第 4 批 408 超时 → 改 25 提交/批 + 失败自动重试 → 全过
+推送后 origin/master = 50b3ef2 = 当时的本地 HEAD（ls-remote 实查确认）
+```
+**关键性质（记下来，将来还有用）**：`github.com:443` **间歇性**阻断 —— PM 连续 4 次 TCP 探测全通、
+HTTPS 200、`ls-remote` 3.2s 成功；几分钟后又变 21s 超时。我那次诊断"只有 github.com 被定向阻断，
+同网段 ssh.github.com / api.github.com 却通"是对的，但**"等网络好了再推"是错的策略**：
+> 正确做法 = **小批（≤25 提交）+ 失败自动重试，抓住每个窗口**；大 pack 在窗口关闭时会 408 中断。
+（本机无 SSH 私钥、无代理端口在监听，所以 A~D 备选通路都不必再走了。）
+
+### 一. 🔴 发现 1 修复（本轮最有价值）：强制提交决策不再传 `tool_choice`
+**平台约束（写死在代码注释里，防止再犯）**：`deepseek-flash` 跑**思考模式**，
+而 `tool_choice={"type":"function",...}` 与思考模式**互斥**，必然 400：
+`"Thinking mode does not support this tool_choice"`。
+实测三态：① 传强制 tool_choice → 400（确定性）；② 不传 → OK 且模型自己调 `submit_decision`；③ `"auto"` → OK。
+
+**后果链**：`backend/trader/agent.py` 的强制提交兜底路径正是写法① → **100% 失败**；
+异常被 `except` 吞掉只 emit 一行 → 库里只有 **42 条「操盘手未能给出正式决策」**（最高频错误），
+**0 条 tool_choice 报错**（根因从未落库）。→ "AI 操盘手经常失败"从玄学变成**确定性缺陷**。
+
+**改动**：删掉 `tool_choice=`（只给单工具 spec + 明确用户指令）；`except` 里带出**异常类型**
+（`log.warning` + SSE warning 都带），这正是根因潜伏的原因。
+**验收**：18 项单元断言（连跑 3 次，断言全程 `tool_choice` 均为缺省）+ 实网 3/3 成功
+（6.97s / 2.25s / 5.32s，全部 `tool_calls=['submit_decision']`）。提交 `826de63`。
+
+### 二. 裁决 6 落地：连接/读取分离超时（**先实测再定值**，PM 要求）
+**read 的语义实测结论**（用故意的短 read=5s 做探针）：
+| 场景 | 结果 | 结论 |
+|---|---|---|
+| 非流式 + read=5s | **失败**（`APITimeoutError`，19.2s 中止） | 非流式下 read 卡「等整段响应」→ 必须 ≥ 生成耗时 |
+| 流式 + read=5s | **成功**（27.4s 跑完，3002 块，**最大块间隔 0.42s**） | 流式下 read 只卡「块间隔」→ token 持续到达即安全 |
+| 流式 + read=180s | 成功（26.2s，最大块间隔 0.37s） | 拟采用值可用 |
+→ **同一条 `read=180s` 两条路径都安全**，PM 担心的"会切断合法长生成"**不成立**（流式是块间隔语义）。
+180s 对实测长生成 max(33.9s) 是 5.3× 余量，对理论最坏（2600 token 中文 @15 tok/s ≈173s）也够。
+
+**落地**：`get_timeout_config()` 读 `agent.timeout_connect/read`（默认 10/180，夹紧 connect 1~60、read 10~600）；
+`OpenAI(..., timeout=httpx.Timeout(connect, read, write=30, pool=10))`。
+**为什么这是治 10-12 那味药**：重试预算只在**失败后**检查，单次请求挂起时**根本不触发重试** →
+必须有连接期硬上限。边界：6 次尝试最坏 = 6×10s + 127s ≈ **187s**，与"180s 硬上限"意图吻合。
+提交 `2ccec3d`。
+
+### 三. T-DATA-01：跑后复核关键表新鲜度（**只复核、不重拉**）
+`catchup.audit()` 原来只在 `_run_inner` **开头**跑一次，`run_catchup()` 只在**非交易日**起补全作用
+→ 交易日跑完**没有任何事后复核**。现于 `_finalize_run` 判定 ok 之前复用 `audit()`
+（**纯查询**：读 K 线覆盖 + 各表 `MAX(date)`，不拉数据）做"关账复核"：
+- 结果落 `marker.freshness_recheck`（ref / stale_tables / kline_missing / summary）
+- 结论用既有「字符串步骤」约定表达，复用 `_step_bad`，**不新增值形状**
+- `CRITICAL_STEPS` 增 `freshness_recheck` → 有缺口即 `ok=false` + error 通知
+
+**顺带修掉一个跨零点陷阱**：初版用 `datetime.now()` 当参考日，长跑跨零点（含 StartWhenAvailable 补跑）
+会把"第二天"当参考日 → 所有表都被判缺失 → 天天 ok=false（狼来了）。
+改为**锚定本轮 run 的开始日** `out['started'][:10]`，与开头那次 audit 口径一致。
+
+**验收**：真实 audit 精确识别 `{limit_up:[20261012], margin_daily:[20261009], industry_pe:[20261012]}`；
+端到端 ok=False 且归因到 `freshness_recheck`；全绿不误报；跨零点参考日仍为 2026-10-12。
+> ⚠️ **副作用（PM 已认可）**：这会让当前状态**报 ok=false** —— 因为上述 3 张表**现在就是陈旧的**。
+> 这不是误报，正是该机制要暴露的事实。提交 `f960a42`。
+
+### 四. T-LLM-02：`trace` 记录单次 LLM 调用耗时
+`trader_decision` 只有整次决策耗时，`trace` 里原来只有 `{tool,args}` → **单次调用耗时从未记录**，
+所以本轮定 timeout 只能临时实测、无法从历史归因。
+新增 `TraderAgent._log_llm_call()`：以 `{"tool":"llm_call","args":{phase,sec,ok,attempt}}`
+追加进 `self.tools.log`（失败时带 `error`），三个调用点全覆盖（`stream`/`chat`/`forced`）；
+前端 `Trader.vue` 加 `llm_call: '⏱ LLM 调用'` 标签并显示阶段与秒数
+（`toolLine` 对未知 tool 本就有兜底，不影响原有条目）。
+**验收**：成功/流式/失败/强制四种路径全通过，失败条目 `ok=False` 且 `error` 含异常类型、
+`attempt` 递增；`json.dumps(trace)` 可序列化（要落 TEXT 列）。提交 `c8da53f`。
+
+### 五. 🔴 发现 2：余额体检上线即发现**余额只剩 3.12 CNY**
+`llm_client.get_balance_status()`（GET `{api_base}/user/balance`，**同一把 key、无需额外凭据**，实测 200）；
+`get_balance_config()` 读 `agent.balance_warn_cny`（默认 10）。接入 `update_daily` 步骤 **⑨-0**
+（在 LLM 重活之前），结果写 `steps.llm_balance`；**刻意不进 CRITICAL_STEPS** → 低余额是
+**warn 级、不影响 ok**（PM 要求）。
+**实测当前余额 3.12 CNY（阈值 10）→ `low=True`** —— 该账号正处在 402 风险区，
+与库里那 3 条历史 `402 Insufficient Balance` 完全吻合。已单独上报 PM 处理。提交 `ac9c0af`。
+
+### 六. 工程坑记录：**不要用 PowerShell 文本管道改源码**（PM 要求留档）
+我一度用 `(Get-Content -Raw) -replace ... | Set-Content -NoNewline -Encoding utf8` 批量改
+`backend/trader/agent.py`，结果文件被**加 UTF-8 BOM + LF 转 CRLF + 中文变乱码**
+（`py_compile` 报 `SyntaxError: invalid character '\u20ac'`）。
+**处理方式（可复用）**：
+1. 发现方式是**每次改完立刻 `py_compile`**，错误立刻暴露；
+2. `git checkout -- <file>` 回滚（该文件当时相对 HEAD 无改动，回滚无损），
+   再用 **`edit` 工具**重做（它按 UTF-8 精确替换，不碰 BOM/换行）；
+3. 提交前用 `git log -N --pretty=%s | ForEach-Object { if ($_ -match "^\uFEFF") {'[BOM!]'} }` 校验；
+4. 需要**生成/写文件**时用 `[System.IO.File]::WriteAllText(p, s, UTF8Encoding($false))`（无 BOM），
+   而不是 `Out-File -Encoding utf8`（会带 BOM —— 我用它写 commit message 时就中过一次，
+   表现为提交主题开头多一个不可见 U+FEFF，已 `--amend` 修掉）。
+（dev-trade-automation 也踩到同一个坑，两条交叉印证已记入团队知识。）
+
 ### 已知残留 / 待办
 
 - **T-ENC-01（P1）**：`trainer_engine` 空头账务符号修正 + `backend/api/blueprints/trainer.py:118`
   `side` 缺枚举白名单（现在传 `"foo"` 也会被当空头）+ 空头往返单元测试。
   正确写法：整段 if/else + `balance -= exit_commission` 可换成 `self.balance += order.pnl`。
-- **T-DATA-01（P1，待 PM 开工）**：交易日跑完缺事后复核。方案要点：在 `_finalize_run` 之前加一步
-  "复核关键表新鲜度"，直接复用 `catchup.DAILY_TABLES` + 已有 `audit()`，缺口就地把 `ok=false` 并进通知。
-  （直接影响 stock-ml 的 FF 过滤信号 —— `fund_flow_daily` 陈旧 1 个交易日。）
-- **T-LLM-01（新，P1）**：强制提交 `tool_choice` 400 + per-request 分离超时，建议合并一个 commit，等授权。
-- **T-LLM-02（新）**：`trader_decision.trace` 里补记单次 LLM 调用耗时（否则永远只能实测、无法从历史归因）。
 - **T-ODO-01**：`backend/tushare_source.py` + `scripts/rebuild_tushare.py` 接进 pipeline 并声明
   `tushare` 依赖后再入库（当前保持 untracked）。
 - **T-ENV-01（已转 dev-env-health）**：`C:\Python314` 的 `import pydantic` 因用户级孤儿
   `pydantic_core 2.41.4` SystemError（系统级是配套的 2.41.5）→ 用该解释器起开发后端时所有 LLM 功能炸；
   **不影响管道**（管道走 `.update-venv`，依赖自洽，已实测真实 LLM 调用成功）。
-- **✅ 已修（本段）**：T-DATA-02（取数异常记前 3 条样例并入库）、T-DATA-03（非交易日早退分支走 `_finalize_run`）。
-- **⛔ 推送仍是阻断状态**：PM 已批准推送，门禁 `--history` 复跑 **files=383 commits=332 0 命中 EXIT=0**，
-  本地领先 316 提交、可快进；但 `git push origin master` 报
-  `Failed to connect to github.com port 443 after 21089 ms`（**github.com:443 被单独阻断**：
-  `ssh.github.com:443` 与 `api.github.com:443` 均通；本机无 SSH 私钥、无任何代理端口在监听）。
-  **远端 0 变更**，等 PM 选定通路（开代理 / 换机器 / 网关放通）。
+- **🔴 待 PM/董事长处理**：DeepSeek 余额 **3.12 CNY**（低于阈值 10）→ 有 402 风险，需充值。
+- **✅ 已修（第三轮）**：发现 1（`tool_choice` 400）、裁决 6（分离超时）、
+  T-DATA-01（跑后复核）、T-LLM-02（trace 计时）、发现 2（余额体检）。
+- **✅ 已修（第二轮）**：T-DATA-02（取数异常记前 3 条样例并入库）、T-DATA-03（非交易日早退分支走 `_finalize_run`）。
+- **推送状态**：远端 `origin/master` 已含 `50b3ef2`（PM 分批推完）。此后本地又新增 5 个提交
+  （`826de63`/`2ccec3d`/`f960a42`/`c8da53f`/`ac9c0af`）**尚未推送**，按 PM 指示「不再推送」，等指示。
 
 ---
 
