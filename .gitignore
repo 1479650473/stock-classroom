@@ -73,3 +73,9 @@ web/src-tauri/target/
 # web 构建产物/临时
 _build/
 scripts/*.xml
+
+# 一次性探测/试验脚本的固定目录（2026-10-12 约定）
+# 用**目录级**规则而不是 `scripts/_*.py`：后者会静默吞掉将来 scripts/_utils.py
+# 之类"有引用"的模块（看不见的漏提交）。历史遗留的 13 个探测脚本已移出仓库到
+# E:\小光工作区备份\stock-classroom_scratch_archive\
+scripts/scratch/
