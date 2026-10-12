@@ -144,8 +144,9 @@ def _step_bad(key, v):
     """判定单个步骤是否异常。返回 (描述 or None, 是否整体失败)。
 
     步骤值约定（update_daily 全篇一致）：字符串只可能是
-      'ok' / 'no_enabled'（正常）、'rc=N ...'（子进程非零退出=失败）、或异常消息 str(e)。
-    所以「不是 'ok'/'no_enabled' 的字符串」一律算异常 —— 这样才盖得住
+      'ok' / 'no_enabled' / 'skipped' / 'disabled'（正常：该步没跑或无需跑）、
+      'rc=N ...'（子进程非零退出=失败）、或异常消息 str(e)。
+    所以「不在上面这个白名单里的字符串」一律算异常 —— 这样才盖得住
       lhb_margin 的 'HTTPSConnectionPool... Max retries exceeded'（不含 error 字样）
       和 chip/market_daily 的 'rc=1 ...'（同样不含 error 字样）。
 
@@ -158,7 +159,9 @@ def _step_bad(key, v):
           按步骤名拉白名单：那样会把 fundamental 真正的 `{'error': ...}` 也一起藏掉。
     """
     if isinstance(v, str):
-        if v in ('ok', 'no_enabled'):
+        # 'skipped'/'disabled' 于 2026-10-13 加入：董事长决定**停用 AI 操盘手**（配置层、可逆），
+        # 停用后 ⑨ 步写成 'skipped'，必须不算失败、不告警。
+        if v in ('ok', 'no_enabled', 'skipped', 'disabled'):
             return None, False
         return v[:160], True
     if isinstance(v, dict):
@@ -615,8 +618,12 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
                             sum(1 for e in _ex if e.get('ok')), _dec.get('nav_after'))
                 out['steps']['trader'] = _tres
             else:
-                out['steps']['trader'] = 'no_enabled'
-                lg.info('  AI操盘手: 无启用的交易员, 跳过')
+                # 无 enabled 档案 → 该步**跳过**，不算失败、不告警（2026-10-13 董事长决定停用 AI 操盘手：
+                # "LLM 逐天推理，收益太低了"。这是**配置层停用**，代码/数据/历史决策全部保留，随时可逆）。
+                # ⚠️ 未削弱原判定：将来重新启用后若"有 enabled 档案却全部失败"，
+                #    仍走上面的 list 分支 → _step_bad 判为整体失败 → ok=false + error 告警。
+                out['steps']['trader'] = 'skipped'
+                lg.info('  AI操盘手: 无启用的交易员(已停用), 跳过该步')
         except Exception as e:
             out['steps']['trader'] = str(e)[:120]
             lg.warning('  AI操盘手决策失败: %s', str(e)[:80])
