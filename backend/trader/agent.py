@@ -322,6 +322,20 @@ class TraderAgent:
             emit("强制操盘手给出最终决策…")
             spec = [t for t in TOOL_SPECS if t["function"]["name"] == "submit_decision"]
             from . import protocol as protocol_mod
+            # ⚠️ 平台约束（2026-10-13 实测，务必不要再改回去）：
+            #   deepseek-flash 跑的是**思考模式**，而
+            #       tool_choice={"type": "function", "function": {"name": "submit_decision"}}
+            #   与思考模式**互斥**，必然 400：
+            #       "Thinking mode does not support this tool_choice"
+            #   旧代码正是在这里传了强制 tool_choice → 这条兜底路径 **100% 失败**。
+            #   而异常被外层 except 吞掉、只 emit 一行，所以库里只留下 42 条
+            #   "操盘手未能给出正式决策"，**没有任何 tool_choice 报错落库**（查不到根因）。
+            #   修法：**不传 tool_choice**，只给"单工具 spec + 明确用户指令"——
+            #   实测（同 prompt/同工具）模型会自己调 submit_decision；
+            #   tool_choice="auto" 也可用，但没有必要。
+            messages.append({"role": "user", "content":
+                             "请立刻调用 submit_decision 提交今日最终决策"
+                             "（含完整 thinking 与 reflection；只提交，不要再查其它工具）。"})
             _cfg = get_retry_config()
             _t0 = time.monotonic()
             _fix_rounds = 0      # 校验不通过 → 回灌问题再来一轮（不占用连接重试次数）
@@ -329,10 +343,7 @@ class TraderAgent:
             while _fix_rounds < 3 and _conn_fails < _cfg["max_attempts"]:
                 try:
                     llm = self._client()
-                    result = llm.chat_with_tools(
-                        messages, spec, max_tokens=2000,
-                        tool_choice={"type": "function",
-                                     "function": {"name": "submit_decision"}})
+                    result = llm.chat_with_tools(messages, spec, max_tokens=2000)
                     got = None
                     for tc in result.get("tool_calls") or []:
                         try:
@@ -354,19 +365,23 @@ class TraderAgent:
                                                  + "\n请按上面的问题补齐后**重新调用 submit_decision**"
                                                    "（只提交修正后的完整内容）。")})
                 except Exception as e:
+                    # 不再静默：把**异常类型**也带出来（旧代码只 emit 一行泛化文案，
+                    # 导致 400 这类确定性缺陷在库里完全查不到 → 潜伏到 2026-10-13 才发现）
+                    _exc = "%s: %s" % (type(e).__name__, str(e)[:150])
+                    log.warning("强制提交决策失败: %s", _exc)
                     try:
                         _wait = _retry_wait(e, _conn_fails, label="submit_decision",
                                             elapsed=time.monotonic() - _t0,
                                             attempts=_cfg["max_attempts"],
                                             budget=_cfg["budget_sec"])
                     except Exception:
-                        emit(f"最终决策失败({_conn_fails + 1}/{_cfg['max_attempts']}): {str(e)[:120]}")
-                        event({"event": "warning", "message": f"最终决策调用失败：{str(e)[:150]}"})
+                        emit(f"最终决策失败({_conn_fails + 1}/{_cfg['max_attempts']}) {_exc}")
+                        event({"event": "warning", "message": f"最终决策调用失败：{_exc}"})
                         break
                     _conn_fails += 1
                     emit(f"最终决策调用失败({_conn_fails}/{_cfg['max_attempts']})，"
-                         f"约 {_wait:.0f}s 后重试: {str(e)[:120]}")
-                    event({"event": "warning", "message": f"最终决策调用失败：{str(e)[:150]}"})
+                         f"约 {_wait:.0f}s 后重试: {_exc}")
+                    event({"event": "warning", "message": f"最终决策调用失败：{_exc}"})
                     time.sleep(_wait)
 
         narration = "".join(narration_parts).strip()
