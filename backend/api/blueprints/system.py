@@ -13,7 +13,7 @@ bp = Blueprint("system", __name__, url_prefix="/api/system")
 
 @bp.route("/health")
 def health():
-    return ok({"status": "ok", "service": "stock-classroom-web", "version": "5.0"})
+    return ok({"status": "ok", "service": "stock-classroom-web", "version": "5.1"})
 
 
 @bp.route("/bootstrap")
@@ -21,19 +21,34 @@ def bootstrap():
     """First-run gate: report data freshness so the SPA can show the
     welcome/download screen instead of a wall of 'plugin failed' errors."""
     import sqlite3
+    from datetime import datetime
 
-    def _fresh(path, table, date_col="date"):
+    def _fresh(path, table, date_col="date", count=True):
         if not os.path.exists(path):
             return {"exists": False, "max": None, "rows": 0}
         try:
             conn = sqlite3.connect(path, timeout=5)
             conn.row_factory = sqlite3.Row
+            if count:
+                try:
+                    rows = conn.execute(f"SELECT COUNT(*) c FROM {table}").fetchone()["c"]
+                except Exception:
+                    rows = None
+            else:
+                # 大表 COUNT(*) 会拖慢应用启动；新鲜度只需要 MAX(date)。
+                rows = None
             try:
-                rows = conn.execute(f"SELECT COUNT(*) c FROM {table}").fetchone()["c"]
-            except Exception:
-                rows = 0
-            try:
-                mx = conn.execute(f"SELECT MAX({date_col}) m FROM {table}").fetchone()["m"]
+                if table == "kline_daily":
+                    # kline_daily 是年度分表 UNION ALL 视图，直接 MAX 会扫整张视图。
+                    year_table = f"kline_{datetime.now().year}"
+                    mx = conn.execute(
+                        f"SELECT MAX({date_col}) m FROM {year_table}").fetchone()["m"]
+                    if not mx:
+                        mx = conn.execute(
+                            f"SELECT MAX({date_col}) m FROM {table}").fetchone()["m"]
+                else:
+                    mx = conn.execute(
+                        f"SELECT MAX({date_col}) m FROM {table}").fetchone()["m"]
             except Exception:
                 mx = None
             conn.close()
@@ -50,12 +65,12 @@ def bootstrap():
         stock_rows = 0
 
     data = {
-        "kline": _fresh(KLINE_DB, "kline_daily"),
+        "kline": _fresh(KLINE_DB, "kline_daily", count=False),
         "stock_list_rows": stock_rows,
         "cache": _fresh(CACHE_DB, "stock_spot", "updated_at"),
-        "fundamental": _fresh(FUND_DB, "fundamental_daily") if os.path.exists(FUND_DB) else {"exists": False, "max": None, "rows": 0},
+        "fundamental": _fresh(FUND_DB, "fundamental", count=False) if os.path.exists(FUND_DB) else {"exists": False, "max": None, "rows": None},
     }
-    data["needs_init"] = (not data["kline"]["exists"]) or data["kline"]["rows"] == 0 or stock_rows == 0
+    data["needs_init"] = (not data["kline"]["exists"]) or stock_rows == 0
     settings = settings_store.load_settings()
     data["settings"] = {"theme": settings.get("theme"), "font_size": settings.get("font_size")}
     data["ai_configured"] = bool((settings.get("agent") or {}).get("api_key"))
