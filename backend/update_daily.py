@@ -129,11 +129,15 @@ def refresh_fundamentals(codes, workers=16, progress=None, budget_secs=1800):
 # 5205 只资金流全失败 + 1624 只 ETF 全失败」仍被打成 ok=true，故障潜伏一个多月。
 # 另一方面原通知只看 dict 的 'error' 单数键，漏掉了 'errors'>0(fund_flow/etf)
 # 与 trader 的 list[{'status':'error'}]，所以连告警都没发。
-CRITICAL_STEPS = ('kline', 'fund_flow', 'etf', 'trader', 'catchup')
+CRITICAL_STEPS = ('kline', 'fund_flow', 'etf', 'trader', 'catchup', 'freshness_recheck')
 # 特意不含 market_data：north_flow 等指标常年为 0，设成 critical 会天天 ok=false（狼来了）
 # catchup 的触发面很窄：只有 run_catchup 抛异常时才写成 {'error': ...}（整体失败）；
 # 正常/部分补全的结果字典没有 'error' 键 → 不误报。但"停机后补全失败"意味着数据会
 # **静默陈旧**，正是 T-DATA-01 那类问题，必须 ok=false。
+# freshness_recheck（T-DATA-01，2026-10-13）：跑完后复核 DAILY_TABLES 的缺口，有缺口即 ok=false。
+# 注意：这**确实会让当前状态报 ok=false** —— 因为 limit_up(10-09)/margin_daily(10-08)/
+# industry_pe(10-09) 现在就是陈旧的；这正是该机制要暴露的事实，不是误报。
+# T+1 表已由 catchup.DAILY_TABLES 的 grace 处理，不会"提前一天"乱报。
 
 
 def _step_bad(key, v):
@@ -202,6 +206,40 @@ def _finalize_run(out, lg, t0):
     out['finished'] = datetime.now().isoformat(timespec='seconds')
     out['elapsed'] = round(time.time() - t0, 1)
     out['ok'] = True
+
+    # ── T-DATA-01（2026-10-13）：跑完后**复核**关键表新鲜度（只查不拉，重拉交给 catchup）──
+    # 原来 audit() 只在 _run_inner 开头跑一次，而 run_catchup() 只在**非交易日**起补全作用
+    # → 交易日跑完**没有任何事后复核**，于是 2026-10-12 跑完后
+    #   limit_up / margin_daily / industry_pe / lhb_daily 仍然陈旧，却没有任何人知道。
+    # 这里复用同一个 audit()：它是**纯查询**（读 kline 覆盖 + 各表 MAX(date)），不会拉数据。
+    _fresh = None
+    try:
+        from backend import catchup as _cuf
+        _cal = _trade_calendar()
+        # 参考日锚定到**本轮 run 的开始日**（out['started']），而不是 datetime.now()：
+        # 长跑会跨零点（10-12 那次 17:00→21:20；计划任务的 StartWhenAvailable 补跑
+        # 甚至可能 23:00 起跑），若用 now() 会把"第二天"当成参考日 → 所有表都被判缺失
+        # → 天天 ok=false（狼来了）。锚定开始日才与 _run_inner 开头那次 audit 口径一致。
+        _today = str(out.get('started') or datetime.now().isoformat(timespec='seconds'))[:10]
+        if _cal is None:
+            out['freshness_recheck'] = {'status': 'skip', 'reason': '无交易日历'}
+        else:
+            _a = _cuf.audit(_cal, _today, MARKER)
+            _miss = {t: (v.get('missing') or [])
+                     for t, v in (_a.get('tables') or {}).items() if v.get('missing')}
+            out['freshness_recheck'] = {
+                'ref': _a.get('ref'),
+                'stale_tables': _miss,
+                'kline_missing': (_a.get('kline') or {}).get('missing') or [],
+                'summary': _cuf.audit_text(_a),
+            }
+            _fresh = 'ok' if not _miss else ('关键表陈旧: ' + '; '.join(
+                '%s 缺 %s' % (t, ','.join(v[:3])) for t, v in sorted(_miss.items())))
+            if _miss:
+                lg.warning('  跑后新鲜度复核：%d 张关键表仍陈旧 -> %s', len(_miss), _fresh[:200])
+    except Exception as e:
+        lg.warning('跑后新鲜度复核失败(不影响其余判定): %s', str(e)[:120])
+
     bad, critical = {}, []
     try:
         # 把 catchup 也纳入健康判定（T-DATA-03）：非交易日的早退分支只跑补全，
@@ -209,6 +247,10 @@ def _finalize_run(out, lg, t0):
         candidates = dict(out.get('steps') or {})
         if out.get('catchup') is not None:
             candidates['catchup'] = out['catchup']
+        # T-DATA-01：复核结果用「字符串步骤」的既有约定表达（'ok' / 失败描述），
+        # 这样 _step_bad 天然能识别，不必再为它加一种值形状。
+        if _fresh is not None:
+            candidates['freshness_recheck'] = _fresh
         for k, v in candidates.items():
             msg, total_fail = _step_bad(k, v)
             if msg:
