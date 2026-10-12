@@ -78,7 +78,7 @@ def step_forward(sid):
         return err(404, "not_found", "session not found", retriable=False)
     engine = s["engine"]
     engine.step()
-    return ok({"snapshot": engine.snapshot(), "bar": engine.current_bar})
+    return ok({"snapshot": engine.snapshot(), "bar": engine.current_bar()})
 
 
 @bp.route("/<int:sid>/step-back", methods=["POST"])
@@ -89,7 +89,7 @@ def step_back(sid):
         return err(404, "not_found", "session not found", retriable=False)
     engine = s["engine"]
     engine.step_back()
-    return ok({"snapshot": engine.snapshot(), "bar": engine.current_bar})
+    return ok({"snapshot": engine.snapshot(), "bar": engine.current_bar()})
 
 
 @bp.route("/<int:sid>/goto", methods=["POST"])
@@ -99,10 +99,13 @@ def goto_bar(sid):
     if not s:
         return err(404, "not_found", "session not found", retriable=False)
     body = request.get_json(force=True, silent=True) or {}
-    idx = body.get("idx", 0)
+    try:
+        idx = int(body.get("idx", 0))
+    except (TypeError, ValueError):
+        return err(400, "invalid_idx", "idx 必须是整数", retriable=False)
     engine = s["engine"]
     engine.goto(idx)
-    return ok({"snapshot": engine.snapshot(), "bar": engine.current_bar})
+    return ok({"snapshot": engine.snapshot(), "bar": engine.current_bar()})
 
 
 @bp.route("/<int:sid>/order", methods=["POST"])
@@ -113,7 +116,10 @@ def place_order(sid):
         return err(404, "not_found", "session not found", retriable=False)
     body = request.get_json(force=True, silent=True) or {}
     side = body.get("side", "long")
-    qty = body.get("qty", 100)
+    try:
+        qty = int(body.get("qty", 100))
+    except (TypeError, ValueError):
+        return err(400, "invalid_qty", "qty 必须是整数", retriable=False)
     stop_loss = body.get("stop_loss")
     take_profit = body.get("take_profit")
     engine = s["engine"]
@@ -131,10 +137,13 @@ def cancel_order(sid):
     if not s:
         return err(404, "not_found", "session not found", retriable=False)
     body = request.get_json(force=True, silent=True) or {}
-    idx = body.get("order_idx", 0)
+    try:
+        idx = int(body.get("order_idx", 0))
+    except (TypeError, ValueError):
+        return err(400, "invalid_order_idx", "order_idx 必须是整数", retriable=False)
     engine = s["engine"]
-    if 0 <= idx < len(engine.open_orders):
-        engine.cancel_order(engine.open_orders[idx])
+    if 0 <= idx < len(engine.orders):
+        engine.cancel_order(engine.orders[idx])
     return ok({"snapshot": engine.snapshot()})
 
 
