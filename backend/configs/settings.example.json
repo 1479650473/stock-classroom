@@ -4,6 +4,10 @@
   "agent": {
     "api_base": "https://api.deepseek.com/v1",
     "api_key": "",
-    "model": "deepseek-v4-pro"
+    "model": "deepseek-v4-pro",
+    "retry_max_attempts": 6,
+    "retry_budget_sec": 130,
+    "timeout_connect": 10,
+    "timeout_read": 180
   }
 }

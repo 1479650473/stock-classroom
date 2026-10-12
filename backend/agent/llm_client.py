@@ -60,6 +60,44 @@ def get_retry_config() -> dict:
     }
 
 
+DEFAULT_TIMEOUT_CONNECT = 10.0      # 连接期硬上限（秒）
+DEFAULT_TIMEOUT_READ = 180.0        # 读取超时（秒）
+MAX_TIMEOUT_READ = 600.0
+
+
+def get_timeout_config() -> dict:
+    """读 settings.json → agent.timeout_connect / agent.timeout_read（带默认值 + 夹紧）。
+
+    { "agent": { "timeout_connect": 10, "timeout_read": 180 } }
+
+    为什么需要（2026-10-13 实测）：
+      · 重试预算只在**失败之后**检查，**单次请求挂起时根本不会触发重试** →
+        必须有连接期硬上限，否则"6 次重试/127s 预算"形同虚设。
+      · `connect=10s` 正是治 2026-10-12 那次 `APIConnectionError` 的药：
+        连接期挂起 10s 即中止，不再由 SDK 默认值（很长）拖住。
+      · `read` 语义**已实测**（见 docs/TASK_LOG.md）：
+          - 非流式：`read` 卡的是「等整段响应」→ 必须 ≥ 生成耗时
+            （实测长生成最长 33.9s；2600 token 中文 @15 tok/s 理论最坏 ≈173s → 180s 余量合适）
+          - 流式：`read` 卡的是「两次数据块之间的间隔」→ 长生成期间 token 持续到达，
+            实测最大块间隔仅 **0.42s**（read=5s 的长流式也能跑完 27.4s）→ **不会切断长生成**
+        → **同一条 read=180s 两条路径都安全**，无需为流式单独放宽。
+    """
+    ag = _load_settings().get("agent", {}) or {}
+
+    def _num(key: str, default: float, lo: float, hi: float) -> float:
+        try:
+            return max(lo, min(hi, float(ag.get(key, default))))
+        except (TypeError, ValueError):
+            return default
+
+    return {
+        "connect": _num("timeout_connect", DEFAULT_TIMEOUT_CONNECT, 1.0, 60.0),
+        "read": _num("timeout_read", DEFAULT_TIMEOUT_READ, 10.0, MAX_TIMEOUT_READ),
+        "write": 30.0,
+        "pool": 10.0,
+    }
+
+
 class LLMError(Exception):
     pass
 
@@ -76,7 +114,16 @@ class LLMClient:
         if not self.api_key or not self.api_base:
             raise LLMError("未配置 LLM api_key/api_base(可在 backend/configs/settings.json 设置)")
         from openai import OpenAI
-        self._client = OpenAI(api_key=self.api_key, base_url=self.api_base)
+        t = get_timeout_config()
+        self.timeout = t
+        try:
+            import httpx
+            _timeout = httpx.Timeout(connect=t["connect"], read=t["read"],
+                                     write=t["write"], pool=t["pool"])
+        except Exception:
+            # httpx 不可用时退化为总超时（openai 本身依赖 httpx，正常走不到这里）
+            _timeout = t["read"]
+        self._client = OpenAI(api_key=self.api_key, base_url=self.api_base, timeout=_timeout)
 
     def complete(self, system: str, user: str, max_tokens: int = 1600, temperature: float = 0.6) -> str:
         """单轮补全，返回文本。空结果(瞬时)重试一次。"""
