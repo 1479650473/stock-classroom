@@ -10,13 +10,74 @@
 from __future__ import annotations
 
 import json
+import logging
+import random
 import time
 from typing import Callable, Optional
 
-from ..agent.llm_client import LLMClient, LLMError
+from ..agent.llm_client import LLMClient, LLMError, get_retry_config
 from .tools import TOOL_SPECS, TraderTools
 
 MAX_ROUNDS = 10
+
+# ── LLM 重试退避（2026-10-12，参数见 backend/agent/llm_client.get_retry_config）──
+# 旧实现只有 3 次 × 1.5s ≈ 5 秒就放弃 → 实测 17 个交易日里 4 天（24%）三个交易员
+# 同时因 APIConnectionError 全灭。改为指数退避 + 抖动，且**只重试瞬时错误**：
+# 4xx 业务/参数错误立即失败，不白等 130 秒预算。
+BACKOFF_SCHEDULE_S = (2, 5, 15, 45, 60)   # 第 n 次失败后的等待秒数（各 ±20% 抖动）
+BACKOFF_JITTER = 0.2
+
+log = logging.getLogger("trader.agent")
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """瞬时错误才值得重试：APIConnectionError / APITimeoutError / RateLimitError。"""
+    try:
+        import openai
+    except Exception:
+        return False
+    kinds = tuple(t for t in (
+        getattr(openai, "APIConnectionError", None),
+        getattr(openai, "APITimeoutError", None),
+        getattr(openai, "RateLimitError", None),
+    ) if isinstance(t, type))
+    return bool(kinds) and isinstance(exc, kinds)
+
+
+def _backoff_seconds(attempt: int, budget_left: float) -> float:
+    """指数退避 + 抖动，且不超过剩余预算。"""
+    base = BACKOFF_SCHEDULE_S[min(attempt, len(BACKOFF_SCHEDULE_S) - 1)]
+    return max(0.0, min(base * random.uniform(1 - BACKOFF_JITTER, 1 + BACKOFF_JITTER), budget_left))
+
+
+def _retry_wait(exc: BaseException, attempt: int, *, label: str, elapsed: float,
+                attempts: int, budget: float, emit=None,
+                retry_prefix: str = "LLM 调用失败", allow: bool = True) -> float:
+    """判定是否还值得重试：可重试则返回应等待秒数，否则**抛出** exc。
+
+    - 不可重试（4xx 业务/参数错误）→ 立即抛，不消耗预算
+    - 已耗尽次数 / 预算 / allow=False（如流式已开始吐字）→ 抛
+    每次失败都写日志（attempt / 等待时长 / 异常类型），便于事后统计故障率。
+    elapsed 由调用方用 time.monotonic() 计算（不受系统时钟回拨影响）。
+    """
+    if not _is_retryable(exc):
+        log.info("LLM %s 失败且不可重试(%s)，立即放弃: %s",
+                 label, type(exc).__name__, str(exc)[:150])
+        raise exc
+    left = budget - elapsed
+    wait = _backoff_seconds(attempt, left)
+    if not allow or attempt + 1 >= attempts or left <= 1 or wait <= 0:
+        log.warning("LLM %s 重试耗尽(第 %d/%d 次, 剩余预算 %.0fs, %s): %s",
+                    label, attempt + 1, attempts, max(left, 0.0), type(exc).__name__, str(exc)[:150])
+        raise exc
+    log.warning("LLM %s 第 %d/%d 次失败(%s)，%.0fs 后重试: %s",
+                label, attempt + 1, attempts, type(exc).__name__, wait, str(exc)[:150])
+    if emit:
+        try:
+            emit(f"{retry_prefix}，重试 {attempt + 2}/{attempts}…（约 {wait:.0f}s 后）")
+        except Exception:
+            pass
+    return wait
 
 SYSTEM = (
     "你是一名独立管理自有资金的 A 股交易员（操盘手），今天要为自己的账户做一次决策。\n"
@@ -163,8 +224,10 @@ class TraderAgent:
                         event({"event": "agent_text", "delta": buf})
                         buf, last_flush = "", time.time()
 
+                _cfg = get_retry_config()
+                _t0 = time.monotonic()
                 last_err = None
-                for _attempt in range(3):
+                for _attempt in range(_cfg["max_attempts"]):
                     text, tcs, streamed = "", None, False
                     try:
                         for ev in llm.chat_with_tools_stream(messages, TOOL_SPECS, max_tokens=2600):
@@ -189,11 +252,15 @@ class TraderAgent:
                         last_err = e
                         _flush()
                         # 已经开始吐字就不重试（避免重复内容）；连接在开头就断的重试值得
-                        if streamed or _attempt >= 2:
-                            break
-                        event({"event": "warning",
-                               "message": f"LLM 连接中断，重试 {_attempt + 2}/3…"})
-                        time.sleep(1.5 * (_attempt + 1))
+                        try:
+                            _wait = _retry_wait(
+                                e, _attempt, label="stream", elapsed=time.monotonic() - _t0,
+                                attempts=_cfg["max_attempts"], budget=_cfg["budget_sec"],
+                                emit=lambda m: event({"event": "warning", "message": m}),
+                                retry_prefix="LLM 连接中断", allow=not streamed)
+                        except Exception:
+                            break          # 不可重试 / 预算或次数耗尽 / 已开始吐字
+                        time.sleep(_wait)
                 if last_err is not None:
                     return {"thinking": "".join(narration_parts).strip(), "reflection": "",
                             "notes": [], "trace": self.tools.log,
@@ -201,17 +268,23 @@ class TraderAgent:
                 result = {"tool_calls": tcs} if tcs else {"content": text}
             else:
                 result, last_err = None, None
-                for _attempt in range(3):
+                _cfg = get_retry_config()
+                _t0 = time.monotonic()
+                for _attempt in range(_cfg["max_attempts"]):
                     try:
                         result = llm.chat_with_tools(messages, TOOL_SPECS, max_tokens=2600)
                         last_err = None
                         break
                     except Exception as e:
                         last_err = e
-                        if _attempt >= 2:
-                            break
-                        emit(f"LLM 调用失败，重试 {_attempt + 2}/3…")
-                        time.sleep(1.5 * (_attempt + 1))
+                        try:
+                            _wait = _retry_wait(e, _attempt, label="chat",
+                                                elapsed=time.monotonic() - _t0,
+                                                attempts=_cfg["max_attempts"],
+                                                budget=_cfg["budget_sec"], emit=emit)
+                        except Exception:
+                            break          # 不可重试 / 预算或次数耗尽
+                        time.sleep(_wait)
                 if last_err is not None:
                     return {"thinking": "", "reflection": "", "notes": [],
                             "trace": self.tools.log, "error": f"LLM 调用失败: {str(last_err)[:200]}"}
@@ -245,11 +318,15 @@ class TraderAgent:
                 emit("提示操盘手提交决策…")
 
         if self.tools.decision is None:
-            # 强制结束（无 LLM 回复时也要留下记录），失败重试一次
+            # 强制结束（无 LLM 回复时也要留下记录）；连接类失败走同一套退避重试
             emit("强制操盘手给出最终决策…")
             spec = [t for t in TOOL_SPECS if t["function"]["name"] == "submit_decision"]
             from . import protocol as protocol_mod
-            for _try in range(3):
+            _cfg = get_retry_config()
+            _t0 = time.monotonic()
+            _fix_rounds = 0      # 校验不通过 → 回灌问题再来一轮（不占用连接重试次数）
+            _conn_fails = 0      # 连接类失败次数（受 max_attempts / 总预算约束）
+            while _fix_rounds < 3 and _conn_fails < _cfg["max_attempts"]:
                 try:
                     llm = self._client()
                     result = llm.chat_with_tools(
@@ -268,6 +345,7 @@ class TraderAgent:
                     problems = protocol_mod.validate_decision(self.tools.decision)
                     if not problems:
                         break
+                    _fix_rounds += 1
                     emit("决策未通过校验，追加一轮修正…")
                     event({"event": "warning", "message": "决策校验未通过：" + "；".join(problems)[:200]})
                     messages.append({"role": "user",
@@ -276,8 +354,20 @@ class TraderAgent:
                                                  + "\n请按上面的问题补齐后**重新调用 submit_decision**"
                                                    "（只提交修正后的完整内容）。")})
                 except Exception as e:
-                    emit(f"最终决策失败({_try + 1}/3): {str(e)[:120]}")
+                    try:
+                        _wait = _retry_wait(e, _conn_fails, label="submit_decision",
+                                            elapsed=time.monotonic() - _t0,
+                                            attempts=_cfg["max_attempts"],
+                                            budget=_cfg["budget_sec"])
+                    except Exception:
+                        emit(f"最终决策失败({_conn_fails + 1}/{_cfg['max_attempts']}): {str(e)[:120]}")
+                        event({"event": "warning", "message": f"最终决策调用失败：{str(e)[:150]}"})
+                        break
+                    _conn_fails += 1
+                    emit(f"最终决策调用失败({_conn_fails}/{_cfg['max_attempts']})，"
+                         f"约 {_wait:.0f}s 后重试: {str(e)[:120]}")
                     event({"event": "warning", "message": f"最终决策调用失败：{str(e)[:150]}"})
+                    time.sleep(_wait)
 
         narration = "".join(narration_parts).strip()
         if self.tools.decision is None:
