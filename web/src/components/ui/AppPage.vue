@@ -53,7 +53,7 @@ withDefaults(
   font-size: var(--fs-2xl);
   font-weight: 650;
   line-height: 1.25;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
   color: var(--text);
 }
 .app-page__subtitle {

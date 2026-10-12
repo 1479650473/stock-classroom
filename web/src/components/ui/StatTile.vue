@@ -24,6 +24,14 @@ withDefaults(
   }>(),
   { trend: 'neutral', hintTrend: 'neutral' },
 )
+
+function toneClass(trend: string, value: string | number): string {
+  if (trend === 'neutral') return ''
+  const n = typeof value === 'number'
+    ? value
+    : Number(String(value).replace(/,/g, '').replace('%', ''))
+  return Number.isFinite(n) && n === 0 ? '' : trend
+}
 </script>
 
 <template>
@@ -32,11 +40,11 @@ withDefaults(
       <Icon v-if="icon" :name="icon" :size="13" />
       <span>{{ label }}</span>
     </div>
-    <div class="stat-tile__value num" :class="trend !== 'neutral' ? trend : ''">
+    <div class="stat-tile__value num" :class="toneClass(trend, value)">
       <AnimatedNumber v-if="raw !== undefined" :value="raw" :format="format" />
       <template v-else>{{ value }}</template><span v-if="unit" class="stat-tile__unit">{{ unit }}</span>
     </div>
-    <div v-if="hint" class="stat-tile__hint" :class="hintTrend !== 'neutral' ? hintTrend : ''">
+    <div v-if="hint" class="stat-tile__hint" :class="toneClass(hintTrend, hint)">
       {{ hint }}
     </div>
   </div>

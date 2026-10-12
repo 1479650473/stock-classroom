@@ -73,7 +73,11 @@ const tableRows = computed(() => {
       <StatCard label="K线数据库" :value="fmtRows(stats.kline_rows)" icon="datacenter" :trend-value="fmtDate(stats.latest_date)" />
       <StatCard label="股票数量" :value="fmtRows(stats.stock_count)" icon="layers" :trend-value="stats.active_stocks + ' 活跃'" />
       <StatCard label="数据库大小" :value="stats.db_size" icon="database" />
-      <StatCard label="基本面" :value="b?.fundamental.exists ? fmtRows(b.fundamental.rows) : '—'" icon="database" />
+      <StatCard
+        label="基本面"
+        :value="b?.fundamental.exists ? (b.fundamental.rows != null ? fmtRows(b.fundamental.rows) : '已就绪') : '—'"
+        icon="database"
+      />
     </div>
 
     <!-- 各业务库分层 -->
