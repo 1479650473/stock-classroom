@@ -299,20 +299,124 @@ python "<shared_workspace>/tools/check_secrets.py" . --history
   kline(5/5548 部分)/board；而 market_data(全 0)/fundamental(轮换空跑)/minute(rc=0) **不误报**；
   真实 `notify.push` 落盘 1 条 `level=error`、title「每日自动化关键步骤失败：trader、etf、fund_flow」。
 
+## 2026-10-13 第二轮：PM 裁决 2~6 + T-DATA-02 / T-DATA-03
+
+> PM 验收通过 C-01~C-04 后下达 7 项裁决 + 2 项新任务。本段记录执行结果与实测数据。
+
+### 裁决 2：13 个探测脚本移出仓库（`scripts/scratch/` 约定）
+移到**仓库外** `E:\小光工作区备份\stock-classroom_scratch_archive\`（13 个：`_probe_*` 9 + `_test_*` 4）——
+既不销毁探测方法，也不让 `git status` 长期有噪声。**计数更正**：PM 记的是 10+4=14，实测 9+4=**13**
+（另 2 个未跟踪文件是 tushare 那对，按先前裁决保持原样等接线，不属 scratch）。
+
+**新约定**：将来一次性脚本放 `scripts/scratch/`，`.gitignore` 用**目录级**规则 `scripts/scratch/`。
+刻意**不用** `scripts/_*.py` —— 那会静默吞掉将来 `scripts/_utils.py` 之类"有引用"的模块。
+
+### 裁决 3：重试次数 5 → 6（算术自洽）
+上一版按 PM 给参实现，但 **5 次尝试只会等待 4 次 = 2+5+15+45 = 67s**，第 5 档 60s 用不到，
+"130s 预算"是永远够不到的上限。改 6 后等待 5 次 = **127s ≈ 预算 130s**。
+> 诚实说明：10-12 故障窗口 **≥3.5 分钟**，**67s 和 127s 都活不过那一次** ——
+> 真正管用的是"连接/读取分离超时"（见裁决 6），不是次数。
+
+### 裁决 4：三类补充告警（批准保留）+ 三条约束（已固化进代码注释与测试）
+- (a) 每步**最多一条**描述 → 整轮**合并为一条通知**（2 个异常步骤 → detail 恰好 1 个 `；`）
+- (b) 非关键命中一律 **warn 级、不影响 ok**；只有 critical + 整体失败才 `ok=false`
+- (c) `fundamental` 轮换空跑形状 `{updated:0, skipped:N, rotate:0}` 天然不命中 → 无周期性假告警；
+  **刻意不按步骤名拉白名单**，否则它真正的 `{'error': ...}` 会被一起藏掉（已加测试锁定该行为）
+
+### 裁决 5 / T-DATA-02：取数异常记前 3 条并入库
+`data_manager._record_fetch_error()`：每步最多记 **前 3 条**（code + 异常类型 + 消息）写 warning，
+**不逐条记**（5205 条会刷爆日志）；`update_etf_kline` / `update_fund_flow` 返回值新增 `err_samples`；
+`update_daily` 把它纳入步骤 key 白名单 → 落进 `data/update_marker.json`；`_step_bad` 命中时把
+**第一条样例**拼进告警文案（告警本身即可定位）。
+**复现验证**：把 `akshare_source` 的两个取数函数替换为必失败版本 → 5 只全失败只记 3 条样例
+（`510300|RuntimeError: Connection aborted...`）+ 3 条 warning。
+
+### T-DATA-03：非交易日"假 ok"已修
+早退分支原来自行写 `out['ok'] = True` 并直接落盘、**绕过 `_finalize_run`** → 那天补全失败也记成成功。
+现改为 `return _finalize_run(out, lg, t0)`；`_finalize_run` 把 `out['catchup']` 一并纳入判定；
+`CRITICAL_STEPS` 增加 `'catchup'`（触发面窄：只有 `run_catchup` 抛异常才写 `{'error':...}`，
+正常/部分补全不误报；但"停机后补全失败"意味着数据**静默陈旧**，必须 ok=false）。
+
+### 裁决 6：LLM 耗时分布实测（用于定 per-request timeout）
+
+**A. 整次决策耗时**（`ai_trader.db`，n=534，`status=done` 且有 `finished_at`）
+```
+p50=69.0s  p75=90.0s  p90=123.0s  p95=144.3s  p99=193.7s  max=751.0s  mean=77.4s
+```
+→ 这是**整次决策**（含 40~60s 上下文构建 + 多轮 LLM + 下单），**不能当单次请求耗时**。
+
+**B. 单次请求实测**（真实 18 工具集 + p90 体积上下文 25,173 字符 + `max_tokens=2600`）
+```
+短工具轮  n=5   p50=2.00s  p95=5.76s  max=6.45s  mean=3.03s
+流式      n=2   TTFT=1.77~1.91s，总 1.91~1.98s
+```
+**C. 长生成**（`complete`, `max_tokens=2600`）：18.17s / 33.91s —— 可见输出仅 330/418 字符，
+时间几乎全花在**思考 token** 上。
+
+**D. 缺口**：`trader_decision.trace` 只有 `tool`/`args`、**没有单次调用耗时** → 历史上无法从库归因，只能实测。
+
+**建议**（等 PM 定值）：用**连接/读取分离超时**而非单一总超时 ——
+"p95 的 2~3 倍"两个口径都不适用（套决策级 p95=144s → 290~430s 太松；套单请求 p95=5.8s → 12~17s
+会误杀 33.9s 的合法长生成）。正确做法：
+```python
+httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=10.0)
+```
+- **`connect=10s` 才是治 10-12 那味药**：连接期挂起 10s 即中止，不再由 SDK 默认值拖住
+  （"预算只在失败后检查、单次挂起就不会触发重试"正是靠它解决）
+- `read=180s`：覆盖理论最坏（2600 token 中文 @ ~15 tok/s ≈ 173s），是实测长生成 max 的 5.3 倍
+- 边界：6 次尝试最坏 = 6×10s + 127s ≈ **187s**，与"180s 硬上限"意图吻合
+- **流式需单独考虑**（首帧仅 ~1.9s、长生成期间持续有帧，不适合同一个总超时）
+
+### 🔴 新发现 1（P1）：强制提交决策的 `tool_choice` 在思考模式下**必然 400**
+实测同一 prompt/工具规格：
+```
+1) tool_choice={"type":"function","function":{"name":"submit_decision"}} -> 400 BadRequestError
+   "Thinking mode does not support this tool_choice"
+2) 不带 tool_choice（同 prompt/工具） -> OK 2.55s，模型自己调了 submit_decision
+3) tool_choice="auto"                -> OK 1.58s
+```
+而生产 `backend/trader/agent.py` 的**强制提交路径**正是写法 1；`settings.json` 的
+`model=deepseek-flash` 是思考模式 → **该兜底路径 100% 失败**，且异常被 `except Exception` 吞掉只
+`emit` 一行，外层只看到"操盘手未能给出正式决策"。与库里对得上：
+```
+error 统计：42 × 操盘手未能给出正式决策   ← 最高频
+           20 × Connection error
+            3 × 402 Insufficient Balance   ← 新发现 2
+            1 × WinError 10054
+含 tool_choice 的显式报错：0 条（被吞，从未落库）；status=done 但 thinking 为空：7/538
+```
+→ **修法（未授权，等 PM）**：删掉 `tool_choice=`（或改 `"auto"`），依靠 prompt 里已有的
+"请现在调用 submit_decision" + 单工具 spec —— 实测模型**会**调。
+
+### 🔴 新发现 2（P2）：DeepSeek 余额曾耗尽
+`3 × "Error code: 402 - Insufficient Balance"` —— 有 3 次决策因余额不足失败。当前余额正常
+（本轮实测调用全部成功）。**402 与网络故障性质不同，不应混在同一套重试策略里**，建议单列监控。
+
+### 本段验收（33 项断言全 PASS）
+不联网；`akshare_source` 取数函数替换为必失败版本以复现 10-12 现场；`notify`/`marker` 落临时目录，
+**不碰 data/**。提交：`6029129` / `5e803ab` / `50b3ef2`。
+
 ### 已知残留 / 待办
 
 - **T-ENC-01（P1）**：`trainer_engine` 空头账务符号修正 + `backend/api/blueprints/trainer.py:118`
   `side` 缺枚举白名单（现在传 `"foo"` 也会被当空头）+ 空头往返单元测试。
   正确写法：整段 if/else + `balance -= exit_commission` 可换成 `self.balance += order.pnl`。
-- **T-DATA-01**：交易日跑完缺少事后复核（audit 只在开跑前跑、catchup 只在非交易日起作用）。
-- **T-DATA-02**：`update_etf_kline`/`update_fund_flow` 的 per-item 异常被丢弃不记日志，故障不可事后归因。
-- **T-DATA-03**：`update_daily` 非交易日早退分支（line ~289）仍自行写 `ok=True` 并直接返回，
-  未走 `_finalize_run`，因此那天不产生 `bad_steps`/`critical_failed` 字段（补全失败也仍报 ok）。
+- **T-DATA-01（P1，待 PM 开工）**：交易日跑完缺事后复核。方案要点：在 `_finalize_run` 之前加一步
+  "复核关键表新鲜度"，直接复用 `catchup.DAILY_TABLES` + 已有 `audit()`，缺口就地把 `ok=false` 并进通知。
+  （直接影响 stock-ml 的 FF 过滤信号 —— `fund_flow_daily` 陈旧 1 个交易日。）
+- **T-LLM-01（新，P1）**：强制提交 `tool_choice` 400 + per-request 分离超时，建议合并一个 commit，等授权。
+- **T-LLM-02（新）**：`trader_decision.trace` 里补记单次 LLM 调用耗时（否则永远只能实测、无法从历史归因）。
+- **T-ODO-01**：`backend/tushare_source.py` + `scripts/rebuild_tushare.py` 接进 pipeline 并声明
+  `tushare` 依赖后再入库（当前保持 untracked）。
 - **T-ENV-01（已转 dev-env-health）**：`C:\Python314` 的 `import pydantic` 因用户级孤儿
   `pydantic_core 2.41.4` SystemError（系统级是配套的 2.41.5）→ 用该解释器起开发后端时所有 LLM 功能炸；
   **不影响管道**（管道走 `.update-venv`，依赖自洽，已实测真实 LLM 调用成功）。
-- **⛔ 未 push**：`origin/master` 停在 `30e428d`(2026-07-31)，本地领先 **315 个提交** ——
-  **"GitHub 上有备份"目前是假命题**。历史扫描已确认无密钥遗失，推送由 PM 统一决策。
+- **✅ 已修（本段）**：T-DATA-02（取数异常记前 3 条样例并入库）、T-DATA-03（非交易日早退分支走 `_finalize_run`）。
+- **⛔ 推送仍是阻断状态**：PM 已批准推送，门禁 `--history` 复跑 **files=383 commits=332 0 命中 EXIT=0**，
+  本地领先 316 提交、可快进；但 `git push origin master` 报
+  `Failed to connect to github.com port 443 after 21089 ms`（**github.com:443 被单独阻断**：
+  `ssh.github.com:443` 与 `api.github.com:443` 均通；本机无 SSH 私钥、无任何代理端口在监听）。
+  **远端 0 变更**，等 PM 选定通路（开代理 / 换机器 / 网关放通）。
 
 ---
 
