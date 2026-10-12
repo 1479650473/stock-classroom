@@ -36,15 +36,15 @@ def get_agent_config() -> dict:
 # 背景：原实现只有 3 次 × 1.5s ≈ 5 秒就放弃，对 DNS 抖动/连接重置毫无抵抗力。
 # 实测 17 个交易日里有 4 天（24%）三个 AI 交易员同时因 APIConnectionError 挂掉，
 # 而 update_daily 只把步骤异常写进 steps{}、不参与 ok 判定 → 故障潜伏了一个月没人发现。
-DEFAULT_RETRY_MAX_ATTEMPTS = 5      # 总尝试次数（含首次）
-DEFAULT_RETRY_BUDGET_SEC = 130      # 重试总预算（秒）≈ 2+5+15+45+60
+DEFAULT_RETRY_MAX_ATTEMPTS = 6      # 总尝试次数（含首次）→ 等 5 次：2+5+15+45+60 ≈ 127s
+DEFAULT_RETRY_BUDGET_SEC = 130      # 重试总预算（秒），与上面 127s 对齐
 MAX_RETRY_BUDGET_SEC = 180          # 硬上限，防止配置写飞把整轮管道拖死
 
 
 def get_retry_config() -> dict:
     """读 settings.json → agent.retry_max_attempts / agent.retry_budget_sec（带默认值 + 夹紧）。
 
-    { "agent": { "retry_max_attempts": 5, "retry_budget_sec": 130 } }
+    { "agent": { "retry_max_attempts": 6, "retry_budget_sec": 130 } }
     """
     ag = _load_settings().get("agent", {}) or {}
 
