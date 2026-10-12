@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Scheduler blueprint — AI 定时自主交易 (每日收盘后自动: 数据更新→策略进化→守护真卖).
 
-配置存 settings.json: { "auto_agent": { enabled, at:"15:30", use_llm, hp, idempotent_day } }
+配置存 settings.json: { "auto_agent": { enabled, at:"17:00", use_llm, hp, idempotent_day } }
 
 后台 daemon 线程每分钟检查: 交易日 且 到达 at 时刻 且 当日未跑过 → 提交 job 跑 run()。
 run() = ① update_daily.run() → ② run_optimize_loop(写入AI账户) → ③ run_day_guard(dry_run=False 真卖)
@@ -25,7 +25,7 @@ from .. import settings_store
 
 bp = Blueprint("scheduler", __name__, url_prefix="/api/scheduler")
 
-_DEFAULTS = {"enabled": False, "at": "15:30", "use_llm": True, "hp": 20,
+_DEFAULTS = {"enabled": False, "at": "17:00", "use_llm": True, "hp": 20,
              "last_run": None, "last_status": None, "last_finish": None}
 
 _thread = None
@@ -202,8 +202,8 @@ def _loop():
             if not cfg.get("enabled"):
                 continue
             now = datetime.now()
-            at = str(cfg.get("at", "15:30")).strip()
-            hh, mm = 15, 30
+            at = str(cfg.get("at", "17:00")).strip()
+            hh, mm = 17, 0
             try:
                 hh, mm = map(int, at.split(":"))
             except Exception:
@@ -227,6 +227,15 @@ def _ensure_thread():
     if _thread is None or not _thread.is_alive():
         _thread = threading.Thread(target=_loop, name="agent-scheduler", daemon=True)
         _thread.start()
+
+
+def ensure_started():
+    """Start the scheduler loop as soon as the Flask app is created.
+
+    Previously it only started when the settings page called /api/scheduler,
+    so an enabled schedule could be silently inactive for the whole session.
+    """
+    _ensure_thread()
 
 
 # ──────────────────────── 路由 ────────────────────────
