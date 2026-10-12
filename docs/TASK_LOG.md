@@ -645,6 +645,12 @@ python -c "import sys; sys.path.insert(0,'.'); from backend.trader import store 
 - **T-ODO-01（已下调优先级）**：`backend/tushare_source.py` + `scripts/rebuild_tushare.py`。
   董事长明确「**不依赖 tushare**」（"数据是多个聚到凑齐的"）→ **不必接线**，
   那对文件保持 untracked 即可。
+  > **相关风险一并降级（2026-10-13）**：此前把「Tushare token 失效 ⇒ 14.5 GB 市场数据失去
+  > 可再生性」当作高优先级风险——**该前提不成立**。市场数据是**多源聚合**所得
+  > （akshare 等免费源为主），**不以 tushare 为单点**；tushare 失效后的重拉是**时间成本**，
+  > 不是"不可再生"。已在 `shared_workspace/docs/` 的 `PM_CHARTER.md` / `WORK_STATUS.md`(T-SEC-01)
+  > 同步降级并注明原因（`BACKUP_AUDIT.md` / `PROJECT_REGISTRY.md` 原先已有降级记录）。
+  > **仍然成立**：`settings.json` 里的真实 API Key 不在任何备份里 → 建议密码管理器另存一份。
 - **T-ENV-01（已转 dev-env-health）**：`C:\Python314` 的 `import pydantic` 因用户级孤儿
   `pydantic_core 2.41.4` SystemError（系统级是配套的 2.41.5）→ 用该解释器起开发后端时所有 LLM 功能炸；
   **不影响管道**（管道走 `.update-venv`，依赖自洽）。
