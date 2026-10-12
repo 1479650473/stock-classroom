@@ -495,6 +495,76 @@ HTTPS 200、`ls-remote` 3.2s 成功；几分钟后又变 21s 超时。我那次�
    表现为提交主题开头多一个不可见 U+FEFF，已 `--amend` 修掉）。
 （dev-trade-automation 也踩到同一个坑，两条交叉印证已记入团队知识。）
 
+## 2026-10-13 「幽灵日期」事故与三道护栏（我造成的，已修）
+
+### 事故
+回补缺口时给 `limit_up` 写入了 **46 行 `20261013`**，与 `20261012` **逐字段完全相同**
+（PM 独立比对确认：代码集合相同、字段逐一相同）。当天是 10-13 **凌晨 01:0x，尚未开盘** ——
+那 46 行不可能是真实数据。
+
+**根因**：数据源对**未发生的交易日不报错，而是静默回落到最近交易日**。
+实测 `ak.stock_zt_pool_em(date='20261013')` → **46 行**，与 `date='20261012'` 逐字段相同。
+而 `cache_limit_up_from_akshare` 落库用的是**源返回行里的 `d["date"]`**（不是请求参数），
+于是 10-12 的数据被贴上了 10-13 的标签。
+
+**触发链（我的操作失误）**：我用 `run_catchup(today='2026-10-13')`，而当时 `audit` 的参考日
+就是"今天"(10-13) → 它去补一个**尚未发生**的交易日 → 源静默回落 → 幽灵入库。
+
+**为什么比"缺数据"危险**：
+1. 该表从此"看起来最新" → **把本该报出的缺口掩盖掉**（它缺 10-12 反而报不出来）
+2. 让"今天是不是交易日"出现两个答案（`kline`=10-12、`limit_up`=10-13）
+3. 会污染任何以 `MAX(date)` 判"当天是否更新"的审计结论
+
+**处置**：PM 先做了**带恢复表**的回退（`limit_up_pm_rollback_20261013`，46 行；一行可还原），
+audit 日志 `shared_workspace/tools/pm_rollback_limit_up.audit.log`。本提交补**护栏**。
+
+### 三道护栏（判据一律取自**权威表 kline**，不靠猜测）
+1. `catchup.authoritative_max_date()`：权威"最后已完成交易日" = kline 的 `MAX(date)`。
+   kline 由全市场日线增量写入、**只在真实交易日产生数据**，是唯一权威来源。
+2. **写入上界**：
+   - `data_manager.cache_limit_up_from_akshare()`：请求日期 > 权威日 → **直接拒绝 + warning**，
+     且**在调用数据源之前**返回（连网络都不碰）。
+   - `catchup.run_catchup()`：`miss` 按权威日过滤，被过滤的记入 `_skipped_future_dates` 并打日志（不静默）。
+3. **audit 参考日以 kline 为准**：`ref`/窗口不得晚于权威日，命中置 `ref_capped_to_kline`。
+   与既有"锚定 run 开始日"**互补** —— 那条防**跨零点**，这条防**未发生的交易日**。
+
+### 常规体检项
+`catchup.ghost_dates()`：扫 **11 张表**，任何 `MAX(date) > kline 权威日` 即命中；
+已接进 `_finalize_run` 跑后复核 → 命中即 `ok=false` + error 告警 + 明细落
+`marker.freshness_recheck.ghost_dates`。成本极低（11 次 MAX 查询），永久防住这类污染。
+
+**验收 18 项全 PASS**：故意喂未来日期被拒（返回 0 / 写 warning / **未触发数据源** / 库未改动 /
+库内幽灵行 0）；合法日期放行；`audit(ref)` 被夹到 2026-10-12 且表格缺口 `{}`；
+`run_catchup` 只尝试 10-12、未来日进 `_skipped_future_dates`；注入幽灵 → `ok=false` + 归因 + 明细落 marker。
+
+### margin `Length mismatch` 根因结论（PM 两次追问）
+**是 akshare 内部的 bug，不是我们的调用处。** 证据：
+```
+原始 akshare sse  20261009 -> rows=2000        （有数据就正常）
+原始 akshare sse  20261012 -> ValueError: Length mismatch: Expected axis has 0 elements,
+                              new values have 13 elements
+      ↑ 抛在 akshare 内部 .../akshare/stock_feature/stock_margin_sse.py
+原始 akshare szse 20261012 -> rows=0            （深交所也空，但不抛）
+我们的封装 ak_fetch_margin_day(20261012) -> 0 行（**未抛异常**）
+```
+→ 触发条件：上交所接口对该日返回 **0 行**，akshare 内部对 0 行 DF **硬赋 13 个列名** → ValueError。
+  我们那边早已 `if df is not None and not df.empty` 防御，异常只 `log.warning`。**无需修我们这边。**
+→ 但**它不是 `margin_daily` 长期落后的真因** —— 真因是**源侧无数据**：
+  **10-09 可取**（4108 行，已补上）；**10-12/10-13 取不到**（sse 空、szse 空）→
+  `update_margin_dates(['20261012'])` 返回 `{'ok':0,'rows':0}`。
+  属"两融数据尚未发布"，交由当天 17:00 run 的 ⑮ 步自行重试。
+
+### 顺带记录：双模块身份坑（写测试时踩到）
+`catchup.py` 用 `from data_manager import ...`（**顶层身份**），而 `backend.data_manager` 是
+**另一个模块对象**（同文件被加载两次，`is` → **False**）→
+`patch(backend.data_manager.X)` 对 catchup **无效**，必须 patch `sys.modules['data_manager']`。
+（这也意味着两处看到的模块级状态可能不是同一份，后续加缓存/限流器时要留意。）
+
+### 日期格式不一致 → **有意为之，非隐患**
+`lhb_daily='2026-10-12'`（带横线）vs `limit_up='20261013'`（无横线）：`_table_dates()` 的
+docstring 写明用 `_dash(start)` 作统一下界（对两种格式都是**超集**且能走索引），再用 `_d8()` 归一化比较
+→ **比较口径不受格式影响**，是刻意兼容历史两种格式。
+
 ### 已知残留 / 待办
 
 - **T-ENC-01（P1）**：`trainer_engine` 空头账务符号修正 + `backend/api/blueprints/trainer.py:118`
