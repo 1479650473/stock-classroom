@@ -128,5 +128,192 @@
 - **补抓 2018-2022 历史 K 线(已完成)**: `prefetch_kline_history.py`(新浪全历史, 并发+单写连接, 可恢复) 分三轮补齐——①2016-2021 全市场(5191只, kline_2018 1→3338只) ②2022 顶补 ③2022 早段缺口(跳过判据改为检查 2022-01~06)。现在 2018-2022 全有广度。
 - 后续候选：①把价值作为**多因子框架的防御层**做组合级权重(按景气期调价值tilt, 而非单票); ②value_tilt 硬裁决扩展到**组合级**(整个重平衡决策, 不只单票paper单); ③市场宽度信号(广度<50%→价值)做第三路开关验证。
 
+## 2026-10-12 未落库改动盘点 + 密钥门禁 + 管道健康（C-01 ~ C-04）
+
+> 背景：工作区积压 **44 项**未提交改动（29 修改 + 15 新增）。盘点时发现**已提交状态（HEAD）
+> 本身是坏的**，见下。
+
+### C-01 分类提交：44 项 → 13 个语义 commit
+
+`git log --oneline -13`（新起 13 个提交，**未 push**）：
+
+| # | commit | 内容 |
+|---|---|---|
+| 1 | `refactor(paths)` | 12 个模块统一走 `backend/api/paths.py` 的 DATA_DIR/KLINE_DB/PAPER_RUNS_PATH（frozen 安全） |
+| 2 | `fix(agent)` | kill-switch 真正吊销 token（原 `revoke_token_record(0)` 是空操作） |
+| 3 | `fix(pipeline)` | 手动触发改用 `update_daily.run()` 9 步闭环（原走旧单步入口，会漏 8 个步骤） |
+| 4 | `fix(scheduler)` | 调度线程开机即起 + 默认时刻 17:00 |
+| 5 | `fix(system)` | bootstrap 大表跳过 COUNT + 基本面表名 `fundamental_daily`→`fundamental` |
+| 6 | `fix(trainer)` | `current_bar` 漏调 `()` + 参数整数校验 + `engine.open_orders`→`engine.orders` |
+| 7 | `feat(trade)` | 下单参数校验 + 限价单保留挂单/顺带撮合 + 刷新价格对挂单撮合 |
+| 8 | `chore(version)` | 版本号统一 5.1.0（pyproject 一直停在 0.3.0） |
+| 9 | `feat(web)` | favicon + 零值不再染色 + 数据中心基本面"已就绪"兜底 |
+| 10 | `feat(scripts)` | fund_flow 补漏 `--stale` + intraday 探测器崩溃自愈 |
+| 11 | `fix(trainer-engine)` | 做空平仓余额方向（**如实收录，空头账务仍不正确**，见待办 T-ENC-01） |
+| 12 | `fix(trader)` | LLM 调用指数退避重试（本次授权实施） |
+| 13 | `fix(pipeline)` | 关键步骤失败应使 `ok=false` + 修复从未生效的通知通道（本次授权实施） |
+
+**⚠️ 关键发现：HEAD 本身起不来。** `backend/api/server.py:74` 调
+`scheduler_bp.ensure_started()`，但该函数**只存在于工作区、从未提交** →
+已提交状态 `create_app()` 会 `AttributeError`，**后端根本启动不了**。
+验证：`git grep -n ensure_started HEAD` 只命中调用点、无定义；工作区实跑
+`create_app()` → OK（177 条路由）。提交 #4 已补齐，HEAD 现在自洽。
+
+**保留未提交（15 项，均有意如此）**：
+- 13 个 `scripts/_probe_*.py` / `_test_*.py` → 判为**一次性探测脚本**，判据：
+  ① `.gitignore` 第 25-31 行**主动忽略**根目录 `/_*.py`、`/_test_*.py`（项目约定：下划线前缀=一次性）；
+  ② 已入库的同类长期工具**不带下划线**（`scripts/probe_fund_flow.py`、`probe_intraday.py`，AGENTS.md 还写进 Key Files）；
+  ③ 时间戳聚簇于 2026-09-26 06:11~09:16（约 3 小时），其中 `_probe_tdx/_tdx2/_tdx3` 22 分钟内连改 4 版；
+  ④ 全仓库（含 docs）grep **零引用**。
+  处置建议：**保持 untracked**（不移动 —— `archive/` 未被 .gitignore 忽略，移过去只是换个地方）。
+  **不采纳**在 `.gitignore` 加 `scripts/_*.py`：该规则会无差别吞掉将来 `scripts/_utils.py` 之类**有引用**的模块（静默漏提交）。
+- `backend/tushare_source.py` + `scripts/rebuild_tushare.py` → **待办**：未接进
+  `update_daily`/pipeline，且 `pyproject.toml` 未声明 `tushare` 依赖（公开仓库里放一个
+  import 即失败的模块是负资产）。**接好线 + 声明依赖后再入库**。
+  另注：`settings.example.json` 目前**没有** tushare token 槽位，接线时一并补模板。
+
+### C-02 密钥门禁（唯一真源：`<shared_workspace>/tools/check_secrets.py`）
+
+本仓不再自带实现（原 `scripts/check_secrets.py` 已删除，避免双份逻辑）。门禁命令：
+
+```bash
+# 提交前（pre-commit 可用）
+python "<shared_workspace>/tools/check_secrets.py" . --staged-only
+# 推送前（必跑）
+python "<shared_workspace>/tools/check_secrets.py" . --history
+```
+
+实测（2026-10-12，提交后复跑）：
+
+| 模式 | 结果 | 退出码 |
+|---|---|---|
+| 工作区/已跟踪 | 383 文件，**0 命中**（高危 0 / 中危 0 / 低危 0） | **0** |
+| `--staged-only` | 0 命中（暂存区为空） | **0** |
+| `--history` | 383 文件 + **331 个提交**，0 命中 | **0** |
+| 错误用法（`--staged-only --history`） | 互斥组拒绝 | **2** |
+
+- 门禁契约：**0=干净 / 1=有命中 / 2=工具故障或用法错误**（2 与 1 分开，避免"工具坏了"被误判成"发现密钥"）。
+- `backend/configs/settings.json` 仍**未被跟踪且被 .gitignore:44 忽略** ✓；
+  跟踪文件里无 `.env` / `*.pem` / `id_rsa` / `.npmrc` ✓。
+- 交叉核查（sec-backup-guard）：该文件在**全部 ref 的 26 个 blob 版本**里 `api_key` 均为空串或无该字段
+  → **历史上从未提交过真实 key**；现网真实 DeepSeek key(35) / Tushare token(56) 全 ref `-S` 搜索命中数 **0**。
+- 门禁自身修了一个真 bug：Windows GBK 控制台打印 emoji 会 `UnicodeEncodeError`，
+  把"干净"误判成退出码 1 → 已改 ASCII 标记 + `reconfigure(errors="replace")`
+  （本仓 383 文件 0 命中的结论即在此修复后才成立）。
+
+### C-03 数据资产 / 磁盘
+
+`data/` 合计 **14.16 GB**（15,203,041,280 bytes）：
+
+| 库 | 大小 | 关键表（行数 / 最新日期） |
+|---|---|---|
+| `minute.db` | **8.16 GB** | `kline_min5` **86,419,554 行**，max(dt)=**202610121500** ✓ |
+| `kline.db` | **5.14 GB** | `kline_daily` 视图 13,894,870 行；`kline_2026` max=**20261012** ✓；`fund_flow_daily` 13,703,473(max=20261009)；`chip_distribution` 1,361,900(2026-10-09)；`margin_daily` 6,680,484(max=20261008)；`limit_up` 1,549(20261009)；`north_flow` 2,765(2026-10-09)；`etf_daily` 1,471,750(max=20261008) |
+| `fundamental.db` | 0.70 GB | `fundamental` 7,444,903 行，max=**2026-10-12** ✓ |
+| `fund_arb.db` | 0.13 GB | `fund_nav` 849,794 / `lof_daily` 612,341，max=**2026-10-12** ✓ |
+| `ai_trader.db` | 0.03 GB | `trader_decision` 584 / `trader_memory` 2,101 / `trader_profile` 20 |
+| `macro.db` | ~0 | `regime` 192(max=20261012) / `series` 50,903(max=20261009) |
+| `stock_cache.db` | ~0 | `stock_spot` 5,534(max=**2026-10-09**) |
+| `sim_trade.db` | ~0 | `account_nav` 891(max=20261012) / `orders`、`trades` 各 333 |
+| `alpha.db` / `agent.db` | ~0 | 研究/网关产物（`agent_tokens` 59） |
+
+**空表**（AGENTS.md 已记 `daily_basic`/`share_float` 为空，实测确认）：
+`daily_basic` 0、`share_float` 0、`dividend` 0、`name_history` 0、`fund_flow` 0 —— 正是 tushare 想接的那几张。
+
+**磁盘**：`D:` 剩余 **44.13 GB**（PM 接手时 44.2 GB，几乎无变化）。`data/` 14.17 GB + `web/` 2.17 GB
+（`node_modules` + Rust `target`）+ `package/` 0.27 GB + `.update-venv/` 0.17 GB。
+`archive/` **仅 6 个文件 ~0.2 MB**（`pyqt5-legacy-2026-09-05.zip` 201 KB + 5 个 md）→ **无可清理大件**。
+→ 结论：**没有可安全清理的大体积垃圾**；真正的空间压力来自 `minute.db`(8.16 GB) 的每日增长
+（5min 线 1211 只，日增量约 12 个交易日 × 1211 × 48 根）。等 PM 决策是否降频/裁历史。
+
+### C-04 数据管道健康（2026-10-12 那次 run）
+
+`update_marker.json` 里 `ok: true`，但 `steps{}` 记录了 8 个异常步骤 —— **`ok` 与实际严重脱钩**。
+
+**① `ok: true` 为什么是误导 —— 两个独立原因**
+1. 顶层 `ok` 只由"整轮有没有异常抛到最外层"决定；步骤内部异常被 `try/except` 吞掉后
+   只写进 `steps{}`、**从不参与 ok 判定**。
+2. 更严重：`update_daily` 的**通知通道从来没发出去过**。它写的是
+   `from notify import push`，而本脚本把 ROOT 和 ROOT/backend 都塞进 sys.path →
+   `notify.py` 被当**顶层模块**导入，其内部相对导入 `from .api.paths import DATA_DIR` 直接
+   `ImportError: attempted relative import with no known parent package`，
+   又被 `except Exception: pass` **静默吞掉**。全仓库仅此一处写错
+   （`jobman.py` 用的是正确的 `from backend import notify`）。
+   → **即使 ok 曾经为 false，也不会有任何告警**。已修（commit #13，并改为写 warning 日志）。
+
+**② AI 操盘手 3/3 全失败 —— 根因：运行时 LLM 连接失败（非 Key/账号/代码）**
+- 日志：三个交易员逐字同构 `LLM 调用失败: Connection error.`（19:59:08 ~ 20:02:31），
+  同一次 run 里第 4 个独立调用方 `stock_deep` 也是 `Connection error.` → 4 个调用方同时段全灭。
+- Key 存在且格式正常（`sk-`+32，len 35）；用**管道自己的解释器**（`.update-venv`）实跑同一条
+  `LLMClient().complete()` → **成功（6.47s）** → 排除 Key/账号/DB/代码。
+- 旧重试只有 3 次 × 1.5s ≈ **5 秒**，对 DNS 抖动/连接重置无抵抗力。
+- **慢性病，不是偶发**：17 个交易日里 **4 天（24%）3/3 全灭**（10-12 / 09-22 / 09-14 / 09-11），
+  另有 4 天 1/3 失败。
+- 已修（commit #12）：默认 5 次尝试 / 130s 预算 / 只重试 APIConnection+APITimeout+RateLimit。
+
+**③ fund_flow 5205 + etf 1624 全失败 —— 瞬时源阻断，非接口变更**
+- 跨 run 时间线（读 `data/logs/update_daily_*.log`）：**09-21~10-09 期间这两步天天 0 失败**
+  （etf 更新 1624/1624；资金流更新 5205/5205），**只有 10-12 全灭**（etf 另在 09-14 全灭一次）。
+  → **不是慢性、不是接口变更**。
+- `update_daily` 日志中**没有**"时间预算用尽"告警 → 不是预算中止路径。
+- etf 的 1624 次失败全部发生在**同一秒内**（`20:03:07` 的 `[50/1624]`…`[250/1624]`，elapsed 2.2s）
+  → 每个 `_fetch` **瞬时抛异常**；fund_flow 约 1.5s/只。
+- 现在实测两个取数函数**都正常**：`ak_fetch_etf_kline('510300')` → 3491 行/2.83s；
+  `ak_fetch_fund_flow('600519')` → 4026 行/3.50s。
+- 同一次 run 里 **新浪(日线)✅ / baostock(分钟)✅ / 同花顺(板块)✅ / fund_arb✅**，
+  而 **东财系全挂**（fund_flow、lhb_margin `datacenter-web.eastmoney.com` HTTPS 失败、
+  market_data 的 north_flow/lhb/limit_up 全 0）→ **判定：10-12 晚间东财系被阻断/不可达**。
+- ⚠️ **根因无法事后取证**：`data_manager.update_etf_kline/update_fund_flow` 的
+  `except Exception: rows = []` **丢弃异常、不写日志**，只把计数 +1。
+  → 建议（未授权，待 PM 定）：把前 N 个异常的类型+消息记一次日志，否则下次仍只能猜到"源挂了"。
+
+**④ audit 与本次 run 看似矛盾 —— 是"运行前审计"落进了运行后的 marker**
+- `catchup.audit()` 在 `_run_inner` **开头**执行，读的是**上一次** run 的 marker 取 `last_run`
+  （`last_run_info` 用 `finished`/`started`），并对窗口最后一个交易日 `ref=2026-10-12` 判缺失。
+- 所以 `last_run=2026-10-11T17:01:36` + `ref=2026-10-12` **不矛盾**：前者是"上一轮"，后者是"本轮参考日"。
+- 它报的 5 张表缺 10-12，是 **17:00 开跑前**的真实状态；跑完后 market_daily/board_daily 已补上
+  10-12 ✓，而 limit_up(仍 20261009)、margin_daily(仍 20261008)、industry_pe(仍 20261009)、
+  lhb_daily(仍 2026-10-09) **仍陈旧**。
+- **真正的缺口**：`run_catchup()` 只在**非交易日**执行（`if today not in cal`）；
+  交易日跑完**没有任何事后复核**，audit 的 missing 清单既没被补、也没被复检。
+  → 即"补全审计在交易日只用于放大拉取窗口，不驱动补全"。
+
+**⑤ 数据新鲜度结论（下游可用性）**
+
+| 状态 | 数据 |
+|---|---|
+| 🟢 **可信、当日(2026-10-12)** | `kline_2026`/`kline_daily`、`kline_min5`(15:00)、`kline_weekly/monthly`、`fundamental`、`board_daily`、`market_daily`、`fund_arb`(lof_daily/fund_nav)、`regime`、`account_nav`、`paper_portfolio`(v1/rank2) |
+| 🟡 **陈旧 1 交易日**（2026-10-09） | `fund_flow_daily`(← **stock-ml 的 FF 过滤信号读它**)、`limit_up`、`lhb_daily`、`industry_pe`、`north_flow`、`high_low`、`chip_distribution`、`sector_board`/`board_list`、`stock_spot`、`macro.series` |
+| 🔴 **陈旧 ≥2 交易日** | `margin_daily`(2026-10-08)、`etf_daily`(20261008) |
+| ⚫ **空表** | `daily_basic`、`share_float`、`dividend`、`name_history`、`fund_flow` |
+
+**⑥ 本次已授权的两处修复（各自独立 commit + 自测）**
+- commit #12 `fix(trader)` 指数退避重试：**44 项断言全通过**（不联网/假时钟/注入假 LLM）。
+  真实 `decide()` 非流式路径（= 10-12 生产实际走的路径）：失败 2 次 → 第 3 次成功，退避实测
+  `[2.12, 4.61]s`；全失败 → 恰好 5 次调用、退避 `[2.25, 4.11, 16.56, 52.09]s`；
+  4xx → 只调 1 次零等待；流式已吐字 → 不重试；小预算 6s → 3 次即收手且累计恰好 6.00s。
+  **算术提示**：5 次尝试只等 4 次 = 2+5+15+45 = **67s**（130s 是上限，第 5 档 60s 需 max_attempts≥6）。
+- commit #13 `fix(pipeline)` 关键步骤 `ok=false` + 修通知通道：**44 项断言全通过**。
+  **回归**：喂入 10-12 的**真实 steps** → ok 由 true 变 **false**，
+  `critical_failed=[trader, etf, fund_flow]`，另识别出 lhb_margin/stock_deep/industry_pe/
+  kline(5/5548 部分)/board；而 market_data(全 0)/fundamental(轮换空跑)/minute(rc=0) **不误报**；
+  真实 `notify.push` 落盘 1 条 `level=error`、title「每日自动化关键步骤失败：trader、etf、fund_flow」。
+
+### 已知残留 / 待办
+
+- **T-ENC-01（P1）**：`trainer_engine` 空头账务符号修正 + `backend/api/blueprints/trainer.py:118`
+  `side` 缺枚举白名单（现在传 `"foo"` 也会被当空头）+ 空头往返单元测试。
+  正确写法：整段 if/else + `balance -= exit_commission` 可换成 `self.balance += order.pnl`。
+- **T-DATA-01**：交易日跑完缺少事后复核（audit 只在开跑前跑、catchup 只在非交易日起作用）。
+- **T-DATA-02**：`update_etf_kline`/`update_fund_flow` 的 per-item 异常被丢弃不记日志，故障不可事后归因。
+- **T-DATA-03**：`update_daily` 非交易日早退分支（line ~289）仍自行写 `ok=True` 并直接返回，
+  未走 `_finalize_run`，因此那天不产生 `bad_steps`/`critical_failed` 字段（补全失败也仍报 ok）。
+- **T-ENV-01（已转 dev-env-health）**：`C:\Python314` 的 `import pydantic` 因用户级孤儿
+  `pydantic_core 2.41.4` SystemError（系统级是配套的 2.41.5）→ 用该解释器起开发后端时所有 LLM 功能炸；
+  **不影响管道**（管道走 `.update-venv`，依赖自洽，已实测真实 LLM 调用成功）。
+- **⛔ 未 push**：`origin/master` 停在 `30e428d`(2026-07-31)，本地领先 **315 个提交** ——
+  **"GitHub 上有备份"目前是假命题**。历史扫描已确认无密钥遗失，推送由 PM 统一决策。
+
 ---
+
 *说明见 [RESEARCH_AGENT.md](RESEARCH_AGENT.md)。*
