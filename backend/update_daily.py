@@ -129,8 +129,11 @@ def refresh_fundamentals(codes, workers=16, progress=None, budget_secs=1800):
 # 5205 只资金流全失败 + 1624 只 ETF 全失败」仍被打成 ok=true，故障潜伏一个多月。
 # 另一方面原通知只看 dict 的 'error' 单数键，漏掉了 'errors'>0(fund_flow/etf)
 # 与 trader 的 list[{'status':'error'}]，所以连告警都没发。
-CRITICAL_STEPS = ('kline', 'fund_flow', 'etf', 'trader')
+CRITICAL_STEPS = ('kline', 'fund_flow', 'etf', 'trader', 'catchup')
 # 特意不含 market_data：north_flow 等指标常年为 0，设成 critical 会天天 ok=false（狼来了）
+# catchup 的触发面很窄：只有 run_catchup 抛异常时才写成 {'error': ...}（整体失败）；
+# 正常/部分补全的结果字典没有 'error' 键 → 不误报。但"停机后补全失败"意味着数据会
+# **静默陈旧**，正是 T-DATA-01 那类问题，必须 ok=false。
 
 
 def _step_bad(key, v):
@@ -141,6 +144,14 @@ def _step_bad(key, v):
     所以「不是 'ok'/'no_enabled' 的字符串」一律算异常 —— 这样才盖得住
       lhb_margin 的 'HTTPSConnectionPool... Max retries exceeded'（不含 error 字样）
       和 chip/market_daily 的 'rc=1 ...'（同样不含 error 字样）。
+
+    设计约束（PM 2026-10-12 裁决）：
+      (a) **每步最多返回一条描述** → 通知里"一步一行"，不刷屏；
+      (b) 返回 `total_fail=False` 的命中一律是 **warn 级、不影响 ok**（只有
+          `total_fail=True` 且 key ∈ CRITICAL_STEPS 才会把 ok 置 false）；
+      (c) `fundamental` 的轮换空跑形状 `{updated:0, skipped:N, rotate:0}` 里没有
+          errors/rows/error/rc 键 → 天然不命中，**不会周期性假告警**。这里刻意**不**
+          按步骤名拉白名单：那样会把 fundamental 真正的 `{'error': ...}` 也一起藏掉。
     """
     if isinstance(v, str):
         if v in ('ok', 'no_enabled'):
@@ -156,7 +167,11 @@ def _step_bad(key, v):
         if isinstance(errs, int) and errs > 0:
             total, updated = v.get('total'), v.get('updated')
             msg = '%d 只失败%s, 成功 %s' % (errs, '/%d' % total if total else '', updated)
-            # 只有"有总量且成功数为 0"才算整体失败；部分失败只告警
+            # T-DATA-02：带上第一条异常样例，让告警本身就能定位（不再只能猜"源挂了"）
+            samples = v.get('err_samples')
+            if isinstance(samples, list) and samples:
+                msg += ' | 样例: %s' % str(samples[0])[:110]
+            # 只有"有总量且成功数为 0"才算整体失败；部分失败只告警（warn，不影响 ok）
             if isinstance(total, int) and total > 0 and not updated:
                 return msg, True
             return msg, False
@@ -189,7 +204,12 @@ def _finalize_run(out, lg, t0):
     out['ok'] = True
     bad, critical = {}, []
     try:
-        for k, v in (out.get('steps') or {}).items():
+        # 把 catchup 也纳入健康判定（T-DATA-03）：非交易日的早退分支只跑补全，
+        # 若补全抛错会写 out['catchup'] = {'error': ...}，必须能被识别。
+        candidates = dict(out.get('steps') or {})
+        if out.get('catchup') is not None:
+            candidates['catchup'] = out['catchup']
+        for k, v in candidates.items():
             msg, total_fail = _step_bad(k, v)
             if msg:
                 bad[k] = msg
@@ -291,12 +311,10 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
                 out['catchup'] = {'error': str(e)[:150]}
                 lg.warning('  非交易日补全失败: %s', str(e)[:100])
         out['skipped'] = True
-        out['finished'] = datetime.now().isoformat(timespec='seconds')
-        out['elapsed'] = round(time.time() - t0, 1)
-        out['ok'] = True
-        with open(MARKER, 'w', encoding='utf-8') as f:
-            json.dump(out, f, ensure_ascii=False, indent=2)
-        return out
+        # T-DATA-03（2026-10-12）：原来这里自行写 out['ok']=True 并直接落盘，
+        # **绕过了 _finalize_run** → 非交易日的补全失败同样会被记成成功
+        # （与授权 2 修的是同一类"假 ok"）。改走同一套收尾逻辑。
+        return _finalize_run(out, lg, t0)
 
     from backend.strategy.factor_selector import build_wide_pool
     pool = build_wide_pool() or []
@@ -608,7 +626,7 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
             init_etf_tables()
             _n_list = cache_etf_list_from_akshare()
             _rk = update_etf_kline(workers=10, progress=lambda m, p=None: lg.info('  ETF ' + str(m)))
-            out['steps']['etf'] = {'list': _n_list, **{k: _rk.get(k) for k in ('updated', 'errors', 'rows_added', 'total', 'elapsed')}}
+            out['steps']['etf'] = {'list': _n_list, **{k: _rk.get(k) for k in ('updated', 'errors', 'rows_added', 'total', 'elapsed', 'err_samples')}}
             lg.info('  ETF: 列表%d 更新%s 新增%d行 失败%d', _n_list, _rk.get('updated'), _rk.get('rows_added'), _rk.get('errors'))
         except Exception as e:
             out['steps']['etf'] = str(e)[:120]
@@ -618,7 +636,7 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
             from data_manager import init_fund_flow_tables, update_fund_flow
             init_fund_flow_tables()
             _fk = update_fund_flow(workers=10, progress=lambda m, p=None: lg.info('  资金流 ' + str(m)))
-            out['steps']['fund_flow'] = {k: _fk.get(k) for k in ('updated', 'errors', 'rows_added', 'total', 'elapsed')}
+            out['steps']['fund_flow'] = {k: _fk.get(k) for k in ('updated', 'errors', 'rows_added', 'total', 'elapsed', 'err_samples')}
             lg.info('  资金流: 更新%s 新增%d行 失败%d', _fk.get('updated'), _fk.get('rows_added'), _fk.get('errors'))
         except Exception as e:
             out['steps']['fund_flow'] = str(e)[:120]

@@ -1036,6 +1036,26 @@ def get_etf_compare(codes: List[str], days: int = 250) -> dict:
     return {"dates": dates or [], "series": series}
 
 
+_ERR_SAMPLE_MAX = 3          # T-DATA-02: 每步最多记 3 条取数异常样例
+
+
+def _record_fetch_error(samples, code, exc, label):
+    """记录**前 N 条**取数异常（T-DATA-02，2026-10-12）。
+
+    为什么需要：2026-10-12 东财系瞬时阻断时 etf 1624/1624、资金流 5205/5205 全失败，
+    但原来的 `except Exception: rows = []` 把异常**丢弃且不写日志**，只把计数 +1 →
+    事后完全无法归因（只能靠"同一晚新浪/baostock/同花顺都正常"旁证推断是源挂了）。
+
+    只记前 _ERR_SAMPLE_MAX 条（5205 条全记会刷爆日志），样例同时带进返回值，
+    由 update_daily 落进 data/update_marker.json，可事后取证。
+    """
+    if len(samples) < _ERR_SAMPLE_MAX:
+        msg = "%s: %s" % (type(exc).__name__, str(exc)[:160])
+        samples.append("%s|%s" % (code, msg))
+        log.warning("%s 取数失败(样例 %d/%d) code=%s: %s",
+                    label, len(samples), _ERR_SAMPLE_MAX, code, msg)
+
+
 def update_etf_kline(codes=None, workers: int = 10, progress=None, budget_secs: int = 1200) -> dict:
     """ETF K线增量更新. codes=None 时自动选落后(etf_daily 最新 < 日K最新交易日)的 ETF.
 
@@ -1055,6 +1075,7 @@ def update_etf_kline(codes=None, workers: int = 10, progress=None, budget_secs: 
         codes = [str(r[0]) for r in rows if str(r[1]) < str(latest) or str(r[1]) == today]
     total = len(codes)
     updated = skipped = errors = rows_added = 0
+    err_samples = []
     batch = []
     t0 = time.time()
     deadline = t0 + budget_secs
@@ -1075,8 +1096,9 @@ def update_etf_kline(codes=None, workers: int = 10, progress=None, budget_secs: 
                 break
             try:
                 rows, _ = f.result(timeout=60)
-            except Exception:
+            except Exception as e:
                 rows = []
+                _record_fetch_error(err_samples, c, e, "etf")
             if rows:
                 updated += 1
                 batch.extend(rows)
@@ -1092,7 +1114,8 @@ def update_etf_kline(codes=None, workers: int = 10, progress=None, budget_secs: 
         conn.close()
         rows_added = ins
     return {"updated": updated, "skipped": skipped, "errors": errors,
-            "rows_added": rows_added, "total": total, "elapsed": round(time.time() - t0, 1)}
+            "rows_added": rows_added, "total": total, "err_samples": err_samples,
+            "elapsed": round(time.time() - t0, 1)}
 
 
 def _bulk_insert_etf(conn, rows):
@@ -1160,6 +1183,7 @@ def update_fund_flow(codes=None, workers: int = 10, progress=None, budget_secs: 
         codes = [str(r[0]) for r in rows if str(r[1]) < str(latest) or str(r[1]) == today]
     total = len(codes)
     updated = errors = rows_added = 0
+    err_samples = []
     batch = []
     t0 = time.time()
 
@@ -1186,8 +1210,9 @@ def update_fund_flow(codes=None, workers: int = 10, progress=None, budget_secs: 
                 break
             try:
                 rows, _ = f.result(timeout=70)
-            except Exception:
+            except Exception as e:
                 rows = []
+                _record_fetch_error(err_samples, c, e, "fund_flow")
             if rows:
                 updated += 1
                 batch.extend(rows)
@@ -1207,7 +1232,8 @@ def update_fund_flow(codes=None, workers: int = 10, progress=None, budget_secs: 
         conn.close()
         rows_added = len(batch)
     return {"updated": updated, "errors": errors, "rows_added": rows_added,
-            "total": total, "elapsed": round(time.time() - t0, 1)}
+            "total": total, "err_samples": err_samples,
+            "elapsed": round(time.time() - t0, 1)}
 
 
 # ════════════════════════════════════════════════════════
