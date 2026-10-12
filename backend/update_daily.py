@@ -230,14 +230,33 @@ def _finalize_run(out, lg, t0):
             _a = _cuf.audit(_cal, _today, MARKER)
             _miss = {t: (v.get('missing') or [])
                      for t, v in (_a.get('tables') or {}).items() if v.get('missing')}
+            # 幽灵日期体检（T-DATA-01b，2026-10-13）：任何表的 MAX(date) 不得 > kline 的
+            # MAX(date)。起因：回补把 46 行 20261013 写进了 limit_up（数据源对未发生的
+            # 交易日静默回落到最近交易日），那张表随后"看起来最新" → **掩盖了它缺 10-12 的事实**。
+            # 成本极低（11 次 MAX 查询），作为常规体检项常驻。
+            _ghosts = {}
+            try:
+                _ghosts = _cuf.ghost_dates()
+            except Exception as _ge:
+                lg.warning('  幽灵日期体检失败(不影响其余判定): %s', str(_ge)[:100])
             out['freshness_recheck'] = {
                 'ref': _a.get('ref'),
+                'ref_capped_to_kline': _a.get('ref_capped_to_kline'),
                 'stale_tables': _miss,
+                'ghost_dates': _ghosts,
                 'kline_missing': (_a.get('kline') or {}).get('missing') or [],
                 'summary': _cuf.audit_text(_a),
             }
-            _fresh = 'ok' if not _miss else ('关键表陈旧: ' + '; '.join(
-                '%s 缺 %s' % (t, ','.join(v[:3])) for t, v in sorted(_miss.items())))
+            _parts = []
+            if _miss:
+                _parts.append('关键表陈旧: ' + '; '.join(
+                    '%s 缺 %s' % (t, ','.join(v[:3])) for t, v in sorted(_miss.items())))
+            if _ghosts:
+                _parts.append('幽灵日期(>kline最后交易日): ' + '; '.join(
+                    '%s MAX=%s(%d行)' % (t, v['max'], v['rows']) for t, v in sorted(_ghosts.items())))
+            if _parts:
+                _fresh = ' | '.join(_parts)
+                lg.warning('  跑后复核：%s', _fresh[:240])
             if _miss:
                 lg.warning('  跑后新鲜度复核：%d 张关键表仍陈旧 -> %s', len(_miss), _fresh[:200])
     except Exception as e:

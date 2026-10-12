@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import statistics
@@ -151,6 +152,73 @@ def minute_status(freq: int = 5) -> dict:
             "lag": bool(mmax and kmax and mmax < kmax)}
 
 
+def authoritative_max_date() -> str:
+    """权威的「最后已完成交易日」= kline 的最大日期（YYYYMMDD）。空串=取不到。
+
+    为什么以 kline 为准（2026-10-13 实测）：数据源对**未发生的交易日不报错**，而是
+    **静默回落到最近交易日** —— `ak.stock_zt_pool_em(date='20261013')` 返回 46 行，
+    与 `date='20261012'` **逐字段完全相同**。若照单写入，就把 10-12 的数据贴上了
+    10-13 的标签（"幽灵日期"），而它会**骗过新鲜度审计**（那张表"看起来最新"）。
+    kline 由全市场日线增量写入、只在真实交易日产生数据 → 它是唯一权威来源。
+
+    用途：① 给补全写入加"不得晚于最后已完成交易日"的上界；
+          ② 让 audit 的参考日以它为准（防止幽灵日期掩盖缺口）。
+    """
+    conn = get_kline_db()
+    try:
+        r = None
+        try:
+            r = conn.execute(
+                f"SELECT MAX(date) FROM kline_{time.strftime('%Y')}").fetchone()
+        except Exception:
+            r = None
+        if not r or not r[0]:
+            r = conn.execute("SELECT MAX(date) FROM kline_daily").fetchone()
+        return _d8(r[0]) if r and r[0] else ""
+    except Exception:
+        return ""
+    finally:
+        conn.close()
+
+
+GHOST_SCAN_TABLES = [
+    ("limit_up", "date"), ("lhb_daily", "trade_date"), ("margin_daily", "date"),
+    ("industry_pe", "date"), ("market_daily", "date"), ("board_daily", "date"),
+    ("fund_flow_daily", "date"), ("north_flow", "date"), ("high_low", "date"),
+    ("chip_distribution", "date"), ("etf_daily", "date"),
+]
+
+
+def ghost_dates(auth: str = "") -> dict:
+    """扫描「幽灵日期」：任何表的 `MAX(date) > 权威最后交易日(kline)` 即命中。
+
+    返回 {table: {"max", "auth", "rows"}}；**空 dict = 干净**。
+    为什么要做成常规体检项（2026-10-13）：数据源对**未发生的交易日不报错、静默回落** ——
+    实测 `ak.stock_zt_pool_em('20261013')` 返回 46 行，与 `'20261012'` **逐字段相同**。
+    这类行写进库后，该表就"看起来最新"，**会把本该报出的缺口掩盖掉**（本次就是这样：
+    `limit_up` 被写成 20261013，于是它缺 10-12 反而报不出来）。成本极低，值得常驻。
+    """
+    auth = auth or authoritative_max_date()
+    if not auth:
+        return {}
+    conn = get_kline_db()
+    bad = {}
+    try:
+        for t, c in GHOST_SCAN_TABLES:
+            try:
+                mx = conn.execute(f"SELECT MAX({c}) FROM {t}").fetchone()
+                mxd = _d8(mx[0]) if mx and mx[0] else ""
+                if mxd and mxd > auth:
+                    n = conn.execute(f"SELECT COUNT(*) FROM {t} WHERE {c}=?",
+                                     (mx[0],)).fetchone()[0]
+                    bad[t] = {"max": mxd, "auth": auth, "rows": int(n)}
+            except Exception:
+                continue
+    finally:
+        conn.close()
+    return bad
+
+
 def audit(cal, today: str, marker_path: str, lookback: int = LOOKBACK) -> dict:
     """完整性审计. 返回 {ref, window, gap_days, kline:{...}, tables:{...}, soft:{...}, missing_total}."""
     iso, gap_days = last_run_info(marker_path)
@@ -159,6 +227,19 @@ def audit(cal, today: str, marker_path: str, lookback: int = LOOKBACK) -> dict:
     out = {"last_run": iso, "gap_days": gap_days, "ref": ref,
            "window": [window[0], window[-1]] if window else [], "n_window": len(window),
            "kline": {}, "tables": {}, "soft": {}, "missing_total": 0}
+
+    # ── 参考日上界 = 权威最后交易日(kline)，防"幽灵日期"掩盖缺口（2026-10-13）──
+    # 起因：回补时向 limit_up 写入了 46 行 20261013（逐字段等于 10-12），因为数据源
+    # 对未发生的交易日静默回落。那张表随后在审计里"看起来最新" → 本该报的缺口被掩盖。
+    # 所以参考日一律不得晚于 kline 的最后交易日（kline 只在真实交易日产生数据）。
+    _auth = authoritative_max_date()
+    if _auth and ref and _d8(ref) > _auth:
+        window = [d for d in window if _d8(d) <= _auth] or window
+        ref = window[-1] if window else today
+        out["ref"] = ref
+        out["window"] = [window[0], window[-1]] if window else []
+        out["n_window"] = len(window)
+        out["ref_capped_to_kline"] = _auth
 
     # ---- K线: 残缺日 + 整日缺失 ----
     cov = _kline_coverage(window)
@@ -276,8 +357,17 @@ def run_catchup(a: dict, cal, today: str, lg=None, kline=True) -> dict:
                 _log(f"K线补全失败: {str(e)[:80]}")
 
     # ② 日频表逐日补
+    # 上界护栏（2026-10-13）：只补 ≤ 权威最后交易日(kline) 的日期。
+    # 若请求一个"尚未发生"的交易日，数据源会**静默回落到最近交易日**并照单写入 →
+    # 产生"幽灵日期"（实测：limit_up 被写入 46 行 20261013，逐字段等于 10-12）。
+    _auth = authoritative_max_date()
+    _skipped_future = {}
     for table, v in (a.get("tables") or {}).items():
-        miss = (v.get("missing") or [])[:MAX_FILL_DATES]
+        _all_miss = list(v.get("missing") or [])
+        miss = [d for d in _all_miss if (not _auth or _d8(d) <= _auth)][:MAX_FILL_DATES]
+        if len(miss) < len(_all_miss):
+            _skipped_future[table] = sorted(_d8(d) for d in _all_miss
+                                            if _auth and _d8(d) > _auth)
         if not miss:
             continue
         try:
@@ -322,6 +412,11 @@ def run_catchup(a: dict, cal, today: str, lg=None, kline=True) -> dict:
         except Exception as e:
             res[table] = {"error": str(e)[:100]}
             _log(f"{table} 补全失败: {str(e)[:80]}")
+
+    if _skipped_future:
+        res["_skipped_future_dates"] = _skipped_future
+        _log(f"⚠️ 跳过**未来交易日**（> kline 权威最后交易日 {_auth}）: "
+             f"{json.dumps(_skipped_future, ensure_ascii=False)}")
 
     # ③ 周K/月K: 动态窗口重建
     try:

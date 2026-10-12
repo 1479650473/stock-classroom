@@ -1783,6 +1783,26 @@ def cache_limit_up_from_akshare(date: str = None):
     import akshare as ak
     if date is None:
         date = datetime.now().strftime("%Y%m%d")
+    # ── 未来交易日护栏（2026-10-13）──────────────────────────────────
+    # 数据源对**未发生的交易日不报错**，而是静默回落到最近交易日：
+    # 实测 ak.stock_zt_pool_em('20261013') 返回 46 行，与 '20261012' **逐字段完全相同**。
+    # 而本函数用的是**源返回行里的 d["date"]** 落库 → 会把昨天的数据贴上今天的标签
+    # （"幽灵日期"），且会**骗过新鲜度审计**（那张表"看起来最新"）。
+    # 判据取自**权威表 kline**（只在真实交易日产生数据），不是猜测。
+    _auth = ""
+    try:
+        from backend import catchup as _cu
+        _auth = _cu.authoritative_max_date()
+    except Exception:
+        try:
+            from catchup import authoritative_max_date as _amd   # 顶层导入回退
+            _auth = _amd()
+        except Exception:
+            _auth = ""
+    if _auth and str(date).replace("-", "")[:8] > _auth:
+        log.warning("limit_up: **拒绝写入未来交易日 %s**（kline 权威最后交易日=%s）—— "
+                    "数据源对未发生交易日会静默回落，写入即产生幽灵日期", date, _auth)
+        return 0
     try:
         data = ak_get_limit_up(date)
         if not data:
