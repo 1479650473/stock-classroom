@@ -161,7 +161,7 @@ class TrainingEngine:
         if order.side == 'long':
             self.balance -= order.entry_price * order.qty
         else:
-            self.balance += order.entry_price * order.qty
+            self.balance -= order.entry_price * order.qty
         self.balance -= exit_commission
 
         self.orders.remove(order)
