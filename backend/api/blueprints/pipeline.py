@@ -8,8 +8,8 @@ bp = Blueprint("pipeline", __name__, url_prefix="/api/pipeline")
 
 
 def _run_daily_update(payload, on_progress):
-    """Runner for daily_update job."""
-    from backend.data_manager import daily_update, update_pool
+    """Runner for the user-facing data pipeline job."""
+    from backend.data_manager import update_pool
     pool_only = payload.get("pool_only", False)
     on_progress({"step": "init", "message": "开始数据更新…"})
     try:
@@ -17,9 +17,10 @@ def _run_daily_update(payload, on_progress):
             on_progress({"step": "pool", "message": "更新量化池…"})
             result = update_pool(progress=lambda p: on_progress({"step": "pool", "progress": p}))
         else:
-            on_progress({"step": "daily", "message": "全量日更新…"})
-            ok = daily_update()
-            result = {"ok": ok}
+            # 使用当前 9 步自动闭环，而不是旧的 data_manager.daily_update 单步入口。
+            on_progress({"step": "daily", "message": "全量数据更新与策略链路…"})
+            from backend.update_daily import run as run_daily
+            result = run_daily(pool_only=False, skip_paper=False)
         on_progress({"step": "done", "message": "更新完成"})
         return result
     except Exception as e:
@@ -40,7 +41,8 @@ def trigger_update():
 def pipeline_status():
     """Get latest update_marker.json status."""
     import json, os
-    marker_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "data", "update_marker.json"))
+    from ..paths import DATA_DIR
+    marker_path = os.path.join(DATA_DIR, "update_marker.json")
     if not os.path.exists(marker_path):
         return ok({"last_update": None, "status": "未更新"})
     try:
