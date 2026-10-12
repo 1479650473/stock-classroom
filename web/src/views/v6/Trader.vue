@@ -230,10 +230,18 @@ const TOOL_LABEL: Record<string, string> = {
   search_stock: '搜索股票', get_market_news: '读市场快讯', get_stock_news: '读个股新闻',
   get_regime: '看市场环境', get_candidates: '看候选股', preview_order: '预检委托',
   place_order: '下单', cancel_order: '撤单', remember: '记长期记忆', submit_decision: '结束决策',
+  // T-LLM-02：单次 LLM 调用耗时也记进 trace，这里给它一个可读标签
+  llm_call: '⏱ LLM 调用',
 }
 function toolLine(t: { tool: string; args?: Record<string, unknown>; error?: string }) {
   const label = TOOL_LABEL[t.tool] || t.tool
   const a = t.args || {}
+  // T-LLM-02：LLM 调用条目 —— 显示阶段（对话/流式/强制提交）与耗时
+  if (t.tool === 'llm_call') {
+    const phase = String(a.phase || '')
+    const phaseCn = phase === 'stream' ? '流式' : phase === 'forced' ? '强制提交' : '对话'
+    return `${label}（${phaseCn}）${a.sec ?? '?'}s${t.error ? ' → ' + t.error : ''}`
+  }
   if (t.tool === 'place_order') {
     const side = a.side === 'buy' ? '买入' : '卖出'
     return `${label} ${side} ${a.code} ${a.qty}${t.error ? ' → ' + t.error : ''}`

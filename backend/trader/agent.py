@@ -180,6 +180,26 @@ class TraderAgent:
             self._llm = LLMClient(model=self._model)
         return self._llm
 
+    def _log_llm_call(self, phase: str, sec: float, ok: bool = True,
+                      err: Optional[str] = None, attempt: Optional[int] = None) -> None:
+        """把**单次 LLM 调用**的耗时记进 trace（T-LLM-02，2026-10-13）。
+
+        为什么需要：`trader_decision` 只有整次决策的 created_at/finished_at，
+        trace 里原来只有 `{tool, args}` —— **单次调用耗时从来没被记录**，
+        所以 2026-10-13 那次定 timeout 只能靠临时实测，无法从历史归因。
+        这里以 `tool="llm_call"` 的形式追加（trace 是纯展示用 JSON，后端无逻辑解析，
+        前端 Trader.vue 的 toolLine 对未知 tool 有兜底）。
+        """
+        try:
+            entry = {"tool": "llm_call",
+                     "args": {"phase": phase, "sec": round(float(sec), 2),
+                              "ok": bool(ok), "attempt": attempt}}
+            if err:
+                entry["error"] = str(err)[:200]
+            self.tools.log.append(entry)
+        except Exception:
+            pass
+
     def decide(self, ctx: dict, progress: Optional[Callable] = None,
                on_event: Optional[Callable] = None) -> dict:
         """跑一轮决策。on_event 非空时用流式，实时回调：
@@ -229,6 +249,7 @@ class TraderAgent:
                 last_err = None
                 for _attempt in range(_cfg["max_attempts"]):
                     text, tcs, streamed = "", None, False
+                    _tt = time.monotonic()
                     try:
                         for ev in llm.chat_with_tools_stream(messages, TOOL_SPECS, max_tokens=2600):
                             t = ev.get("type")
@@ -247,10 +268,14 @@ class TraderAgent:
                                 text = ev.get("content") or ""
                         _flush()
                         last_err = None
+                        self._log_llm_call("stream", time.monotonic() - _tt, True, attempt=_attempt + 1)
                         break
                     except Exception as e:
                         last_err = e
                         _flush()
+                        self._log_llm_call(
+                            "stream", time.monotonic() - _tt, False,
+                            err="%s: %s" % (type(e).__name__, str(e)[:120]), attempt=_attempt + 1)
                         # 已经开始吐字就不重试（避免重复内容）；连接在开头就断的重试值得
                         try:
                             _wait = _retry_wait(
@@ -271,12 +296,17 @@ class TraderAgent:
                 _cfg = get_retry_config()
                 _t0 = time.monotonic()
                 for _attempt in range(_cfg["max_attempts"]):
+                    _tt = time.monotonic()
                     try:
                         result = llm.chat_with_tools(messages, TOOL_SPECS, max_tokens=2600)
                         last_err = None
+                        self._log_llm_call("chat", time.monotonic() - _tt, True, attempt=_attempt + 1)
                         break
                     except Exception as e:
                         last_err = e
+                        self._log_llm_call(
+                            "chat", time.monotonic() - _tt, False,
+                            err="%s: %s" % (type(e).__name__, str(e)[:120]), attempt=_attempt + 1)
                         try:
                             _wait = _retry_wait(e, _attempt, label="chat",
                                                 elapsed=time.monotonic() - _t0,
@@ -341,9 +371,12 @@ class TraderAgent:
             _fix_rounds = 0      # 校验不通过 → 回灌问题再来一轮（不占用连接重试次数）
             _conn_fails = 0      # 连接类失败次数（受 max_attempts / 总预算约束）
             while _fix_rounds < 3 and _conn_fails < _cfg["max_attempts"]:
+                _tt = time.monotonic()
                 try:
                     llm = self._client()
                     result = llm.chat_with_tools(messages, spec, max_tokens=2000)
+                    self._log_llm_call("forced", time.monotonic() - _tt, True,
+                                       attempt=_conn_fails + 1)
                     got = None
                     for tc in result.get("tool_calls") or []:
                         try:
@@ -368,6 +401,8 @@ class TraderAgent:
                     # 不再静默：把**异常类型**也带出来（旧代码只 emit 一行泛化文案，
                     # 导致 400 这类确定性缺陷在库里完全查不到 → 潜伏到 2026-10-13 才发现）
                     _exc = "%s: %s" % (type(e).__name__, str(e)[:150])
+                    self._log_llm_call("forced", time.monotonic() - _tt, False,
+                                       err=_exc, attempt=_conn_fails + 1)
                     log.warning("强制提交决策失败: %s", _exc)
                     try:
                         _wait = _retry_wait(e, _conn_fails, label="submit_decision",
