@@ -1037,6 +1037,7 @@ def get_etf_compare(codes: List[str], days: int = 250) -> dict:
 
 
 _ERR_SAMPLE_MAX = 3          # T-DATA-02: 每步最多记 3 条取数异常样例
+_FF_FLUSH_EVERY = 200        # fund_flow 每完成 200 只落库一次（见 update_fund_flow 内注释）
 
 
 def _record_fetch_error(samples, code, exc, label):
@@ -1187,6 +1188,23 @@ def update_fund_flow(codes=None, workers: int = 10, progress=None, budget_secs: 
     batch = []
     t0 = time.time()
 
+    def _ff_flush():
+        """把当前 batch 落库并清空（分批提交，见下方注释）。"""
+        nonlocal batch
+        if not batch:
+            return
+        conn = get_kline_db()
+        try:
+            conn.executemany(
+                "INSERT OR REPLACE INTO fund_flow_daily "
+                "(code,date,close,change_pct,main_net,main_ratio,super_net,super_ratio,"
+                "large_net,large_ratio,medium_net,medium_ratio,small_net,small_ratio) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", batch)
+            conn.commit()
+        finally:
+            conn.close()
+        batch = []
+
     def _fetch(c):
         # 每只重置坏源缓存: 新浪限流是周期性窗口(数分钟), 不应触发 300s 全局暂停
         try:
@@ -1219,18 +1237,21 @@ def update_fund_flow(codes=None, workers: int = 10, progress=None, budget_secs: 
                 rows_added += len(rows)
             else:
                 errors += 1
+            # ── 分批落库（2026-10-13）──────────────────────────────────
+            # 原来把**全部**行缓存在内存、只在循环结束后一次性写库。后果有两个：
+            #   ① 中途被中断 → 已抓的几百万行**全部丢失**（实测：跑到 800/5205、
+            #      已抓 3,077,234 行，进程被打断后 10-12 **一行都没落库**）；
+            #   ② 满量约 2000 万行 ≈ 数 GB 内存，本身就有 OOM 风险。
+            # 每 FLUSH_EVERY 只提交一次：内存有界，且**中断不白干**（INSERT OR REPLACE 幂等，
+            # 重跑时按"仍落后"重新选中未完成的股票 = 天然断点续跑）。
+            # 每日增量只有几十只，远达不到阈值 → 对既有行为无影响。
+            if batch and done % _FF_FLUSH_EVERY == 0:
+                _ff_flush()
             if progress and (done % 100 == 0 or done == total):
-                progress(f"[{done}/{total}] +{rows_added} 行", None)
+                progress(f"[{done}/{total}] +{rows_added} 行"
+                         f"{'' if not batch else '（%d 行待落库）' % len(batch)}", None)
     if batch:
-        conn = get_kline_db()
-        conn.executemany(
-            "INSERT OR REPLACE INTO fund_flow_daily "
-            "(code,date,close,change_pct,main_net,main_ratio,super_net,super_ratio,"
-            "large_net,large_ratio,medium_net,medium_ratio,small_net,small_ratio) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", batch)
-        conn.commit()
-        conn.close()
-        rows_added = len(batch)
+        _ff_flush()
     return {"updated": updated, "errors": errors, "rows_added": rows_added,
             "total": total, "err_samples": err_samples,
             "elapsed": round(time.time() - t0, 1)}
