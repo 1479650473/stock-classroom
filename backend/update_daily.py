@@ -564,6 +564,30 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
             out['steps']['nav_snapshot'] = str(e)[:80]
             lg.warning('  净值快照失败: %s', str(e)[:60])
 
+        # ⑨-0 LLM 余额体检（2026-10-13，发现 2）—— 在跑 LLM 重活之前先看余额。
+        #   库里真实出现过 3 条 `402 Insufficient Balance`；402 与网络故障性质不同，
+        #   不该混进重试策略（对 402 重试 6 次 = 白等 127s）。这里只做**只读查询 + 低余额告警**。
+        #   用「字符串步骤」的既有约定：正常/不可用都写 'ok'（不误报），只有确实偏低才写失败串。
+        try:
+            from backend.agent.llm_client import get_balance_status
+            _bs = get_balance_status()
+            if _bs is None:
+                out['steps']['llm_balance'] = 'ok'          # 查询不可用 → 不告警，只记日志
+                lg.info('  LLM 余额: 查询不可用(跳过)')
+            elif _bs.get('low'):
+                out['steps']['llm_balance'] = (
+                    '余额偏低: %.2f %s < 阈值 %.2f（402 Insufficient Balance 风险，需充值）'
+                    % (_bs['total'], _bs['currency'], _bs['warn_below']))
+                lg.warning('  LLM 余额偏低: %.2f %s（阈值 %.2f）—— 有 402 风险',
+                           _bs['total'], _bs['currency'], _bs['warn_below'])
+            else:
+                out['steps']['llm_balance'] = 'ok'
+                lg.info('  LLM 余额: %.2f %s（阈值 %.2f）',
+                        _bs['total'], _bs['currency'], _bs['warn_below'])
+        except Exception as e:
+            out['steps']['llm_balance'] = 'ok'
+            lg.info('  LLM 余额体检失败(忽略): %s', str(e)[:80])
+
         # ⑨ AI 操盘手决策 (LLM 自主交易员: 读账户/持仓/新闻 → 思考 → 买卖/保持 → 记长期记忆)
         #    与策略进化闭环不同: 这里模型直接操作自己的专属账户, 不写策略/不跑回测.
         #    支持多个交易员: 对每个 enabled 档案逐个执行(同日幂等).

@@ -98,6 +98,57 @@ def get_timeout_config() -> dict:
     }
 
 
+# ── LLM 余额体检（2026-10-13，PM 裁决 · 发现 2）──────────────────────
+# 背景：库里有 3 条 `402 Insufficient Balance` —— 余额耗尽是**真实发生过**的故障。
+# 它与网络故障性质不同：不该混在同一套重试策略里（对 402 重试 6 次纯属浪费 127s）。
+# 所以这里只做「轻量查询 + 低余额告警」，不做自动充值之类。
+# 端点用**同一把 API key**，**无需额外凭据**（实测 GET {base}/user/balance → 200）。
+DEFAULT_BALANCE_WARN_CNY = 10.0     # 低于此值告警（DeepSeek 单次决策是多轮调用，留足余量）
+
+
+def get_balance_config() -> dict:
+    """读 settings.json → agent.balance_warn_cny（默认 10，夹紧 0~10000）。"""
+    ag = _load_settings().get("agent", {}) or {}
+    try:
+        warn = max(0.0, min(10000.0, float(ag.get("balance_warn_cny", DEFAULT_BALANCE_WARN_CNY))))
+    except (TypeError, ValueError):
+        warn = DEFAULT_BALANCE_WARN_CNY
+    return {"warn_cny": warn}
+
+
+def get_balance_status(timeout: float = 20.0) -> Optional[dict]:
+    """查询账户余额。**只读**，失败返回 None（调用方按"不可用"处理，绝不因此中断主流程）。
+
+    返回 {"total", "currency", "warn_below", "low", "is_available"} 或 None。
+    """
+    try:
+        import httpx
+        cfg = get_agent_config()
+        if not cfg.get("api_key") or not cfg.get("api_base"):
+            return None
+        url = cfg["api_base"].rstrip("/") + "/user/balance"
+        r = httpx.get(url, headers={"Authorization": "Bearer " + cfg["api_key"]},
+                      timeout=timeout)
+        if r.status_code != 200:
+            return None
+        data = r.json() or {}
+        total, currency = None, "CNY"
+        for it in (data.get("balance_infos") or []):
+            try:
+                total = float(it.get("total_balance"))
+                currency = it.get("currency") or currency
+                break
+            except (TypeError, ValueError):
+                continue
+        if total is None:
+            return None
+        warn = get_balance_config()["warn_cny"]
+        return {"total": total, "currency": currency, "warn_below": warn,
+                "low": total < warn, "is_available": data.get("is_available")}
+    except Exception:
+        return None
+
+
 class LLMError(Exception):
     pass
 

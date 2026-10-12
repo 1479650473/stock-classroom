@@ -8,6 +8,7 @@
     "retry_max_attempts": 6,
     "retry_budget_sec": 130,
     "timeout_connect": 10,
-    "timeout_read": 180
+    "timeout_read": 180,
+    "balance_warn_cny": 10
   }
 }
