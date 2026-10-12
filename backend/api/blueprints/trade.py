@@ -130,6 +130,7 @@ def nav(aid):
 # ── 下单 / 撤单 / 刷新价格 ─────────────────────────────────────────
 @bp.route("/orders", methods=["POST"])
 def place_order():
+    import math
     body = request.get_json(silent=True) or {}
     aid_raw = body.get("account_id")
     if aid_raw is None:
@@ -144,28 +145,44 @@ def place_order():
     if not code or side not in ("buy", "sell") or qty <= 0:
         return err(400, "invalid_body", "需要 code / side(buy|sell) / qty>0")
     order_type = str(body.get("order_type", "market")).lower()
-    price = float(body.get("price") or 0)
+    if order_type not in ("market", "limit"):
+        return err(400, "invalid_order_type", "order_type 必须是 market 或 limit")
+    try:
+        price = float(body.get("price") or 0)
+    except (TypeError, ValueError):
+        return err(400, "invalid_price", "price 必须是数字")
+    if not math.isfinite(price):
+        return err(400, "invalid_price", "price 必须是有限数字")
     name = str(body.get("name", ""))
 
-    # 市价单需要 current_price 才能立即撮合 -> 拉实时价
+    # 市价单必须有现价；限价单有现价时顺手尝试立即撮合，取不到则保留挂单。
     current_price = None
-    if order_type == "market":
-        try:
-            from data_manager import fetch_realtime_prices
-            quotes = fetch_realtime_prices([code])
-            if quotes and quotes[0].get("price"):
-                current_price = float(quotes[0]["price"])
-        except Exception as e:
+    try:
+        from data_manager import fetch_realtime_prices
+        quotes = fetch_realtime_prices([code])
+        if quotes and quotes[0].get("price"):
+            current_price = float(quotes[0]["price"])
+    except Exception as e:
+        if order_type == "market":
             return err(502, "quote_error", f"实时价获取失败: {e}", retriable=True)
-        if not current_price:
-            return err(502, "quote_error", "实时价获取失败", retriable=True)
+    if order_type == "market" and not current_price:
+        return err(502, "quote_error", "实时价获取失败", retriable=True)
 
     try:
-        res = _engine().place_order(aid, code, name, side, order_type, price, qty,
-                                    current_price=current_price)
+        eng = _engine()
+        res = eng.place_order(aid, code, name, side, order_type, price, qty,
+                              current_price=current_price)
+        order, info = res if isinstance(res, tuple) else (res, None)
+        if order and order_type == "limit" and current_price is not None:
+            filled = eng.check_orders(aid, code, current_price)
+            if filled:
+                refreshed = next(
+                    (o for o in eng.get_orders(aid, limit=500) if o["id"] == order["id"]),
+                    order,
+                )
+                return ok({"order": refreshed, "trade": filled[0]}, message="order filled")
     except Exception as e:
         return err(500, "trade_error", str(e))
-    order, info = res if isinstance(res, tuple) else (res, None)
     if order is None:
         return err(400, "order_rejected", str(info or "下单被拒绝"))
     return ok({"order": order, "trade": info}, message="order accepted")
@@ -186,13 +203,17 @@ def refresh_prices(aid):
     try:
         eng = _engine()
         poss = eng.get_positions(aid)
-        codes = [p["code"] for p in poss]
+        pending_codes = [o["code"] for o in eng.get_orders(aid, status="pending")]
+        codes = sorted({p["code"] for p in poss} | set(pending_codes))
         if not codes:
             return ok({"updated": 0})
         from data_manager import fetch_realtime_prices
         quotes = fetch_realtime_prices(codes)
         price_map = {q["code"]: q["price"] for q in quotes if q.get("price")}
+        filled = 0
+        for code, price in price_map.items():
+            filled += len(eng.check_orders(aid, code, price))
         eng.update_all_prices(aid, price_map)
-        return ok({"updated": len(price_map)})
+        return ok({"updated": len(price_map), "filled": filled})
     except Exception as e:
         return err(502, "quote_error", str(e), retriable=True)
