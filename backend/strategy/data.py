@@ -6,8 +6,9 @@
 """
 import os, sqlite3
 
-_PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DB_PATH = os.path.join(_PROJECT_DIR, "data", "kline.db")
+from ..api.paths import KLINE_DB
+
+DB_PATH = KLINE_DB
 
 # 一根股票历史少于该值，基本可断定数据不完整(撞码覆盖/新上市/缺数)
 MIN_MEANINGFUL_BARS = 120

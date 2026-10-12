@@ -90,7 +90,8 @@ def _do_get_stock_price(code):
 
 def _do_search_stock(keyword):
     import sqlite3
-    kline_db = os.path.join(_PROJ, "data", "kline.db")
+    from backend.api.paths import KLINE_DB
+    kline_db = KLINE_DB
     try:
         conn = sqlite3.connect(kline_db)
         rows = conn.execute(

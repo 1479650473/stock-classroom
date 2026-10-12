@@ -11,8 +11,9 @@
 """
 import os, sqlite3, threading
 
-_PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DB_PATH = os.path.join(_PROJECT_DIR, "data", "kline.db")
+from ..api.paths import KLINE_DB
+
+DB_PATH = KLINE_DB
 
 _lock = threading.Lock()
 _loaded = False

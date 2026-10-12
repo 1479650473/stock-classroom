@@ -19,10 +19,10 @@ from ..macro import catalog as macro_catalog
 from ..macro.features import compute_regime
 from ..trade_engine.engine import TradeEngine
 from ..trade_engine import schema as trade_schema
+from ..api.paths import DATA_DIR
 from . import store
 
-_PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-MACRO_DB = os.path.join(_PROJECT_DIR, "data", "macro.db")
+MACRO_DB = os.path.join(DATA_DIR, "macro.db")
 
 
 # ────────────────────────── 宏观 ─────────────────────────────────────

@@ -12,6 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
+from ..api.paths import DATA_DIR
+
 
 # ── Stub 优化后端(确定性, 无 LLM key 时验证闭环) ────────────────
 class StubOptimizer:
@@ -142,7 +144,7 @@ def run_optimize_loop(use_llm: bool = True, hp: int = 20, account_id: Optional[i
     r = None
     try:
         import os as _os
-        _cpath = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))), 'data', 'paper_runs.json')
+        _cpath = _os.path.join(DATA_DIR, 'paper_runs.json')
         with open(_cpath, encoding='utf-8') as f:
             _cached = json.load(f)
         if int(_cached.get("hp", -1)) == hp:
@@ -241,8 +243,7 @@ def run_optimize_loop(use_llm: bool = True, hp: int = 20, account_id: Optional[i
     if persist and verdict == "accept":
         try:
             import os
-            _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            with open(os.path.join(_ROOT, 'data', 'optimizer_result.json'), 'w', encoding='utf-8') as f:
+            with open(os.path.join(DATA_DIR, 'optimizer_result.json'), 'w', encoding='utf-8') as f:
                 json.dump({"as_of": r["as_of"], "verdict": verdict,
                            "best": best, "new_strategy": {
                                "name": new_strategy["name"], "source": new_strategy["source"],

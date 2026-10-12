@@ -22,10 +22,10 @@ from __future__ import annotations
 import os, json, sqlite3, time
 from datetime import datetime
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-KLINE_DB = os.path.join(ROOT, "data", "kline.db")
-NEWS_DRIVEN_PATH = os.path.join(ROOT, "data", "news_driven.json")
-REGIME_PATH = os.path.join(ROOT, "data", "regime.json")
+from ..api.paths import DATA_DIR, KLINE_DB
+
+NEWS_DRIVEN_PATH = os.path.join(DATA_DIR, "news_driven.json")
+REGIME_PATH = os.path.join(DATA_DIR, "regime.json")
 
 HOT_SECTOR_TOP_N = 10      # 取涨跌幅榜前N个热点板块
 LIMIT_UP_TOP_N = 30        # 事件池最多取前N个涨停(按成交额排序, 封单/资金代表性强)

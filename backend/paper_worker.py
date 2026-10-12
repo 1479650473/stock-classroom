@@ -30,6 +30,7 @@ from backend.strategy.factor_research import FactorResearchEngine  # noqa: E402
 from backend.agent.decision_gate import (  # noqa: E402
     value_tilt_state, market_breadth, portfolio_value_alloc, value_hard_rule,
 )
+from backend.api.paths import DATA_DIR, KLINE_DB, PAPER_RUNS_PATH  # noqa: E402
 
 # 指数/非交易代码(000001=上证指数, 与个股撞码) —— 截面须排除
 INDEX_CODES = {"000001", "399001", "399006", "000300", "000016", "000905"}
@@ -127,8 +128,7 @@ def study_factors(study_start: str = "2022-01-01", progress=None) -> dict:
 # ── ④ 组合纸面盘(重平衡NET vs 等权买持) ──────────────────────────
 def _kline_db_path():
     """kline.db 绝对路径(项目根 /data/kline.db)."""
-    import os as _os
-    return _os.path.join(_os.path.dirname(_ROOT), 'data', 'kline.db')
+    return KLINE_DB
 
 
 def _kline_last_close(code):
@@ -316,7 +316,7 @@ def build_paper_only(hp: int = 20, top_k_pct: float = 0.2,
             if isinstance(o, _np.bool_):
                 return bool(o)
             return str(o)
-        with open(os.path.join(os.path.dirname(_ROOT), 'data', 'paper_run.json'), 'w', encoding='utf-8') as _f:
+        with open(os.path.join(DATA_DIR, 'paper_run.json'), 'w', encoding='utf-8') as _f:
             _json.dump({"paper": paper, "as_of": str(pd.Timestamp(as_of).date()),
                         "pool_size": len(frames), "hp": hp}, _f,
                        ensure_ascii=False, indent=1, default=_conv)
@@ -395,7 +395,7 @@ def _persist_paper_runs(as_of, pool_size, hp, fwd_start, selected, runs, buyhold
         if isinstance(o, _np.bool_): return bool(o)
         return str(o)
     try:
-        with open(os.path.join(os.path.dirname(_ROOT), 'data', 'paper_runs.json'), 'w', encoding='utf-8') as f:
+        with open(PAPER_RUNS_PATH, 'w', encoding='utf-8') as f:
             _json.dump({"as_of": str(pd.Timestamp(as_of).date()), "pool_size": pool_size, "hp": hp,
                         "fwd_start": fwd_start, "selected": selected, "runs": runs, "buyhold": buyhold},
                        f, ensure_ascii=False, indent=1, default=_conv)

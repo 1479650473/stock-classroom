@@ -7,15 +7,13 @@
 import os, sqlite3, json
 from datetime import datetime
 
+from ..api.paths import DATA_DIR
 from .catalog import INDICATORS, CATEGORY_CN, by_key
 from .provider import fetch_all
 from .features import compute_regime
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-
 def get_macro_db_path():
-    return os.path.join(_ROOT, "data", "macro.db")
+    return os.path.join(DATA_DIR, "macro.db")
 
 
 def store(db_path, series_map, feats, snap_date):

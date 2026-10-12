@@ -22,8 +22,9 @@ from __future__ import annotations
 import os, json
 from datetime import datetime
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-STOCK_DEEP_PATH = os.path.join(ROOT, "data", "stock_deep.json")
+from ..api.paths import DATA_DIR, KLINE_DB
+
+STOCK_DEEP_PATH = os.path.join(DATA_DIR, "stock_deep.json")
 
 VERDICTS = ("前置", "后移", "保持", "剔名")
 
@@ -140,7 +141,7 @@ def deep_analyze(candidates: list, progress=None) -> dict:
 def _latest_as_of() -> str:
     try:
         import sqlite3
-        con = sqlite3.connect(os.path.join(ROOT, "data", "kline.db"))
+        con = sqlite3.connect(KLINE_DB)
         d = con.execute("SELECT MAX(date) FROM kline_daily").fetchone()[0]
         con.close()
         return str(d) if d else ""

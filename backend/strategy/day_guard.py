@@ -22,9 +22,9 @@ from datetime import datetime
 from backend.strategy.position_guard import PositionGuard
 from backend.strategy.sell_rules import SellRuleSet, reason_cn
 from backend.strategy.data import load_klines
+from backend.api.paths import DATA_DIR
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-GUARD_LOG = os.path.join(ROOT, "data", "day_guard_log.json")
+GUARD_LOG = os.path.join(DATA_DIR, "day_guard_log.json")
 
 
 def _active_accounts(engine):

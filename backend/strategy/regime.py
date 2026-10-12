@@ -23,9 +23,10 @@ from __future__ import annotations
 
 import os, json, math, datetime
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-HS300_PATH = os.path.join(_ROOT, "data", "hs300.json")
-REGIME_PATH = os.path.join(_ROOT, "data", "regime.json")
+from ..api.paths import DATA_DIR
+
+HS300_PATH = os.path.join(DATA_DIR, "hs300.json")
+REGIME_PATH = os.path.join(DATA_DIR, "regime.json")
 
 # 策略-环境适配表 — **基于分周期验证结论(数据驱动, 非直觉)** (2026-08-29 定稿)
 # 来源: cycle_test_all.json(F价值Tilt三驱动, 补2023数据后):

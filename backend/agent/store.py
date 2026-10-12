@@ -8,8 +8,9 @@ agent_tokens / agent_audit / agent_jobs / agent_idempotency / agent_strategies /
 import os
 import sqlite3
 
-_PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DB_PATH = os.path.join(_PROJECT_DIR, "data", "agent.db")
+from ..api.paths import DATA_DIR
+
+DB_PATH = os.path.join(DATA_DIR, "agent.db")
 
 
 def get_db_path() -> str:
