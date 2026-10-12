@@ -166,6 +166,22 @@ def revoke_token_record(token_id: int, agent_id: Optional[str] = None) -> bool:
         con.close()
 
 
+def revoke_all_tokens(agent_id: Optional[str] = None) -> int:
+    """Revoke every active token (optionally scoped to one agent)."""
+    con = store.get_conn()
+    try:
+        if agent_id is None:
+            cur = con.execute("UPDATE agent_tokens SET revoked=1 WHERE revoked=0")
+        else:
+            cur = con.execute(
+                "UPDATE agent_tokens SET revoked=1 WHERE revoked=0 AND agent_id=?",
+                (agent_id,))
+        con.commit()
+        return int(cur.rowcount)
+    finally:
+        con.close()
+
+
 def list_tokens(agent_id: Optional[str] = None) -> list[dict]:
     con = store.get_conn()
     try:

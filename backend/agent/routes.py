@@ -317,8 +317,9 @@ def paper_kill_switch():
         for o in engine.get_orders(a["id"], status="pending"):
             engine.cancel_order(o["id"])
             cancelled += 1
-    gw.revoke_token_record(0, None)  # 吊销全部(单用户桌面)
-    return envelope({"cancelled_paper_orders": cancelled, "kill_switch_done": True})
+    revoked = gw.revoke_all_tokens(request.agent_id)  # 吊销该 agent 的全部 token
+    return envelope({"cancelled_paper_orders": cancelled, "revoked_tokens": revoked,
+                     "kill_switch_done": True})
 
 
 def register(app):
