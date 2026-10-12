@@ -123,6 +123,117 @@ def refresh_fundamentals(codes, workers=16, progress=None, budget_secs=1800):
     return {'updated': updated, 'skipped': skipped}
 
 
+# ── 关键步骤判定（2026-10-12）────────────────────────────────────────
+# 背景：原来顶层 ok 只由"整轮有没有抛到最外层"决定，步骤内部异常被 try/except 吞掉后
+# 只写进 steps{}、从不参与 ok 判定 → 2026-10-12 那次 run 里「3 个 AI 交易员全挂 +
+# 5205 只资金流全失败 + 1624 只 ETF 全失败」仍被打成 ok=true，故障潜伏一个多月。
+# 另一方面原通知只看 dict 的 'error' 单数键，漏掉了 'errors'>0(fund_flow/etf)
+# 与 trader 的 list[{'status':'error'}]，所以连告警都没发。
+CRITICAL_STEPS = ('kline', 'fund_flow', 'etf', 'trader')
+# 特意不含 market_data：north_flow 等指标常年为 0，设成 critical 会天天 ok=false（狼来了）
+
+
+def _step_bad(key, v):
+    """判定单个步骤是否异常。返回 (描述 or None, 是否整体失败)。
+
+    步骤值约定（update_daily 全篇一致）：字符串只可能是
+      'ok' / 'no_enabled'（正常）、'rc=N ...'（子进程非零退出=失败）、或异常消息 str(e)。
+    所以「不是 'ok'/'no_enabled' 的字符串」一律算异常 —— 这样才盖得住
+      lhb_margin 的 'HTTPSConnectionPool... Max retries exceeded'（不含 error 字样）
+      和 chip/market_daily 的 'rc=1 ...'（同样不含 error 字样）。
+    """
+    if isinstance(v, str):
+        if v in ('ok', 'no_enabled'):
+            return None, False
+        return v[:160], True
+    if isinstance(v, dict):
+        if v.get('error'):
+            return str(v['error'])[:160], True
+        rc = v.get('rc')
+        if isinstance(rc, int) and rc != 0:
+            return '子进程非零退出 rc=%d' % rc, True
+        errs = v.get('errors')
+        if isinstance(errs, int) and errs > 0:
+            total, updated = v.get('total'), v.get('updated')
+            msg = '%d 只失败%s, 成功 %s' % (errs, '/%d' % total if total else '', updated)
+            # 只有"有总量且成功数为 0"才算整体失败；部分失败只告警
+            if isinstance(total, int) and total > 0 and not updated:
+                return msg, True
+            return msg, False
+        rows = v.get('rows')
+        if isinstance(rows, int) and rows == 0:
+            return '本次入库 0 行', False
+        # 其它 dict（如 market_data）：扫一层值里的 'err:' / '失败'
+        inner = ['%s=%s' % (kk, vv[:60]) for kk, vv in v.items()
+                 if isinstance(vv, str) and (vv.startswith('err') or '失败' in vv
+                                             or 'error' in vv.lower())]
+        if inner:
+            return '; '.join(inner)[:160], False
+        return None, False
+    if isinstance(v, list):
+        # trader: [{'name','status','orders','filled','nav'}]
+        failed = [e for e in v if isinstance(e, dict) and e.get('status') == 'error']
+        if not failed:
+            return None, False
+        names = ','.join(str(e.get('name')) for e in failed)
+        if len(failed) == len(v):
+            return '启用的 %d 个交易员全部失败: %s' % (len(v), names), True
+        return '%d/%d 个交易员失败: %s' % (len(failed), len(v), names), False
+    return None, False
+
+
+def _finalize_run(out, lg, t0):
+    """收尾：判定 ok / 汇总异常步骤 / 发通知 / 写 marker。抽成函数便于单独测试。"""
+    out['finished'] = datetime.now().isoformat(timespec='seconds')
+    out['elapsed'] = round(time.time() - t0, 1)
+    out['ok'] = True
+    bad, critical = {}, []
+    try:
+        for k, v in (out.get('steps') or {}).items():
+            msg, total_fail = _step_bad(k, v)
+            if msg:
+                bad[k] = msg
+                if total_fail and k in CRITICAL_STEPS:
+                    critical.append(k)
+    except Exception as e:
+        lg.warning('步骤健康判定失败: %s', str(e)[:100])
+    out['bad_steps'] = bad
+    out['critical_failed'] = critical
+    if critical:
+        out['ok'] = False
+    try:
+        # 必须写成 `from backend import notify`：notify.py 内部用相对导入
+        # (`from .api.paths import DATA_DIR`)，而本脚本会把 ROOT/backend 都塞进 sys.path，
+        # 于是 `from notify import push` 会把 notify.py 当成**顶层模块**导入 →
+        # ImportError: attempted relative import with no known parent package。
+        # 旧代码正是这么写的，且被 `except Exception: pass` 吞掉 →
+        # **update_daily 的通知通道从来没发出过任何一条**（2026-10-12 才发现）。
+        from backend import notify as _notify
+        if critical:
+            _notify.push('daily', '每日自动化关键步骤失败：' + '、'.join(critical),
+                         level='error',
+                         detail='；'.join('%s: %s' % (k, bad[k]) for k in critical),
+                         key='update_daily_critical', throttle_seconds=600)
+        elif bad:
+            _notify.push('daily', '每日自动化有 %d 个步骤异常' % len(bad), level='warn',
+                         detail='；'.join('%s: %s' % (k, msg) for k, msg in bad.items()),
+                         key='update_daily', throttle_seconds=1800)
+        else:
+            _notify.push('daily', '每日自动化完成（%ss）' % out['elapsed'], level='info',
+                         detail='全部步骤正常', key='update_daily_ok', throttle_seconds=3600)
+    except Exception as e:
+        # 不再静默：通知失败本身也要留痕（静默 pass 是上面那个 bug 潜伏一个月的原因）
+        lg.warning('通知发送失败(不影响数据更新): %s', str(e)[:150])
+    with open(MARKER, 'w', encoding='utf-8') as f:
+        json.dump(out, f, ensure_ascii=False, indent=2)
+    if critical:
+        lg.error('══ update_daily 完成 %.1fs 但**关键步骤失败** %s（ok=false）→ %s ══',
+                 out['elapsed'], ','.join(critical), MARKER)
+    else:
+        lg.info('══ update_daily 完成 %.1fs → %s ══', out['elapsed'], MARKER)
+    return out
+
+
 def run(pool_only=False, skip_paper=False, skip_kline=False):
     """入口: 全局异常兜底, 任何一步崩溃都不让整个更新静默失败(9/8~9/9 曾 3 秒静默崩溃)."""
     lg = _log()
@@ -682,31 +793,7 @@ def _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out):
             out['steps']['minute'] = str(e)[:120]
             lg.warning('  分钟线增量失败: %s', str(e)[:80])
 
-    out['finished'] = datetime.now().isoformat(timespec='seconds')
-    out['elapsed'] = round(time.time() - t0, 1)
-    out['ok'] = True
-    # 通知：整轮完成 / 有步骤失败（error 或含 'error' 字段的 step）
-    try:
-        from notify import push as _push_notify
-        bad = {}
-        for k, v in (out.get('steps') or {}).items():
-            if isinstance(v, dict) and v.get('error'):
-                bad[k] = str(v.get('error'))[:160]
-            elif isinstance(v, str) and ('error' in v or '失败' in v):
-                bad[k] = v[:160]
-        if bad:
-            _push_notify('daily', f'每日自动化有 {len(bad)} 个步骤异常', level='warn',
-                         detail='；'.join(f'{k}: {msg}' for k, msg in bad.items()),
-                         key='update_daily', throttle_seconds=1800)
-        else:
-            _push_notify('daily', f'每日自动化完成（{out["elapsed"]}s）', level='info',
-                         detail='全部步骤正常', key='update_daily_ok', throttle_seconds=3600)
-    except Exception:
-        pass
-    with open(MARKER, 'w', encoding='utf-8') as f:
-        json.dump(out, f, ensure_ascii=False, indent=2)
-    lg.info('══ update_daily 完成 %.1fs → %s ══', out['elapsed'], MARKER)
-    return out
+    return _finalize_run(out, lg, t0)
 
 
 if __name__ == '__main__':
