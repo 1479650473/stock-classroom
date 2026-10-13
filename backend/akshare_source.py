@@ -222,6 +222,11 @@ def _fetch_kline_with_fallback(symbol: str, days: int, timeout: float):
             log.warning("ak_fetch_kline[%s] %s 异常: %s", name, symbol, str(e)[:50])
             _src_note_fail(name)
             df = None
+        if df is None:
+            # 超时/挂起：_run_with_timeout 超时返回 None（不抛异常）。旧实现因此**既不计故障
+            # 也不重试** → 源整体挂起时熔断器永不触发，5000 只每只都 3 源空转。
+            # 2026-10-13 17:01 那次 5548/5548 全失败即此类成因之一。此处把 None 也计入源故障。
+            _src_note_fail(name)
         if df is not None and not df.empty:
             _src_note_ok(name)
             return df

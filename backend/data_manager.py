@@ -412,6 +412,8 @@ def update_codes(codes, end_date: str = None, catch_up_days: int = None, workers
         return rows, c
 
     batch_rows = []
+    empty_codes: list = []          # 抓取成功但返回空 → 源码缺口，可重试
+    fail_codes: list = []           # 超时/异常 → 可重试
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futs = {pool.submit(_fetch, c): c for c in codes}
         for f in as_completed(futs):
@@ -421,12 +423,14 @@ def update_codes(codes, end_date: str = None, catch_up_days: int = None, workers
             except _TE:
                 skipped += 1
                 errors += 1
+                fail_codes.append(c)
                 if progress:
                     progress(f"{c} 超时(>{timeout_each:.0f}s) 跳过", c)
                 continue
             except Exception as e:
                 skipped += 1
                 errors += 1
+                fail_codes.append(c)
                 if progress:
                     progress(f"{c} 拉取失败 {str(e)[:30]}", c)
                 continue
@@ -437,9 +441,57 @@ def update_codes(codes, end_date: str = None, catch_up_days: int = None, workers
                 dist[str(rows[-1][1])] = dist.get(str(rows[-1][1]), 0) + 1
             else:
                 errors += 1
+                empty_codes.append(c)
             done = updated + skipped
             if progress and (done % 50 == 0 or done == total):
                 progress(f"[{done}/{total}] +{rows_added} 行", None)
+
+    # ── 批次级重试（2026-10-13 新增）────────────────────────────────────────
+    # 背景：2026-10-13 17:01 那次 run 的 kline 步 **5548/5548 全失败、耗时仅 1.03s**，
+    # 表现为"上游瞬时抽风时整批拉空，而完全没有任何重试"→ 当天 kline 一日未更新，
+    # 连带 7 张表被判定为幽灵日期、critical_failed=['kline']，整轮 ok=false。
+    # 上游在数小时后恢复正常（实测同参数可取到 10-13 数据）→ 说明这是**可重试**的瞬时故障。
+    # 故：整批失败率过高时，等待后对失败代码**重试一轮**（默认 1 轮，避免源真故障时硬扛）。
+    retry_rounds = 1
+    retry_wait = 60.0
+    for _r in range(retry_rounds):
+        retry_codes = empty_codes + fail_codes
+        if not retry_codes:
+            break
+        # 只有"大批量失败"才重试：失败占比 < 20% 视为个股正常缺口，不值得整批等待
+        if total >= 20 and len(retry_codes) / total < 0.20:
+            break
+        if total < 20 and len(retry_codes) < 3:
+            break
+        if progress:
+            progress(f"[重试] 首轮 {len(retry_codes)}/{total} 只未取到（成功率 "
+                     f"{(total-len(retry_codes))/total:.0%}）→ 等待 {retry_wait:.0f}s 后重试", None)
+        time.sleep(retry_wait)
+        empty_codes, fail_codes = [], []
+        got = 0
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futs = {pool.submit(_fetch, c): c for c in retry_codes}
+            for f in as_completed(futs):
+                c = futs[f]
+                try:
+                    rows, _ = f.result(timeout=timeout_each)
+                except _TE:
+                    fail_codes.append(c); continue
+                except Exception:
+                    fail_codes.append(c); continue
+                if rows:
+                    got += 1
+                    updated += 1
+                    if skipped > 0:
+                        skipped -= 1            # 首轮记过的 skipped 里含这部分，重试成功要回退
+                    batch_rows.extend(rows)
+                    rows_added += len(rows)
+                    dist[str(rows[-1][1])] = dist.get(str(rows[-1][1]), 0) + 1
+                else:
+                    empty_codes.append(c)
+        errors = len(empty_codes) + len(fail_codes)
+        if progress:
+            progress(f"[重试完成] 本轮补回 {got} 只，仍缺 {len(empty_codes)+len(fail_codes)} 只", None)
 
     if batch_rows:
         conn = get_kline_db()
