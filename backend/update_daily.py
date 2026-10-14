@@ -308,6 +308,7 @@ def _finalize_run(out, lg, t0):
     except Exception as e:
         # 不再静默：通知失败本身也要留痕（静默 pass 是上面那个 bug 潜伏一个月的原因）
         lg.warning('通知发送失败(不影响数据更新): %s', str(e)[:150])
+    out['_run_state'] = 'done'   # 明确收尾标记（与开局心跳的 'running' 相对）
     with open(MARKER, 'w', encoding='utf-8') as f:
         json.dump(out, f, ensure_ascii=False, indent=2)
     if critical:
@@ -324,6 +325,24 @@ def run(pool_only=False, skip_paper=False, skip_kline=False):
     t0 = time.time()
     lg.info('══ update_daily 开始 %s ══', datetime.now().isoformat(timespec='seconds'))
     out = {'started': datetime.now().isoformat(timespec='seconds'), 'steps': {}}
+
+    # 开局心跳（2026-10-14 新增）─────────────────────────────────────────
+    # 事故：2026-10-14 的 run 17:00:01 启动、19:22 仍在写日志，随后进程被
+    # STATUS_CONTROL_C_EXIT(0xC000013A) 终止于**收尾之前** —— 而 marker 只在
+    # _finalize_run 里写，于是"没有 marker、没有通知、没有 ok 值"，整套失败告警不触发。
+    # 这是比"跑失败"更隐蔽的一类：**静默死亡**。
+    # 修法：开局先落一个 _run_state=running 的 marker（含 pid），收尾时被完整结果覆盖。
+    # 于是"marker 里还是 running 但进程已不存在" = 铁证级静默死亡，可被看门狗发现。
+    # 字段名用 _run_state 而非 status：marker 会被 /api/pipeline/status 原样转发给前端，
+    # 用 status 可能与 UI 语义冲突（该接口自身的 status 表示"未更新/读取失败"）。
+    out['_run_state'] = 'running'
+    out['_pid'] = os.getpid()
+    try:
+        with open(MARKER, 'w', encoding='utf-8') as f:
+            json.dump(out, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        lg.warning('开局心跳写入失败(不阻断主流程): %s', str(e)[:150])
+
     try:
         return _run_inner(pool_only, skip_paper, skip_kline, lg, t0, out)
     except Exception as e:
@@ -334,11 +353,13 @@ def run(pool_only=False, skip_paper=False, skip_kline=False):
         out['finished'] = datetime.now().isoformat(timespec='seconds')
         out['elapsed'] = round(time.time() - t0, 1)
         out['ok'] = False
+        out['_run_state'] = 'error'  # 未捕获异常也走收尾（与静默死亡的 'running' 区分开）
         try:
             with open(MARKER, 'w', encoding='utf-8') as f:
                 json.dump(out, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+        except Exception as e:
+            # 不再静默 pass：这里吞掉异常就等于又制造一个"静默死亡"盲区
+            lg.error('收尾 marker 写入失败(将以 running 状态残留，看门狗会报): %s', str(e)[:200])
         return out
 
 
