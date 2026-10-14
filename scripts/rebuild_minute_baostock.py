@@ -61,7 +61,29 @@ def load_universe(source: str, only_codes: list | None, limit: int | None, freq:
             from data_manager import get_minute_db
             conn = get_minute_db()
             try:
-                codes = [str(r[0]) for r in conn.execute(f"SELECT DISTINCT code FROM kline_min{int(freq)}")]
+                # 优先读代码缓存表(避免 DISTINCT 全扫 8600 万行, 每次省 3-5 分钟)
+                codes = []
+                try:
+                    codes = [str(r[0]) for r in conn.execute(
+                        "SELECT code FROM minute_universe ORDER BY code")]
+                except Exception:
+                    try:
+                        conn.execute("CREATE TABLE IF NOT EXISTS minute_universe "
+                                     "(code TEXT PRIMARY KEY, updated_at TEXT)")
+                        conn.commit()
+                    except Exception:
+                        pass
+                if not codes:
+                    codes = [str(r[0]) for r in conn.execute(
+                        f"SELECT DISTINCT code FROM kline_min{int(freq)}")]
+                    try:
+                        conn.executemany(
+                            "INSERT OR IGNORE INTO minute_universe(code, updated_at) "
+                            "VALUES (?, datetime('now','localtime'))",
+                            [(c,) for c in codes])
+                        conn.commit()
+                    except Exception:
+                        pass
             finally:
                 conn.close()
         else:
