@@ -12,6 +12,8 @@ import { CanvasRenderer } from 'echarts/renderers'
 import PageHeader from '@/components/PageHeader.vue'
 import Card from '@/components/Card.vue'
 import EmptyState from '@/components/EmptyState.vue'
+import EmptyGuide from '@/components/ui/EmptyGuide.vue'
+import Icon from '@/components/Icon.vue'
 import { searchStock, getReplayStrategies, getReplay } from '@/api'
 import type { ReplayStrategy, ReplayResult, StockRef } from '@/api'
 import { cssVar } from '@/composables/useEChart'
@@ -44,6 +46,12 @@ interface ReplayEventExt {
 
 const strategies = ref<ReplayStrategy[]>([])
 const code = ref('600036')
+const codeInputEl = ref<HTMLInputElement>()
+/** 空状态里的「选股票」入口：把焦点送回顶栏输入框，省得用户自己找 */
+function focusCode() {
+  codeInputEl.value?.focus()
+  codeInputEl.value?.select()
+}
 const name = ref('')
 const strategyId = ref('')
 const loading = ref(false)
@@ -686,7 +694,7 @@ watch(strategyId, (v) => {
     <PageHeader title="策略回放" subtitle="真实交易环境模拟 — 逐日播放买卖点 / 持仓盈亏 / 账户权益" :embedded="embedded">
       <template #right>
         <div class="hdr-actions">
-          <input v-model="code" class="code-input" placeholder="股票代码"
+          <input v-model="code" ref="codeInputEl" class="code-input" placeholder="股票代码"
                  :disabled="phase !== 'setup'"
                  @keyup.enter="pickStock({ code: code, name: '', status: '' } as StockRef)"
                  @input="doSearch(code)" />
@@ -721,13 +729,16 @@ watch(strategyId, (v) => {
     <Card class="mt" :class="{ locked: phase !== 'setup' }">
       <div class="settings-bar">
         <button class="btn" @click="settingsOpen = !settingsOpen">
-          {{ settingsOpen ? '▲ 收起设置' : '▾ 回放设置' }}
+          <Icon :name="settingsOpen ? 'chevron-up' : 'chevron-down'" :size="14" />
+          {{ settingsOpen ? '收起设置' : '回放设置' }}
         </button>
         <span class="summary muted">{{ settingsSummary }}</span>
-        <span v-if="settingsDirty" class="tag dirty-note">⚠ 设置已变更 · 播放时自动应用</span>
+        <span v-if="settingsDirty" class="tag dirty-note">
+          <Icon name="alert" :size="12" /> 设置已变更 · 播放时自动应用
+        </span>
         <span v-if="name" class="stock-name">{{ name }}</span>
         <span v-if="phase !== 'setup'" class="lock-note">
-          <span class="lock-icon">🔒</span> 回合中 — 设置已锁定
+          <Icon name="alert" :size="12" /> 回合中 — 设置已锁定
         </span>
       </div>
       <div v-if="settingsOpen" class="settings-body">
@@ -793,14 +804,21 @@ watch(strategyId, (v) => {
         <div class="main-col">
           <Card>
             <div class="ctl">
-              <button class="btn" @click="stepBack" title="上一根" :disabled="phase === 'settled'">◀</button>
+              <button class="btn" @click="stepBack" title="上一根" :disabled="phase === 'settled'">
+                <Icon name="chevron-left" :size="14" />
+              </button>
               <button class="btn primary play-btn" @click="togglePlay" :disabled="phase === 'settled'">
-                {{ phase === 'settled' ? '已结束' : playing ? '⏸ 暂停' : '▶ 播放' }}
+                <!-- icons.ts 里没有 pause，用 stop 表示"停下来"（按钮本身有文字，不会歧义） -->
+                <Icon :name="playing && phase !== 'settled' ? 'stop' : 'play'" :size="14" />
+                {{ phase === 'settled' ? '已结束' : playing ? '暂停' : '播放' }}
               </button>
               <button class="btn" @click="stepFwd"
                       :title="phase === 'trading' && cursor >= allBars.length - 1 ? '结算本轮' : '下一根'"
                       :disabled="phase === 'settled'">
-                {{ phase === 'trading' && cursor >= allBars.length - 1 ? '✓ 结算' : '▶' }}
+                <template v-if="phase === 'trading' && cursor >= allBars.length - 1">
+                  <Icon name="check" :size="14" /> 结算
+                </template>
+                <Icon v-else name="chevron-right" :size="14" />
               </button>
               <select v-model="speed" class="sel speed-sel" title="播放速度">
                 <option :value="0.25">0.25x 慢放</option>
@@ -923,13 +941,26 @@ watch(strategyId, (v) => {
       </div>
     </template>
 
-    <EmptyState v-if="!allBars.length && !errorMsg && strategyId" message="选择股票和策略后点击「开始回放」" />
+    <!-- 首次进入的引导：不只说"没数据"，而是把三步流程和入口直接给出来 -->
+    <EmptyGuide
+      v-if="!allBars.length && !errorMsg"
+      icon="play"
+      title="还没有回放结果"
+      desc="按顺序完成三步：① 在顶栏选一只股票 ② 选一个策略 ③ 点「开始回放」。回放会逐日播放买卖点、持仓盈亏与账户权益，并在回合结束时给出结算。"
+    >
+      <template #action>
+        <div class="guide-actions">
+          <button class="btn primary" @click="focusCode">去选股票</button>
+          <button class="btn" @click="settingsOpen = true">回放设置</button>
+        </div>
+      </template>
+    </EmptyGuide>
 
     <!-- ═══ 结算弹窗 ═══ -->
     <div v-if="phase === 'settled' && metrics" class="settle-overlay">
       <div class="settle-modal">
         <div class="settle-head">
-          <h3>📊 回合结算</h3>
+          <h3><Icon name="check" :size="16" /> 回合结算</h3>
           <span class="muted">{{ name }} · {{ strategyName }}</span>
         </div>
         <div class="settle-range mono muted">
@@ -1028,8 +1059,16 @@ watch(strategyId, (v) => {
 .settings-row { display: flex; gap: var(--sp-3); flex-wrap: wrap; align-items: flex-end; }
 .param-item { display: flex; flex-direction: column; gap: 4px; }
 .param-item label { font-size: 12px; color: var(--text-sub); }
-.settings-actions { display: flex; gap: var(--sp-3); align-items: center; margin-top: var(--sp-3); flex-wrap: wrap; }
+/* 设置区的操作行：说明文字独占一行，按钮另起一行靠右。
+   原来是 flex+wrap 把「说明」和「应用设置并重新回放」塞在同一行 ——
+   1600 宽下两者挤在一起、按钮被压得又小又贴边（实测截图可见）。 */
+.settings-actions {
+  display: flex; flex-direction: column; align-items: flex-end;
+  gap: var(--sp-3); margin-top: var(--sp-4);
+}
+.settings-actions .note { align-self: stretch; line-height: 1.6; }
 .note { font-size: 12px; }
+.guide-actions { display: flex; gap: var(--sp-3); justify-content: center; flex-wrap: wrap; }
 .round-tag { font-weight: 600; }
 .round-tag.done { color: var(--text-sub); }
 .card.locked { border-color: var(--gold); }
