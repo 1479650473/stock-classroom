@@ -57,17 +57,20 @@ onMounted(() => {
   display: flex;
   overflow: hidden;
 }
-/* 环境底纹：顶部一层极淡径向光 + 细网格，给数据面增加纵深（不拦截事件） */
+/* 环境底纹：给数据面增加纵深（不拦截事件）。
+   三种模式由 <html data-backdrop> 控制：
+     grid  = 网格 + 顶部光晕（默认）
+     plain = 只留顶部光晕
+     none  = 完全纯色，最省 GPU
+   ⚠️ 具体 background 值定义在 **src/styles/appearance.css**（全局，非 scoped）。
+   原因：scoped 样式会被编译成 `.body[data-v-xxx]`，而 `:root[...] .body[data-v-xxx]`
+   这种「祖先在模板外」的选择器在 scoped 下行为脆弱（Vue 会把属性加到复合选择器末尾，
+   容易变成命不中的形态）。这里只保留布局属性，颜色/纹理交给全局层。 */
 .body::before {
   content: '';
   position: absolute;
   inset: 0 0 auto 0;
   height: 380px;
-  background:
-    radial-gradient(120% 100% at 50% 0%, var(--grid-line) 0%, transparent 72%),
-    radial-gradient(60% 60% at 78% 0%, color-mix(in srgb, var(--gold) 5%, transparent) 0%, transparent 70%),
-    linear-gradient(var(--grid-line) 1px, transparent 1px) 0 0 / var(--grid-size) var(--grid-size),
-    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px) 0 0 / var(--grid-size) var(--grid-size);
   pointer-events: none;
   z-index: 0;
 }

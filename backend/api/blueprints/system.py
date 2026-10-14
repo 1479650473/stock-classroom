@@ -72,7 +72,16 @@ def bootstrap():
     }
     data["needs_init"] = (not data["kline"]["exists"]) or stock_rows == 0
     settings = settings_store.load_settings()
-    data["settings"] = {"theme": settings.get("theme"), "font_size": settings.get("font_size")}
+    data["settings"] = {
+        "theme": settings.get("theme"),
+        "font_size": settings.get("font_size"),
+        # 外观维度（2026-10-15）：随 bootstrap 一起下发，前端首帧就能用对的外观渲染，
+        # 避免"先按默认主题画一帧、拿到 /settings 后再跳变"。
+        "density": settings.get("density"),
+        "radius": settings.get("radius"),
+        "motion": settings.get("motion"),
+        "backdrop": settings.get("backdrop"),
+    }
     data["ai_configured"] = bool((settings.get("agent") or {}).get("api_key"))
     return ok(data)
 
@@ -95,7 +104,11 @@ def get_settings():
 def save_settings():
     body = request.get_json(silent=True) or {}
     current = settings_store.load_settings()
-    for key in ("theme", "font_size", "window_size"):
+    # 外观维度白名单（2026-10-15 扩充：新增 density/radius/motion/backdrop，
+    # 与 theme/font_size 同为「外观」维度，由前端 stores/app.ts 的 applyTheme 消费）。
+    # 注意：这里是**白名单**——新增外观项必须同时加到这里，否则前端会静默丢设置。
+    for key in ("theme", "font_size", "window_size",
+                "density", "radius", "motion", "backdrop"):
         if key in body:
             current[key] = body[key]
     if "agent" in body and isinstance(body["agent"], dict):

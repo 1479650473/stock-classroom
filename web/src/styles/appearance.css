@@ -1,0 +1,116 @@
+/* ============================================================
+   Appearance layer — 与主题正交的「外观维度」
+   （2026-10-15 新增）
+
+   设计原则：
+   · 主题（tokens.css 的 [data-theme]）只决定**颜色**；
+     本文件只决定**密度 / 圆角 / 动效 / 背景纹理**。
+   · 两者通过 <html> 上互相独立的 data-* 属性切换，互不覆盖。
+   · 所有规则都作用于契约变量（--row-h / --pad-* / --radius-* / --dur-*），
+     个别无法用变量表达的再做定向覆盖。
+
+   属性：
+     data-density = comfortable | compact | roomy
+     data-radius  = sharp | default | round
+     data-motion  = full | reduced
+     data-backdrop= grid | plain | none
+   ============================================================ */
+
+/* ---------------- 密度 ---------------- */
+
+/* 紧凑：同屏信息更多（表格行更低、内边距更小、区块间距更紧） */
+:root[data-density='compact'] {
+  --row-h: 28px;
+  --pad-card: 12px;
+  --pad-page: 16px;
+  --gap-sec: 14px;
+  --control-h: 30px;
+  --control-h-sm: 25px;
+}
+
+/* 标准：保持 tokens.css 的默认值（无需重复声明，便于将来只改一处） */
+
+/* 宽松：更疏朗，适合大屏/演示 */
+:root[data-density='roomy'] {
+  --row-h: 40px;
+  --pad-card: 20px;
+  --pad-page: 28px;
+  --gap-sec: 26px;
+  --control-h: 38px;
+  --control-h-sm: 31px;
+}
+
+/* 密度生效点：卡片内边距、页面内边距、区块间距 */
+:root[data-density] .card {
+  padding: var(--pad-card);
+}
+:root[data-density] .content {
+  padding: var(--pad-page);
+}
+
+/* 表格行高：优先给显式使用 .tbl 的表格，避免影响页面自建的特殊布局 */
+:root[data-density] .tbl th,
+:root[data-density] .tbl td {
+  padding-top: calc((var(--row-h) - 1.6em) / 2);
+  padding-bottom: calc((var(--row-h) - 1.6em) / 2);
+}
+
+/* ---------------- 圆角 ---------------- */
+
+:root[data-radius='sharp'] {
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-lg: 4px;
+  --radius-control: 4px;
+  --radius-pill: 4px;
+}
+
+/* default：沿用 tokens.css 的 4/6/8，不重复声明 */
+
+:root[data-radius='round'] {
+  --radius-sm: 7px;
+  --radius-md: 11px;
+  --radius-lg: 15px;
+  --radius-control: 12px;
+  --radius-pill: 999px;
+}
+
+/* ---------------- 动效 ---------------- */
+
+/* 精简：把过渡压到近乎为零。用于远程桌面 / 低配机 / 主观偏好。
+   注意这是**用户显式选择**，因此写 data 属性选择器而不是只靠媒体查询。 */
+:root[data-motion='reduced'] {
+  --dur-fast: 0.01ms;
+  --dur: 0.01ms;
+  --dur-slow: 0.01ms;
+}
+:root[data-motion='reduced'] *,
+:root[data-motion='reduced'] *::before,
+:root[data-motion='reduced'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* ---------------- 背景纹理 ----------------
+   定义在全局层（非 scoped），因为目标是 App.vue 的 `.body::before`。
+   规则：
+     grid（默认） = 细网格 + 顶部光晕
+     plain        = 只留顶部光晕
+     none         = 完全纯色（省 GPU，适合远程桌面） */
+:root:not([data-backdrop='plain']):not([data-backdrop='none']) .body::before {
+  background:
+    radial-gradient(120% 100% at 50% 0%, var(--grid-line) 0%, transparent 72%),
+    radial-gradient(60% 60% at 78% 0%, color-mix(in srgb, var(--gold) 5%, transparent) 0%, transparent 70%),
+    linear-gradient(var(--grid-line) 1px, transparent 1px) 0 0 / var(--grid-size) var(--grid-size),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px) 0 0 / var(--grid-size) var(--grid-size);
+}
+:root[data-backdrop='plain'] .body::before {
+  background:
+    radial-gradient(120% 100% at 50% 0%, var(--grid-line) 0%, transparent 72%),
+    radial-gradient(60% 60% at 78% 0%, color-mix(in srgb, var(--gold) 5%, transparent) 0%, transparent 70%);
+}
+:root[data-backdrop='none'] .body::before {
+  background: none;
+}

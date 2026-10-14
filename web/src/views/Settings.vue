@@ -9,6 +9,10 @@ import { getSettings, saveSettings, testLlm, getScheduler, saveScheduler, schedu
 import {
   isTauri, getDesktopPrefs, setDesktopPrefs, getAutostart, setAutostart, hideToTray,
 } from '@/lib/tauri'
+import {
+  THEMES, DENSITIES, RADII, MOTIONS, BACKDROPS, FONT_SIZE_OPTIONS,
+  type ThemeKey, type Density, type Radius, type Motion, type Backdrop,
+} from '@/lib/appearance'
 
 const app = useAppStore()
 const toast = useToastStore()
@@ -92,12 +96,21 @@ async function saveDesktop() {
   } finally { deskBusy.value = false }
 }
 
-const themeOptions = [
-  { key: 'graphite' as const, label: '石墨', color: '#D4A574' },
-  { key: 'obsidian' as const, label: '黑曜', color: '#E0A050' },
-  { key: 'ivory' as const, label: '象牙', color: '#8E3A2F' },
-]
-const fontSizeOptions = [12, 13, 14, 15, 16]
+/* 外观：主题清单与各维度选项统一来自 @/lib/appearance（单一声明源），
+   颜色定义在 styles/tokens.css。这里只做展示与写入。 */
+const appearanceBusy = ref(false)
+function pickTheme(k: ThemeKey) { app.setTheme(k) }
+function pickDensity(k: Density) { app.setDensity(k) }
+function pickRadius(k: Radius) { app.setRadius(k) }
+function pickMotion(k: Motion) { app.setMotion(k) }
+function pickBackdrop(k: Backdrop) { app.setBackdrop(k) }
+function resetAppearance() {
+  if (!confirm('恢复默认外观？（主题=石墨、标准密度/圆角、完整动效、网格背景；字号=14px）')) return
+  app.resetAppearance()
+  toast.success('已恢复默认外观')
+}
+/** 当前主题的展示信息（用于「当前：xxx」提示） */
+const currentTheme = computed(() => THEMES.find((t) => t.key === app.theme))
 
 const agentBase = ref('')
 const agentKey = ref('')
@@ -112,8 +125,8 @@ onMounted(async () => {
     agentBase.value = (agent.api_base as string) || ''
     agentKey.value = (agent.api_key as string) || ''
     agentModel.value = (agent.model as string) || ''
-    if (s.theme) app.setTheme((s.theme as string) as 'graphite' | 'obsidian' | 'ivory')
-    if (s.font_size) app.setFontSize(Number(s.font_size))
+    // 外观（主题 + 4 个维度）已由 stores/app.ts 的 init() 从同一份 settings 统一应用，
+    // 这里不再重复 set（否则会触发多余的持久化写回）。
   } catch { /* 未配置时静默 */ }
   loadScheduler()
 })
@@ -162,35 +175,111 @@ async function save() {
     </PageHeader>
 
     <Card class="sec">
-      <h2 class="sec-title">外观</h2>
-      <div class="row">
+      <div class="sec-head">
+        <div>
+          <h2 class="sec-title">外观</h2>
+          <p class="sec-sub">
+            所有外观项即时生效（无需保存）。主题决定配色；密度 / 圆角 / 动效 / 背景与主题互相独立。
+          </p>
+        </div>
+        <button class="btn btn--ghost" @click="resetAppearance" :disabled="appearanceBusy">
+          <Icon name="refresh" :size="14" /> 恢复默认
+        </button>
+      </div>
+
+      <!-- 主题：按深色/浅色分组，用色板预览而不是纯文字 -->
+      <div class="row row--top">
         <label class="lbl">主题</label>
-        <div class="opts">
-          <button
-            v-for="t in themeOptions"
-            :key="t.key"
-            class="theme-btn"
-            :class="{ active: app.theme === t.key }"
-            @click="app.setTheme(t.key)"
-          >
-            <span class="swatch" :style="{ background: t.color }" />
-            {{ t.label }}
-          </button>
+        <div class="opts opts--grow">
+          <div v-for="fam in (['dark', 'light'] as const)" :key="fam" class="theme-group">
+            <span class="theme-group__label">{{ fam === 'dark' ? '深色' : '浅色' }}</span>
+            <div class="theme-grid">
+              <button
+                v-for="t in THEMES.filter((x) => x.family === fam)"
+                :key="t.key"
+                class="theme-card"
+                :class="{ active: app.theme === t.key }"
+                :title="t.hint"
+                :aria-pressed="app.theme === t.key"
+                @click="pickTheme(t.key)"
+              >
+                <span class="theme-card__swatch">
+                  <i v-for="(c, i) in t.swatch" :key="i" :style="{ background: c }" />
+                </span>
+                <span class="theme-card__label">
+                  {{ t.label }}
+                  <Icon v-if="app.theme === t.key" name="check" :size="12" />
+                </span>
+              </button>
+            </div>
+          </div>
+          <p class="hint">当前：{{ currentTheme?.label }} —— {{ currentTheme?.hint }}</p>
         </div>
       </div>
+
+      <!-- 密度 -->
       <div class="row">
-        <label class="lbl">字体大小</label>
+        <label class="lbl">密度</label>
         <div class="opts">
           <button
-            v-for="f in fontSizeOptions"
-            :key="f"
-            class="num-btn"
-            :class="{ active: app.fontSize === f }"
-            @click="app.setFontSize(f)"
-          >
-            {{ f }}px
-          </button>
+            v-for="d in DENSITIES" :key="d.key"
+            class="chip" :class="{ active: app.density === d.key }"
+            :title="d.hint" @click="pickDensity(d.key)"
+          >{{ d.label }}</button>
         </div>
+        <span class="hint hint--inline">{{ DENSITIES.find((x) => x.key === app.density)?.hint }}</span>
+      </div>
+
+      <!-- 圆角 -->
+      <div class="row">
+        <label class="lbl">圆角</label>
+        <div class="opts">
+          <button
+            v-for="r in RADII" :key="r.key"
+            class="chip" :class="{ active: app.radius === r.key }"
+            :title="r.hint" @click="pickRadius(r.key)"
+          >{{ r.label }}</button>
+        </div>
+        <span class="hint hint--inline">{{ RADII.find((x) => x.key === app.radius)?.hint }}</span>
+      </div>
+
+      <!-- 动效 -->
+      <div class="row">
+        <label class="lbl">动效</label>
+        <div class="opts">
+          <button
+            v-for="m in MOTIONS" :key="m.key"
+            class="chip" :class="{ active: app.motion === m.key }"
+            :title="m.hint" @click="pickMotion(m.key)"
+          >{{ m.label }}</button>
+        </div>
+        <span class="hint hint--inline">{{ MOTIONS.find((x) => x.key === app.motion)?.hint }}</span>
+      </div>
+
+      <!-- 背景纹理 -->
+      <div class="row">
+        <label class="lbl">背景</label>
+        <div class="opts">
+          <button
+            v-for="b in BACKDROPS" :key="b.key"
+            class="chip" :class="{ active: app.backdrop === b.key }"
+            :title="b.hint" @click="pickBackdrop(b.key)"
+          >{{ b.label }}</button>
+        </div>
+        <span class="hint hint--inline">{{ BACKDROPS.find((x) => x.key === app.backdrop)?.hint }}</span>
+      </div>
+
+      <!-- 字号 -->
+      <div class="row">
+        <label class="lbl">字号</label>
+        <div class="opts">
+          <button
+            v-for="f in FONT_SIZE_OPTIONS" :key="f"
+            class="chip" :class="{ active: app.fontSize === f }"
+            @click="app.setFontSize(f)"
+          >{{ f }}px</button>
+        </div>
+        <span class="hint hint--inline">整体缩放界面字号（不影响密度）</span>
       </div>
     </Card>
 
@@ -315,15 +404,87 @@ async function save() {
 </template>
 
 <style scoped>
-.settings { max-width: 640px; }
+/* 设置页容器：原来限宽 640px，在 1600 宽屏上只占约 40%，
+   右侧大片留白而主题网格被迫换行 —— 放宽并让卡片自适应。 */
+.settings { max-width: 1080px; }
 .sec {
   margin-bottom: var(--sp-5);
   padding: var(--sp-5);
 }
 .sec-title { font-size: var(--fs-lg); font-weight: 600; color: var(--text); margin: 0 0 var(--sp-4); }
+
+/* ---- 外观卡片（2026-10-15）---- */
+.sec-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: var(--sp-4); margin-bottom: var(--sp-5);
+}
+.sec-head .sec-title { margin-bottom: var(--sp-1); }
+.sec-sub { margin: 0; font-size: var(--fs-sm); color: var(--text-sub); line-height: 1.5; }
+
+/* 外观行：标签**顶对齐**（不是垂直居中）——
+   主题块有 3 行，若居中会让标签飘到中间，上下各留一大段空白。 */
+.row--top .lbl { padding-top: 3px; }
+.opts--grow { flex: 1; min-width: 0; flex-direction: column; gap: var(--sp-4); }
+
+.theme-group { display: flex; flex-direction: column; gap: var(--sp-2); }
+.theme-group__label {
+  font-size: var(--fs-xs); color: var(--text-faint);
+  text-transform: uppercase; letter-spacing: 0.08em;
+}
+/* 主题网格：8 个主题自适应铺开（宽屏 5 列、窄屏 1~2 列），避免只有两三个一行。 */
+.theme-grid {
+  display: grid; gap: var(--sp-3);
+  grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+}
+/* 主题卡：色板预览比纯文字更能说明"长什么样" */
+.theme-card {
+  display: flex; flex-direction: column; gap: 7px;
+  padding: 9px; cursor: pointer; text-align: left;
+  background: var(--bg-panel); color: var(--text-sub);
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  transition: border-color var(--dur-fast), transform var(--dur-fast), color var(--dur-fast);
+}
+.theme-card:hover { border-color: var(--border-strong); transform: translateY(-1px); }
+.theme-card.active { border-color: var(--gold); color: var(--text); box-shadow: 0 0 0 1px var(--gold); }
+.theme-card__swatch {
+  display: flex; height: 30px; border-radius: var(--radius-sm);
+  overflow: hidden; border: 1px solid var(--border-soft);
+}
+.theme-card__swatch i { flex: 1; }
+.theme-card__label {
+  display: inline-flex; align-items: center; justify-content: space-between;
+  font-size: var(--fs-sm); gap: 4px;
+}
+.theme-card.active .theme-card__label { color: var(--gold); }
+
+/* 通用小胶囊按钮（密度/圆角/动效/背景/字号共用） */
+.chip {
+  padding: 6px 13px; cursor: pointer; font-size: var(--fs-sm);
+  background: transparent; color: var(--text-sub);
+  border: 1px solid var(--border); border-radius: var(--radius-pill);
+  transition: border-color var(--dur-fast), color var(--dur-fast), background var(--dur-fast);
+}
+.chip:hover { border-color: var(--border-strong); color: var(--text); }
+.chip.active { border-color: var(--gold); color: var(--gold); background: var(--gold-dim); }
+
+.hint { margin: 0; font-size: var(--fs-xs); color: var(--text-faint); line-height: 1.5; }
+.hint--inline { flex: 1; min-width: 0; }
+
+.btn--ghost {
+  background: transparent; color: var(--text-sub);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 7px 13px; font-size: var(--fs-sm); cursor: pointer;
+  display: inline-flex; align-items: center; gap: var(--sp-2);
+}
+.btn--ghost:hover { border-color: var(--border-strong); color: var(--text); }
+
 .row { display: flex; align-items: center; gap: var(--sp-4); margin-bottom: var(--sp-3); }
+/* ⚠️ 顺序要紧：`.row--top` 必须排在基础 `.row` **之后**。
+   同为单类选择器、特异性相同 → 后写者胜。早期版本把 .row--top 写在前面，
+   被后面的 `.row{align-items:center}` 覆盖，导致标签仍然垂直居中（实测踩过）。 */
+.row--top { align-items: flex-start; }
 .lbl { font-size: var(--fs-sm); color: var(--text-sub); min-width: 80px; }
-.opts { display: flex; gap: var(--sp-2); }
+.opts { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
 .theme-btn, .num-btn {
   display: inline-flex; align-items: center; gap: var(--sp-2);
   padding: 7px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm);

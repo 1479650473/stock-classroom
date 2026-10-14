@@ -11,6 +11,14 @@ DEFAULTS = {
     "font_size": 13,
     "theme": "graphite",
     "window_size": "large",
+    # ---- 外观维度（2026-10-15 新增）----
+    # ⚠️ 这些必须同时存在于 DEFAULTS 与 system.py 的 POST 白名单里：
+    #    _deep_merge() 只遍历 DEFAULTS 的键 → 不在 DEFAULTS 里的键会在
+    #    load 阶段被**静默丢弃**（即使 POST 白名单放行了也一样存不下来）。
+    "density": "comfortable",   # comfortable | compact | roomy
+    "radius": "default",        # sharp | default | round
+    "motion": "full",           # full | reduced
+    "backdrop": "grid",         # grid | plain | none
     "agent": {
         "api_base": "https://api.deepseek.com/v1",
         "api_key": "",

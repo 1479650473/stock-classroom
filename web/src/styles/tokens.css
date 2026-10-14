@@ -1,8 +1,12 @@
 /* ============================================================
    Design tokens — stock-classroom v5.0
-   3 themes via [data-theme] on <html>. All components read these
+   8 themes via [data-theme] on <html>. All components read these
    CSS variables, so a theme switch restyles the whole app live.
    A股配色约定: 涨=红(--up) 跌=绿(--down).
+
+   2026-10-15 扩充：3 → 8 主题（新增 午夜蓝/北境/高对比/羊皮纸/樱雪），
+   并补上「外观维度」契约变量（密度/圆角，见 styles/appearance.css）。
+   主题清单的**单一声明源**是 src/lib/appearance.ts —— 新增主题时两处都要加。
    ============================================================ */
 
 :root,
@@ -200,6 +204,324 @@
 
 }
 
+/* ---- 2026-10-15 新增 5 套主题 ---- */
+
+/* 午夜蓝：深藏蓝底，青蓝强调。适合长时间看盘、偏冷色偏好。 */
+:root[data-theme='midnight'] {
+  color-scheme: dark;
+  --bg: #0a1020;
+  --bg-panel: #131c2e;
+  --bg-raised: #18233a;
+  --bg-overlay: #1d2942;
+  --border: #22304d;
+  --border-soft: #1b2740;
+  --border-strong: #2d3d5e;
+
+  --text: #e4ecf7;
+  --text-sub: #93a4c0;
+  --text-faint: #5a6b88;
+
+  --accent: #4fc3f7;
+  --purple: #7c9cff;
+  --accent-hover: #7ad4ff;
+  --accent-dim: rgba(79, 195, 247, 0.14);
+  --on-accent: #04141f;
+
+  --gold: #ffb454;
+  --gold-hover: #ffc978;
+  --gold-dim: rgba(255, 180, 84, 0.16);
+  --on-gold: #1a1004;
+
+  --up: #ff5c5c;
+  --down: #26c281;
+  --warn: #ffb454;
+  --ok: #26c281;
+  --info: #4fc3f7;
+
+  --sel-bg: rgba(79, 195, 247, 0.16);
+  --sel-fg: #a5e3ff;
+  --row-alt: #101829;
+  --bg-hover: #16203a;
+
+  --scroll: #26334f;
+  --scroll-hover: #35476b;
+
+  --card-top: #16203a;
+  --card-mid: #121a2c;
+  --card-bot: #0e1524;
+  --card-border: #22304d;
+  --card-border-top: #2d3d5e;
+  --card-hover: #37507a;
+
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.55);
+  --ring: rgba(79, 195, 247, 0.45);
+  --ring-gold: rgba(255, 180, 84, 0.42);
+  --glass: rgba(19, 28, 46, 0.74);
+  --glass-border: rgba(255, 255, 255, 0.07);
+  --sheen: rgba(255, 255, 255, 0.05);
+  --glow-gold: 0 0 0 1px rgba(255, 180, 84, 0.25), 0 6px 20px rgba(255, 180, 84, 0.16);
+  --glow-accent: 0 8px 24px rgba(79, 195, 247, 0.24);
+  --grid-line: rgba(255, 255, 255, 0.028);
+  --grid-size: 22px;
+  --flash: rgba(79, 195, 247, 0.16);
+  --shadow-lift: 0 10px 28px rgba(0, 0, 0, 0.42);
+}
+
+/* 北境（Nord 调）：冷调石板灰蓝，雾蓝强调。低饱和、护眼。 */
+:root[data-theme='nord'] {
+  color-scheme: dark;
+  --bg: #2e3440;
+  --bg-panel: #3b4252;
+  --bg-raised: #434c5e;
+  --bg-overlay: #4c566a;
+  --border: #4c566a;
+  --border-soft: #3f4757;
+  --border-strong: #5d6b82;
+
+  --text: #eceff4;
+  --text-sub: #b8c2d4;
+  --text-faint: #7d8ba3;
+
+  --accent: #88c0d0;
+  --purple: #b48ead;
+  --accent-hover: #9ed3e1;
+  --accent-dim: rgba(136, 192, 208, 0.16);
+  --on-accent: #1c2430;
+
+  --gold: #ebcb8b;
+  --gold-hover: #f2dba8;
+  --gold-dim: rgba(235, 203, 139, 0.18);
+  --on-gold: #23201a;
+
+  --up: #bf616a;
+  --down: #a3be8c;
+  --warn: #ebcb8b;
+  --ok: #a3be8c;
+  --info: #88c0d0;
+
+  --sel-bg: rgba(136, 192, 208, 0.18);
+  --sel-fg: #cfe9f1;
+  --row-alt: #363d4b;
+  --bg-hover: #414a5c;
+
+  --scroll: #4c566a;
+  --scroll-hover: #5d6b82;
+
+  --card-top: #404859;
+  --card-mid: #3b4252;
+  --card-bot: #353c4b;
+  --card-border: #4c566a;
+  --card-border-top: #5d6b82;
+  --card-hover: #66788f;
+
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 6px 20px rgba(0, 0, 0, 0.24);
+  --shadow-pop: 0 12px 36px rgba(0, 0, 0, 0.42);
+  --ring: rgba(136, 192, 208, 0.5);
+  --ring-gold: rgba(235, 203, 139, 0.45);
+  --glass: rgba(59, 66, 82, 0.78);
+  --glass-border: rgba(255, 255, 255, 0.09);
+  --sheen: rgba(255, 255, 255, 0.06);
+  --glow-gold: 0 0 0 1px rgba(235, 203, 139, 0.28), 0 6px 18px rgba(235, 203, 139, 0.16);
+  --glow-accent: 0 8px 22px rgba(136, 192, 208, 0.24);
+  --grid-line: rgba(255, 255, 255, 0.035);
+  --grid-size: 22px;
+  --flash: rgba(136, 192, 208, 0.18);
+  --shadow-lift: 0 10px 26px rgba(0, 0, 0, 0.34);
+}
+
+/* 高对比：纯黑底 + 高饱和强调，最大化可读性。投屏/视力辅助/日光环境。 */
+:root[data-theme='contrast'] {
+  color-scheme: dark;
+  --bg: #000000;
+  --bg-panel: #0f0f0f;
+  --bg-raised: #171717;
+  --bg-overlay: #1f1f1f;
+  --border: #4a4a4a;
+  --border-soft: #2e2e2e;
+  --border-strong: #7a7a7a;
+
+  --text: #ffffff;
+  --text-sub: #d0d0d0;
+  --text-faint: #9a9a9a;
+
+  --accent: #ffe14d;
+  --purple: #d9a6ff;
+  --accent-hover: #fff08a;
+  --accent-dim: rgba(255, 225, 77, 0.2);
+  --on-accent: #000000;
+
+  --gold: #ffe14d;
+  --gold-hover: #fff08a;
+  --gold-dim: rgba(255, 225, 77, 0.2);
+  --on-gold: #000000;
+
+  --up: #ff4d4d;
+  --down: #35e07a;
+  --warn: #ffc400;
+  --ok: #35e07a;
+  --info: #66d9ff;
+
+  --sel-bg: rgba(255, 225, 77, 0.24);
+  --sel-fg: #fff3b0;
+  --row-alt: #131313;
+  --bg-hover: #242424;
+
+  --scroll: #5a5a5a;
+  --scroll-hover: #7a7a7a;
+
+  --card-top: #161616;
+  --card-mid: #101010;
+  --card-bot: #0a0a0a;
+  --card-border: #4a4a4a;
+  --card-border-top: #7a7a7a;
+  --card-hover: #8a8a8a;
+
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 6px 20px rgba(0, 0, 0, 0.6);
+  --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.8);
+  --ring: rgba(255, 225, 77, 0.7);
+  --ring-gold: rgba(255, 225, 77, 0.7);
+  --glass: rgba(15, 15, 15, 0.88);
+  --glass-border: rgba(255, 255, 255, 0.16);
+  --sheen: rgba(255, 255, 255, 0.08);
+  --glow-gold: 0 0 0 2px rgba(255, 225, 77, 0.5), 0 6px 20px rgba(255, 225, 77, 0.28);
+  --glow-accent: 0 8px 24px rgba(255, 225, 77, 0.3);
+  --grid-line: rgba(255, 255, 255, 0.05);
+  --grid-size: 20px;
+  --flash: rgba(255, 225, 77, 0.24);
+  --shadow-lift: 0 10px 28px rgba(0, 0, 0, 0.7);
+}
+
+/* 羊皮纸：复古黄褐，墨棕强调。长时间阅读/低蓝光。 */
+:root[data-theme='sepia'] {
+  color-scheme: light;
+  --bg: #ece0c8;
+  --bg-panel: #f6eeda;
+  --bg-raised: #fdf8ec;
+  --bg-overlay: #e6d8bd;
+  --border: #d6c5a3;
+  --border-soft: #e2d4b8;
+  --border-strong: #c4ae88;
+
+  --text: #33291c;
+  --text-sub: #6d5c44;
+  --text-faint: #8e7c60;
+
+  --accent: #6b4a2f;
+  --purple: #7a4a6b;
+  --accent-hover: #845c3c;
+  --accent-dim: rgba(107, 74, 47, 0.12);
+  --on-accent: #fbf5e8;
+
+  --gold: #8a6a3a;
+  --gold-hover: #a07d47;
+  --gold-dim: rgba(138, 106, 58, 0.18);
+  --on-gold: #fbf5e8;
+
+  --up: #a33a2a;
+  --down: #4a6f3a;
+  --warn: #9a7420;
+  --ok: #4a6f3a;
+  --info: #4a5f7a;
+
+  --sel-bg: rgba(107, 74, 47, 0.14);
+  --sel-fg: #5a3d24;
+  --row-alt: #f0e6d0;
+  --bg-hover: #e8dcc0;
+
+  --scroll: #cdb896;
+  --scroll-hover: #b8a07a;
+
+  --card-top: #f9f3e4;
+  --card-mid: #f6eeda;
+  --card-bot: #f0e6d0;
+  --card-border: #d6c5a3;
+  --card-border-top: #c4ae88;
+  --card-hover: #b09873;
+
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.55) inset, 0 2px 10px rgba(70, 50, 20, 0.1);
+  --shadow-pop: 0 12px 40px rgba(70, 50, 20, 0.2);
+  --shadow-1: 0 1px 2px rgba(70, 50, 20, 0.07);
+  --shadow-2: 0 4px 16px rgba(70, 50, 20, 0.11);
+  --shadow-3: 0 16px 48px rgba(70, 50, 20, 0.18);
+  --ring: rgba(107, 74, 47, 0.32);
+  --ring-gold: rgba(138, 106, 58, 0.34);
+  --glass: rgba(246, 238, 218, 0.84);
+  --glass-border: rgba(51, 41, 28, 0.08);
+  --sheen: rgba(255, 255, 255, 0.6);
+  --glow-gold: 0 0 0 1px rgba(138, 106, 58, 0.3), 0 6px 18px rgba(138, 106, 58, 0.15);
+  --glow-accent: 0 8px 22px rgba(107, 74, 47, 0.18);
+  --grid-line: rgba(51, 41, 28, 0.04);
+  --grid-size: 22px;
+  --flash: rgba(107, 74, 47, 0.12);
+  --shadow-lift: 0 10px 26px rgba(70, 50, 20, 0.16);
+}
+
+/* 樱雪：浅粉冷白，莓红强调。清爽、低饱和，适合白天。 */
+:root[data-theme='sakura'] {
+  color-scheme: light;
+  --bg: #f7eef1;
+  --bg-panel: #fdf7f9;
+  --bg-raised: #ffffff;
+  --bg-overlay: #f2e6ea;
+  --border: #e8d3da;
+  --border-soft: #f0e0e6;
+  --border-strong: #d9bcc7;
+
+  --text: #2b1f24;
+  --text-sub: #7a6270;
+  --text-faint: #9c8592;
+
+  --accent: #b52d5a;
+  --purple: #8a5aa8;
+  --accent-hover: #c9436e;
+  --accent-dim: rgba(181, 45, 90, 0.1);
+  --on-accent: #fdf2f6;
+
+  --gold: #b08040;
+  --gold-hover: #c9974f;
+  --gold-dim: rgba(176, 128, 64, 0.16);
+  --on-gold: #fdf8f0;
+
+  --up: #c0303f;
+  --down: #3f8a63;
+  --warn: #b8801f;
+  --ok: #3f8a63;
+  --info: #6a5aa8;
+
+  --sel-bg: rgba(181, 45, 90, 0.12);
+  --sel-fg: #9a2249;
+  --row-alt: #faf1f4;
+  --bg-hover: #f4e6eb;
+
+  --scroll: #e0c9d2;
+  --scroll-hover: #c9a8b5;
+
+  --card-top: #fefafc;
+  --card-mid: #fdf7f9;
+  --card-bot: #faf1f4;
+  --card-border: #e8d3da;
+  --card-border-top: #d9bcc7;
+  --card-hover: #c9a8b5;
+
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.7) inset, 0 2px 10px rgba(120, 60, 85, 0.08);
+  --shadow-pop: 0 12px 40px rgba(120, 60, 85, 0.16);
+  --shadow-1: 0 1px 2px rgba(120, 60, 85, 0.06);
+  --shadow-2: 0 4px 16px rgba(120, 60, 85, 0.1);
+  --shadow-3: 0 16px 48px rgba(120, 60, 85, 0.14);
+  --ring: rgba(181, 45, 90, 0.28);
+  --ring-gold: rgba(176, 128, 64, 0.32);
+  --glass: rgba(253, 247, 249, 0.84);
+  --glass-border: rgba(43, 31, 36, 0.07);
+  --sheen: rgba(255, 255, 255, 0.7);
+  --glow-gold: 0 0 0 1px rgba(176, 128, 64, 0.3), 0 6px 18px rgba(176, 128, 64, 0.14);
+  --glow-accent: 0 8px 22px rgba(181, 45, 90, 0.16);
+  --grid-line: rgba(43, 31, 36, 0.03);
+  --grid-size: 22px;
+  --flash: rgba(181, 45, 90, 0.1);
+  --shadow-lift: 0 10px 26px rgba(120, 60, 85, 0.13);
+}
+
 /* ---- shared scales (theme-independent) ---- */
 :root {
   --font-sans: 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', system-ui, sans-serif;
@@ -258,6 +580,24 @@
   --panel-2: var(--bg-raised);
   --radius: var(--radius-md);
   --shadow-lg: var(--shadow-3);
+
+  /* ---- 2026-10-15 补齐：此前被引用但从未定义，导致这两处样式静默失效 ----
+     CandDetail.vue 用 --fg/--fg-dim/--line，FundArb.vue 用 --text-dim。
+     未定义时浏览器回退到「继承色」，肉眼不易发现。统一映射到语义 token。 */
+  --fg: var(--text);
+  --fg-dim: var(--text-sub);
+  --text-dim: var(--text-sub);
+  --line: var(--border);
+
+  /* ---- 外观维度契约（由 styles/appearance.css 按 data-* 属性覆盖）----
+     这些只是**默认值**；换密度/圆角不会动主题，反之亦然。 */
+  --row-h: 34px;          /* 表格行高 */
+  --pad-card: var(--sp-4);
+  --pad-page: var(--sp-5);
+  --gap-sec: var(--section-gap);
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
 }
 
 /* 尊重系统「减少动态效果」：把所有过渡/动画压到最短 */
