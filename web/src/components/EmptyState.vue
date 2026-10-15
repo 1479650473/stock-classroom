@@ -23,6 +23,7 @@ defineSlots<{ action?: {} }>()
   padding: var(--sp-8) var(--sp-6);
   gap: var(--sp-3);
 }
-.ic { color: var(--text-faint); }
+/* 图标轻浮动（关键帧在全局动效层 motion.css；「动效：精简」时自动停） */
+.ic { color: var(--text-faint); animation: m-float 3.4s var(--ease) infinite; }
 .msg { color: var(--text-sub); font-size: var(--fs-md); }
 </style>

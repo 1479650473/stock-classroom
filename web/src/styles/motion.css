@@ -109,6 +109,37 @@
 @keyframes m-spin { to { transform: rotate(360deg); } }
 .m-spin { animation: m-spin 0.9s linear infinite; }
 
+/* 空状态图标轻浮动：把"其实在等数据/等操作"表达出来，而不是一块死图标 */
+@keyframes m-float {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50%      { transform: translate3d(0, -5px, 0); }
+}
+.m-float { animation: m-float 3.4s var(--ease) infinite; }
+
+/* 表格行入场：**只级联前 12 行**。
+   长表格（500 行）若全量级联，滚到下面还在逐行浮现，像"下雨"而不是"加载"；
+   只让首屏可见部分参与，且用 backwards 填充 —— 未开始的行保持原样，不会先隐形。 */
+@keyframes m-row-in {
+  from { opacity: 0; transform: translate3d(0, 6px, 0); }
+  to   { opacity: 1; transform: none; }
+}
+.m-rows tbody tr {
+  animation: m-row-in 0.3s var(--ease-out) backwards;
+}
+.m-rows tbody tr:nth-child(1)  { animation-delay: 0ms; }
+.m-rows tbody tr:nth-child(2)  { animation-delay: 18ms; }
+.m-rows tbody tr:nth-child(3)  { animation-delay: 36ms; }
+.m-rows tbody tr:nth-child(4)  { animation-delay: 54ms; }
+.m-rows tbody tr:nth-child(5)  { animation-delay: 72ms; }
+.m-rows tbody tr:nth-child(6)  { animation-delay: 90ms; }
+.m-rows tbody tr:nth-child(7)  { animation-delay: 108ms; }
+.m-rows tbody tr:nth-child(8)  { animation-delay: 126ms; }
+.m-rows tbody tr:nth-child(9)  { animation-delay: 144ms; }
+.m-rows tbody tr:nth-child(10) { animation-delay: 162ms; }
+.m-rows tbody tr:nth-child(11) { animation-delay: 180ms; }
+.m-rows tbody tr:nth-child(12) { animation-delay: 198ms; }
+.m-rows tbody tr:nth-child(n + 13) { animation: none; }
+
 /* ---------------- 交互反馈增强 ----------------
    base.css 已给 .ui-btn 做了 hover 抬升/按压回弹；这里补：
    · 图标类按钮（比如卡片右上角"刷新"）与可点卡片统一的"抬升"质感
@@ -143,7 +174,8 @@
   [class*='m-in'], [class*='m-stagger'], .m-flash, .m-tick {
     animation: none !important;
   }
-  .m-live, .m-shimmer, .m-breathe, .m-spin { animation: none !important; }
+  .m-live, .m-shimmer, .m-breathe, .m-spin, .m-float { animation: none !important; }
+  .m-rows tbody tr { animation: none !important; }
   .m-lift:hover { transform: none; }
 }
 
@@ -154,7 +186,9 @@
 :root[data-motion='reduced'] .m-live,
 :root[data-motion='reduced'] .m-shimmer,
 :root[data-motion='reduced'] .m-breathe,
-:root[data-motion='reduced'] .m-spin {
+:root[data-motion='reduced'] .m-spin,
+:root[data-motion='reduced'] .m-float,
+:root[data-motion='reduced'] .m-rows tbody tr {
   animation: none !important;
 }
 :root[data-motion='reduced'] .m-lift:hover { transform: none; }

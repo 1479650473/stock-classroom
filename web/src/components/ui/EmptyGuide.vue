@@ -50,6 +50,9 @@ withDefaults(
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
   color: var(--text-faint);
   margin-bottom: var(--sp-1);
+  /* 轻浮动：把"在等数据/在等操作"表达出来，而不是一块死图标。
+     动效层 motion.css 提供关键帧；「动效：精简」时自动停。 */
+  animation: m-float 3.4s var(--ease) infinite;
 }
 .empty-guide__title { font-size: var(--fs-md); font-weight: 600; color: var(--text); }
 .empty-guide__desc {

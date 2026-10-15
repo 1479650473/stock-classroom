@@ -164,11 +164,60 @@ export const useAppStore = defineStore('app', {
       })
     },
 
-    async init() {
+    /**
+     * 启动初始化。
+     *
+     * 关键约束：**不要在这里 await 后端**。
+     * `/api/system/bootstrap` 要扫 5GB 级 kline 库的 MAX(date)，冷启动实测 5.5s、
+     * 热态约 940ms。以前 ready 等它，导致首屏白等一秒（桌面端有闪屏遮着，
+     * Web 端就是白屏）。现在本地外观就绪即 ready，后端数据后台补。
+     */
+    init() {
+      // ① 外观先落地：纯读 localStorage，同步完成 → 首帧就是用户选的主题，
+      //    不会"先按默认主题画一帧、拿到 settings 后再跳变"。
       this.applyTheme()
+
+      // ② 外壳立即可渲染。
+      this.ready = true
+
+      if (isTauri()) {
+        // 桌面端例外：后端是随应用启动的 sidecar（akshare 导入慢）。
+        // 主窗口本来就由 splash 挡着，等后端就绪再显示是对的 —— 露出空壳体验更差。
+        void this.waitBackend()
+      } else {
+        // 浏览器：完全不阻塞渲染。
+        void this.loadBackendState()
+        void this.syncAppearanceFromBackend()
+      }
+
+      // 桌面外壳：前端就绪 → 关掉启动闪屏、显示主窗口（浏览器里是 no-op）
+      void appReady()
+      // 首屏渲染完之后，趁空闲把其它主页面「预热」：JS chunk + 关键接口的缓存
+      void this.prefetch()
+    },
+
+    /** 后台补数据：bootstrap 含数据新鲜度，用于首屏各处提示。失败只标记离线，不阻塞。 */
+    async loadBackendState() {
+      // 兜底：万一后端半死不活（连得上但不应答），不要让 pending 永远悬着
+      await Promise.race([
+        (async () => {
+          try {
+            const b = await getBootstrap()
+            this.bootstrap = b
+            this.aiConfigured = b.ai_configured
+            this.backendOnline = true
+          } catch {
+            this.backendOnline = false
+          }
+        })(),
+        new Promise((r) => setTimeout(r, 12000)),
+      ])
+    },
+
+    /** 后台同步外观：后端 settings 是权威（换机器/重装后仍保持偏好）。 */
+    async syncAppearanceFromBackend() {
       try {
         const s = await getSettings()
-        // 后端是权威来源（换机器/重装后仍保持用户偏好）；后端缺字段则保留本地值
         if (isThemeKey(s.theme)) this.theme = s.theme
         if (FONT_SIZES.includes(Number(s.font_size) as FontSize)) this.fontSize = Number(s.font_size) as FontSize
         if (DENSITY_KEYS.includes(s.density as Density)) this.density = s.density as Density
@@ -177,26 +226,8 @@ export const useAppStore = defineStore('app', {
         if (BACKDROP_KEYS.includes(s.backdrop as Backdrop)) this.backdrop = s.backdrop as Backdrop
         this.applyTheme()
       } catch {
-        /* backend offline — keep local */
+        /* 离线：保留 localStorage 里的值 */
       }
-      // 桌面端：主窗口先不出现，等本地服务真正可用再显示（避免"打开了但一片离线"）
-      if (isTauri()) {
-        await this.waitBackend()
-      } else {
-        try {
-          const b = await getBootstrap()
-          this.bootstrap = b
-          this.aiConfigured = b.ai_configured
-          this.backendOnline = true
-        } catch {
-          this.backendOnline = false
-        }
-      }
-      this.ready = true
-      // 桌面外壳：前端就绪 → 关掉启动闪屏、显示主窗口（浏览器里是 no-op）
-      void appReady()
-      // 首屏渲染完之后，趁空闲把其它主页面「预热」：JS chunk + 关键接口的缓存
-      void this.prefetch()
     },
   },
 })

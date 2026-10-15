@@ -104,7 +104,24 @@ button { font-family: inherit; }
 .tbl tbody tr {
   position: relative;
   transition: background var(--dur-fast) var(--ease);
+  /* 行入场级联：只级联前 12 行（见 motion.css 的说明 —— 长表全量级联会像"下雨"）。
+     关键帧与延迟表都在动效层，这里只挂上去，保证所有 .tbl 自动受益。 */
+  animation: m-row-in 0.3s var(--ease-out) backwards;
 }
+.tbl tbody tr:nth-child(1)  { animation-delay: 0ms; }
+.tbl tbody tr:nth-child(2)  { animation-delay: 18ms; }
+.tbl tbody tr:nth-child(3)  { animation-delay: 36ms; }
+.tbl tbody tr:nth-child(4)  { animation-delay: 54ms; }
+.tbl tbody tr:nth-child(5)  { animation-delay: 72ms; }
+.tbl tbody tr:nth-child(6)  { animation-delay: 90ms; }
+.tbl tbody tr:nth-child(7)  { animation-delay: 108ms; }
+.tbl tbody tr:nth-child(8)  { animation-delay: 126ms; }
+.tbl tbody tr:nth-child(9)  { animation-delay: 144ms; }
+.tbl tbody tr:nth-child(10) { animation-delay: 162ms; }
+.tbl tbody tr:nth-child(11) { animation-delay: 180ms; }
+.tbl tbody tr:nth-child(12) { animation-delay: 198ms; }
+.tbl tbody tr:nth-child(n + 13) { animation: none; }
+:root[data-motion='reduced'] .tbl tbody tr { animation: none; }
 .tbl tbody tr:nth-child(even) { background: var(--row-alt); }
 .tbl tbody tr:hover { background: var(--bg-hover); }
 .tbl tbody tr:hover::after {
