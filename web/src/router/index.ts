@@ -7,6 +7,7 @@ const viewModules: Record<string, () => Promise<{ default: unknown }>> = {
   market: () => import('@/views/v6/Market.vue'),
   strategy: () => import('@/views/v6/Strategy.vue'),
   trade: () => import('@/views/v6/Trade.vue'),
+  live: () => import('@/views/v6/Live.vue'),
   fundarb: () => import('@/views/v6/FundArb.vue'),
   ai: () => import('@/views/v6/AI.vue'),
   data: () => import('@/views/v6/Data.vue'),
@@ -18,6 +19,7 @@ const ALL_ROUTES: RouteRecordRaw[] = [
   { path: '/market', name: 'market', component: viewModules.market, meta: { title: '行情' } },
   { path: '/strategy', name: 'strategy', component: viewModules.strategy, meta: { title: '策略' } },
   { path: '/trade', name: 'trade', component: viewModules.trade, meta: { title: '交易' } },
+  { path: '/live', name: 'live', component: viewModules.live, meta: { title: '实盘' } },
   { path: '/arb', name: 'fundarb', component: viewModules.fundarb, meta: { title: '基金套利' } },
   { path: '/ai', name: 'ai', component: viewModules.ai, meta: { title: 'AI' } },
   { path: '/data', name: 'data', component: viewModules.data, meta: { title: '数据' } },
@@ -26,6 +28,7 @@ const ALL_ROUTES: RouteRecordRaw[] = [
 
   // ---- 旧路由兼容重定向（书签/习惯不失效） ----
   { path: '/sim', redirect: () => ({ path: '/trade', query: { tab: 'sim' } }) },
+  { path: '/realtime', redirect: () => ({ path: '/live' }) },
   { path: '/overview', redirect: () => ({ path: '/' }) },
   { path: '/flow', redirect: () => ({ path: '/' }) },
   { path: '/kline', redirect: () => ({ path: '/market', query: { tab: 'stock' } }) },

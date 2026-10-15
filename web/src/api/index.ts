@@ -949,3 +949,113 @@ export const getArbDetail = (code: string, params: Record<string, unknown> = {})
 export const getArbStats = () => api.get<Record<string, unknown>>('/api/fund-arb/stats')
 export const syncArb = (mode: 'daily' | 'fees' | 'backfill' | 'list' = 'daily') =>
   api.post<{ job: JobHandle; mode: string }>('/api/fund-arb/sync', { mode })
+
+/* ─────────────────────────── 实盘（trade-automation 桥接） ───────────────────────────
+ * 后端 backend/api/blueprints/live.py 把 C# 工具包成 HTTP。
+ * 约定：返回的是**工具自己的产物**（last-result.json / 各 *.log），
+ * 前端只做透传 + 类型标注，不"美化"结果 —— 失败原因要原样可见。
+ */
+
+/** 工具某次调用的统一返回形状 */
+export interface LiveRun {
+  ok: boolean
+  exit_code: number | null
+  /** 工具权威产物 last-result.json */
+  result: {
+    ts?: string
+    command?: string
+    action?: string
+    process?: string
+    parameters?: Record<string, unknown>
+    ok?: boolean
+    exit_code?: number
+    message?: string
+    popup_texts?: string[]
+    screenshots?: string[]
+    log_file?: string
+  } | null
+  stderr: string
+  log_tail: string
+  elapsed: number | null
+  /** 桥接层自身错误（超时/找不到 exe），与工具错误分开 */
+  error: string | null
+  cmd: string[]
+  submitted?: boolean
+  mode?: string
+}
+
+export interface LiveStatus {
+  available: boolean
+  tool_dir: string
+  ta_dir: string
+  last: {
+    ts?: string
+    command?: string
+    action?: string
+    ok?: boolean
+    exit_code?: number
+    message?: string
+    parameters?: Record<string, unknown>
+  } | null
+  files: Record<string, string | null>
+  snapshots: string[]
+}
+
+export const getLiveStatus = () => api.get<LiveStatus>('/api/live/status', undefined, { ttl: 0 })
+
+/** 读券商客户端面板（只读）。bg=1 用后台模式，不抢前台焦点。 */
+export const queryLivePanel = (panel: 'positions' | 'deals' | 'cancel' | 'funds', bg = true, timeout = 150) =>
+  api.get<LiveRun>(`/api/live/query/${panel}`, { bg: bg ? 1 : 0, timeout }, { ttl: 0 })
+
+/** 实时行情（现价/涨停/昨收/跌停）。 */
+export const queryLiveQuote = (codes: string[], bg = true, timeout = 180) =>
+  api.get<LiveRun>('/api/live/quote', { codes: codes.join(','), bg: bg ? 1 : 0, timeout }, { ttl: 0 })
+
+/** 一键启动/登录客户端（有副作用，不下单）。 */
+export const liveStartup = (credFile?: string, bg = true) =>
+  api.post<LiveRun>('/api/live/startup', { cred_file: credFile, bg })
+
+/** 收盘快照：确保就绪 → 读资金+持仓+成交+委托 → 存档。 */
+export const liveSnapshot = (credFile?: string) =>
+  api.post<LiveRun>('/api/live/snapshot', { cred_file: credFile })
+
+/** 当日成交回传（对账）。 */
+export const getLiveFills = (date?: string) =>
+  api.get<{ date: string; count: number; fills: Record<string, unknown>[] }>(
+    '/api/live/fills', date ? { date } : undefined, { ttl: 0 })
+
+/** 幂等锁记录：已提交委托及其状态。 */
+export const getLiveIdempotency = () =>
+  api.get<{ entries: Record<string, unknown>[] }>('/api/live/idempotency', undefined, { ttl: 0 })
+
+export const listLiveSnapshots = (limit = 30) =>
+  api.get<{ snapshots: string[] }>('/api/live/snapshots', { limit }, { ttl: 0 })
+
+export const getLiveSnapshot = (name: string) =>
+  api.get<Record<string, unknown>>(`/api/live/snapshots/${encodeURIComponent(name)}`, undefined, { ttl: 0 })
+
+/**
+ * **会产生真实委托**的下单/撤单。
+ *
+ * 安全约定（与后端 live.py 的闸门一一对应，两处都不能放松）：
+ *  - `confirm: true` 是硬要求，否则后端 400
+ *  - `submit: true` 才会真的提交；不带就是**预演**（切面板→填单→校验→截图，不提交）
+ *  - `yes: true` 才跳过工具的人工确认框（agent 模式）
+ * 所以调用方至少要显式写出 confirm，submit 由 UI 上「预演 / 真下单」两个按钮决定。
+ */
+export interface LiveOrderBody {
+  mode: 'buy' | 'sell' | 'buy-multi' | 'sell-multi' | 'cancel'
+  code?: string
+  price?: string | number
+  qty?: string | number
+  legs?: string
+  cancel_scope?: 'all-buy' | 'all-sell'
+  submit?: boolean
+  yes?: boolean
+  allow_st?: boolean
+  bg?: boolean
+  timeout?: number
+}
+
+export const liveOrderflow = (body: LiveOrderBody) =>
+  api.post<LiveRun>('/api/live/orderflow', { confirm: true, bg: true, ...body } as unknown as Record<string, unknown>)

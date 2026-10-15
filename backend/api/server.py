@@ -81,6 +81,9 @@ def create_app():
     # 模拟盘可视化 (对接 stock-ml 模拟账户快照)
     from .blueprints import sim
     app.register_blueprint(sim.bp)
+    # 实盘操作 (桥接 trade-automation：盘前启动/读持仓资金成交/实时行情/下单/收盘快照)
+    from .blueprints import live
+    app.register_blueprint(live.bp)
     # 因子挖掘 (公式搜索 + 回测奖励, AlphaGPT 式)
     from .blueprints import alpha
     app.register_blueprint(alpha.bp)
