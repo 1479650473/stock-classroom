@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import PageHeader from '@/components/PageHeader.vue'
 import Card from '@/components/Card.vue'
 import Icon from '@/components/Icon.vue'
@@ -10,7 +10,7 @@ import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import { useToastStore } from '@/stores/toast'
 import {
   getLiveStatus, queryLivePanel, queryLiveQuote, liveStartup, liveSnapshot,
-  getLiveFills, liveOrderflow, listLiveSnapshots,
+  getLiveFills, liveOrderflow, listLiveSnapshots, getLiveIdempotency,
   type LiveStatus, type LiveRun, type LiveOrderBody,
 } from '@/api'
 
@@ -31,6 +31,20 @@ async function loadStatus() {
 const lastTs = computed(() => st.value?.last?.ts || '—')
 const lastCmd = computed(() => st.value?.last?.command || '—')
 const lastOk = computed(() => !!st.value?.last?.ok)
+
+/** 结果严重度：ok / 未就绪（客户端没登录等环境问题）/ 失败 */
+const severity = computed<'ok' | 'notready' | 'bad'>(() => {
+  const l = st.value?.last
+  if (!l) return 'bad'
+  if (l.ok) return 'ok'
+  const m = l.message || ''
+  if (m.includes('未打开') || m.includes('登录')) return 'notready'
+  return 'bad'
+})
+const severityText = computed(() => (
+  severity.value === 'ok' ? '就绪'
+    : severity.value === 'notready' ? '客户端未就绪' : '失败'
+))
 
 /* ───────────── 面板读取 ───────────── */
 type PanelKey = 'positions' | 'funds' | 'deals' | 'cancel'
@@ -140,6 +154,15 @@ async function loadFills() {
 }
 
 /* ───────────── 下单 ───────────── */
+/** 三种下单形态分开做，避免挤成一坨：单笔 / 批量换仓 / 撤单 */
+type OrdTab = 'single' | 'batch' | 'cancel'
+const ordTab = ref<OrdTab>('single')
+const ORD_TABS = [
+  { value: 'single', label: '单笔', icon: 'trade' },
+  { value: 'batch', label: '批量', icon: 'layers' },
+  { value: 'cancel', label: '撤单', icon: 'close' },
+] satisfies { value: OrdTab; label: string; icon: string }[]
+
 const order = reactive({
   action: 'buy' as 'buy' | 'sell',
   code: '',
@@ -147,6 +170,12 @@ const order = reactive({
   qty: 'max' as string,
   allowSt: false,
 })
+/** 批量：每行一只「代码 价格 数量」，价格/数量可省略（默认 市价参考 / max） */
+const batchRows = ref('')
+const batchAction = ref<'buy' | 'sell'>('sell')
+/** 撤单范围 */
+const cancelScope = ref<'all-buy' | 'all-sell'>('all-buy')
+
 /** 下单结果单独存，避免被面板读取覆盖 */
 const orderRun = ref<LiveRun | null>(null)
 const orderBusy = ref(false)
@@ -155,25 +184,55 @@ const armed = ref(false)
 
 function validCode(c: string) { return /^\d{6}$/.test(c.trim()) }
 
+/** 把文本框解析成工具要的 `代码:价格:数量;...`，同时给出逐行错误 */
+const parsedBatch = computed(() => {
+  const legs: string[] = []
+  const errors: string[] = []
+  batchRows.value.split('\n').forEach((raw, i) => {
+    const line = raw.trim()
+    if (!line || line.startsWith('#')) return
+    const parts = line.split(/[\s,，]+/).filter(Boolean)
+    const [c, p = '市价参考', q = 'max'] = parts
+    if (!validCode(c)) { errors.push(`第 ${i + 1} 行代码非法：${c || '（空）'}`); return }
+    if (!/^(\d{1,7}(\.\d{1,3})?|市价参考|auto)$/.test(p)) { errors.push(`第 ${i + 1} 行价格非法：${p}`); return }
+    if (!/^(\d{1,9}|all|max)$/.test(q)) { errors.push(`第 ${i + 1} 行数量非法：${q}`); return }
+    legs.push(`${c}:${p}:${q}`)
+  })
+  return { legs, errors }
+})
+
+const batchOk = computed(() => parsedBatch.value.legs.length > 0 && parsedBatch.value.errors.length === 0)
+
 async function submitOrder(submit: boolean) {
-  const code = order.code.trim()
-  if (!validCode(code)) { toast.error('股票代码需为 6 位数字'); return }
+  let body: LiveOrderBody
+  if (ordTab.value === 'single') {
+    const code = order.code.trim()
+    if (!validCode(code)) { toast.error('股票代码需为 6 位数字'); return }
+    body = {
+      mode: order.action, code, price: order.price, qty: order.qty,
+      submit, yes: submit, allow_st: order.allowSt,
+    }
+  } else if (ordTab.value === 'batch') {
+    if (!batchOk.value) { toast.error('批量列表有误，请先按提示修正'); return }
+    body = {
+      mode: batchAction.value === 'buy' ? 'buy-multi' : 'sell-multi',
+      legs: parsedBatch.value.legs.join(';'),
+      submit, yes: submit, allow_st: order.allowSt,
+    }
+  } else {
+    body = { mode: 'cancel', cancel_scope: cancelScope.value, submit, yes: submit }
+  }
+
   if (submit && !armed.value) { toast.error('请先「预演」确认无误，再真下单'); return }
 
-  const body: LiveOrderBody = {
-    mode: order.action,
-    code,
-    price: order.price,
-    qty: order.qty,
-    submit,
-    yes: submit,             // 真下单才跳过人工确认框（UI 已提供二次确认）
-    allow_st: order.allowSt,
-  }
   orderBusy.value = true
   try {
     const r = await liveOrderflow(body)
     orderRun.value = r
-    reportRun(r, submit ? '已提交（请核对当日委托）' : '预演完成（未提交）')
+    const n = ordTab.value === 'batch' ? parsedBatch.value.legs.length : 1
+    reportRun(r, submit
+      ? `已提交${ordTab.value === 'batch' ? `（${n} 笔）` : ''}，请核对当日委托`
+      : '预演完成（未提交）')
     if (submit) { armed.value = false; await loadFills() }
   } catch (e: unknown) {
     toast.error('下单失败：' + (e instanceof Error ? e.message : String(e)))
@@ -183,14 +242,27 @@ async function submitOrder(submit: boolean) {
 /** 任何关键输入变化都要撤销"已解锁"，避免改完参数直接下单 */
 function disarm() { armed.value = false }
 
+/** 切 tab 也要撤销解锁 —— 否则"预演了单笔"会给"批量提交"解锁 */
+watch(ordTab, disarm)
+
 /* ───────────── 快照列表 ───────────── */
 const snaps = ref<string[]>([])
 async function loadSnaps() {
   try { snaps.value = (await listLiveSnapshots(8)).snapshots || [] } catch { /* ignore */ }
 }
 
+/** 已提交委托（幂等锁记录）—— 对账"我到底提交过几笔、结果如何" */
+const idemEntries = ref<Record<string, unknown>[]>([])
+const idemCount = computed(() => idemEntries.value.length)
+/** 需要人工核查的笔数（工具自己标了 unverified 的） */
+const idemUnverified = computed(() => idemEntries.value.filter((e) => e.Status === 'unverified').length)
+async function loadIdem() {
+  const r = await getLiveIdempotency().catch(() => null)
+  idemEntries.value = (r?.entries || []).slice().reverse()
+}
+
 onMounted(async () => {
-  await Promise.all([loadStatus(), loadFills(), loadSnaps()])
+  await Promise.all([loadStatus(), loadFills(), loadSnaps(), loadIdem()])
 })
 </script>
 
@@ -217,8 +289,7 @@ onMounted(async () => {
           <h2 class="sec-title">工具状态</h2>
           <p class="sec-sub">
             最近一次调用：<b class="mono">{{ lastCmd }}</b> ·
-            <span class="mono">{{ lastTs }}</span> ·
-            <span :class="lastOk ? 'ok-t' : 'bad-t'">{{ lastOk ? '成功' : '失败/未知' }}</span>
+            <span class="mono">{{ lastTs }}</span>
           </p>
         </div>
         <label class="bg-toggle" title="后台模式用 PostMessage 投递，不抢你的前台焦点">
@@ -239,11 +310,27 @@ onMounted(async () => {
           :desc="`没有在期望位置找到 TradeAutomation.App.exe。请确认 trade-automation 已构建，或用环境变量 SC_TRADE_DIR 指定目录。`"
         />
         <template v-else>
+          <!-- 状态横幅：消息可能是一整句话（如「交易视图未打开（可能需登录）」），
+               不适合塞进 StatTile 的大号数值位 —— 那里会把一句话渲染成巨型文字。 -->
+          <div class="banner" :class="`banner--${severity}`">
+            <Icon :name="severity === 'ok' ? 'check' : 'alert'" :size="15" />
+            <div class="banner__body">
+              <b>{{ severityText }}</b>
+              <span v-if="st.last?.message" class="banner__msg">{{ st.last.message }}</span>
+            </div>
+            <span class="banner__code mono">exit={{ st.last?.exit_code ?? '—' }}</span>
+          </div>
+
           <div class="stats">
-            <StatTile label="最近消息" :value="st.last?.message || '—'" />
-            <StatTile label="退出码" :value="String(st.last?.exit_code ?? '—')" />
             <StatTile label="快照数" :value="String(st.snapshots?.length ?? 0)" />
             <StatTile label="今日成交" :value="String(fills.length)" />
+            <StatTile
+              label="已提交委托"
+              :value="String(idemCount)"
+              :hint="idemUnverified ? `${idemUnverified} 笔待人工核查` : '全部已复核'"
+              :hint-trend="idemUnverified ? 'down' : 'neutral'"
+            />
+            <StatTile label="工具目录" :value="st.available ? '已找到' : '缺失'" />
           </div>
           <p class="path faint mono">{{ st.tool_dir }}</p>
         </template>
@@ -337,7 +424,10 @@ onMounted(async () => {
         </div>
       </div>
 
-      <div class="ord-grid">
+      <SegmentedControl v-model="ordTab" :options="ORD_TABS" />
+
+      <!-- 单笔 -->
+      <div v-if="ordTab === 'single'" class="ord-grid">
         <div class="fld">
           <label>方向</label>
           <SegmentedControl
@@ -358,14 +448,64 @@ onMounted(async () => {
           <label>数量</label>
           <input v-model="order.qty" class="ui-input" placeholder="max / all / 100" @input="disarm" />
         </div>
-        <label class="chk" title="ST/*ST/退 默认拒绝买入，勾选后允许">
-          <input v-model="order.allowSt" type="checkbox" @change="disarm" />
-          <span>允许 ST（默认拒绝）</span>
-        </label>
       </div>
 
+      <!-- 批量换仓 -->
+      <div v-else-if="ordTab === 'batch'" class="batch">
+        <div class="batch-head">
+          <SegmentedControl
+            :model-value="batchAction"
+            :options="[{ value: 'sell', label: '批量卖出', icon: 'arrow-down-right' }, { value: 'buy', label: '批量买入', icon: 'arrow-up-right' }]"
+            @update:model-value="(v: string) => { batchAction = v as 'buy' | 'sell'; disarm() }"
+          />
+          <span class="faint">每行一只：<code>代码 价格 数量</code>（价格/数量可省略 → 默认「市价参考 / max」）</span>
+        </div>
+        <textarea
+          v-model="batchRows"
+          class="ui-textarea batch-ta mono"
+          rows="6"
+          spellcheck="false"
+          placeholder="600238 市价参考 all&#10;600576 5.26 max"
+          @input="disarm"
+        />
+        <div class="batch-foot">
+          <span v-if="parsedBatch.errors.length" class="bad-t">
+            <Icon name="alert" :size="12" /> {{ parsedBatch.errors[0] }}
+            <template v-if="parsedBatch.errors.length > 1">（共 {{ parsedBatch.errors.length }} 处）</template>
+          </span>
+          <span v-else-if="parsedBatch.legs.length" class="ok-t">
+            <Icon name="check" :size="12" /> 将执行 {{ parsedBatch.legs.length }} 笔
+          </span>
+          <span v-else class="faint">还没有有效行</span>
+        </div>
+        <p class="sec-sub">
+          ⚠️ 批量是<b>逐笔提交、逐笔复核、失败即停</b>：中途失败时，之前的笔已成交，
+          之后的笔不会执行。请用「当日委托 / 当日成交」核对实际结果。
+        </p>
+      </div>
+
+      <!-- 撤单 -->
+      <div v-else class="cancel-box">
+        <div class="fld">
+          <label>撤销范围</label>
+          <SegmentedControl
+            :model-value="cancelScope"
+            :options="[{ value: 'all-buy', label: '全部买单', icon: 'arrow-down-right' }, { value: 'all-sell', label: '全部卖单', icon: 'arrow-up-right' }]"
+            @update:model-value="(v: string) => { cancelScope = v as 'all-buy' | 'all-sell'; disarm() }"
+          />
+        </div>
+        <p class="sec-sub">
+          工具会<b>前后列表对比复核</b>，确认目标委托确实消失。撤单本身不改持仓，但会取消未成交的挂单。
+        </p>
+      </div>
+
+      <label class="chk chk--line" title="ST/*ST/退 默认拒绝买入，勾选后允许">
+        <input v-model="order.allowSt" type="checkbox" @change="disarm" />
+        <span>允许 ST（默认拒绝买入；卖出不受限）</span>
+      </label>
+
       <div class="ord-actions">
-        <button class="ui-btn" :disabled="orderBusy" @click="submitOrder(false)">
+        <button class="ui-btn" :disabled="orderBusy || (ordTab === 'batch' && !batchOk)" @click="submitOrder(false)">
           <Icon name="research" :size="14" /> {{ orderBusy ? '执行中…' : '预演（不提交）' }}
         </button>
         <button v-if="!armed" class="ui-btn" disabled title="请先预演">
@@ -410,6 +550,22 @@ onMounted(async () => {
           </tbody>
         </table>
         <p v-else class="faint">当日无成交记录。</p>
+
+        <!-- 幂等锁：工具替我们记的"提交过什么、复核结果如何"。
+             其中 unverified 是工具明确要求人工核查的，必须显式提示。 -->
+        <details class="idem" :open="idemUnverified > 0">
+          <summary>
+            已提交委托记录（{{ idemCount }} 笔
+            <template v-if="idemUnverified">，<b class="bad-t">{{ idemUnverified }} 笔待核查</b></template>）
+          </summary>
+          <ul class="idem-list">
+            <li v-for="(e, i) in idemEntries" :key="i" :class="{ 'is-bad': e.Status === 'unverified' }">
+              <span class="mono">{{ e.Ts }}</span>
+              <span class="idem-key mono">{{ e.Key }}</span>
+              <span class="idem-note">{{ e.Note }}</span>
+            </li>
+          </ul>
+        </details>
       </Card>
 
       <Card class="sec">
@@ -440,6 +596,22 @@ onMounted(async () => {
   font-size: var(--fs-sm); color: var(--text-sub); cursor: pointer; white-space: nowrap;
 }
 .stats { display: grid; gap: var(--sp-3); grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+
+/* 状态横幅：把「一句话状态 + 退出码」从 StatTile 的大号数值位里拿出来 */
+.banner {
+  display: flex; align-items: flex-start; gap: var(--sp-3);
+  padding: 10px 14px; margin-bottom: var(--sp-4);
+  border-radius: var(--radius-md); border: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+.banner__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.banner__body b { font-size: var(--fs-md); }
+.banner__msg { font-size: var(--fs-sm); color: var(--text-sub); word-break: break-word; }
+.banner__code { font-size: var(--fs-xs); color: var(--text-faint); white-space: nowrap; }
+.banner--ok { border-color: color-mix(in srgb, var(--ok) 45%, var(--border)); color: var(--ok); }
+.banner--notready { border-color: color-mix(in srgb, var(--warn) 45%, var(--border)); color: var(--warn); }
+.banner--bad { border-color: color-mix(in srgb, var(--up) 45%, var(--border)); color: var(--up); }
+
 .path { margin: var(--sp-3) 0 0; font-size: var(--fs-xs); word-break: break-all; }
 .ok-t { color: var(--ok); }
 .bad-t { color: var(--warn); }
@@ -464,7 +636,7 @@ onMounted(async () => {
 /* 下单区：整块用警示色描边，和只读区在视觉上区分开 */
 .order-sec { border: 1px solid var(--border-strong); }
 .ord-grid {
-  display: grid; gap: var(--sp-3);
+  display: grid; gap: var(--sp-3); margin-top: var(--sp-3);
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   align-items: end;
 }
@@ -474,6 +646,26 @@ onMounted(async () => {
   display: inline-flex; align-items: center; gap: 6px;
   font-size: var(--fs-sm); color: var(--text-sub); cursor: pointer;
 }
+.chk--line { margin-top: var(--sp-4); }
+
+/* 批量换仓 */
+.batch { display: flex; flex-direction: column; gap: var(--sp-3); margin-top: var(--sp-3); }
+.batch-head { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.batch-head .faint { font-size: var(--fs-xs); }
+.batch-head code {
+  padding: 1px 5px; border-radius: 4px;
+  background: var(--bg-raised); border: 1px solid var(--border-soft);
+}
+.batch-ta {
+  width: 100%; resize: vertical; line-height: 1.7;
+  font-size: var(--fs-sm); padding: 10px 12px;
+}
+.batch-foot { display: flex; align-items: center; gap: 6px; font-size: var(--fs-xs); }
+.batch .sec-sub { margin: 0; }
+
+/* 撤单 */
+.cancel-box { margin-top: var(--sp-3); }
+.cancel-box .sec-sub { margin-top: var(--sp-3); }
 .ord-actions {
   display: flex; align-items: center; gap: var(--sp-3);
   flex-wrap: wrap; margin-top: var(--sp-4);
@@ -499,4 +691,25 @@ onMounted(async () => {
   font-size: var(--fs-xs); white-space: pre-wrap; line-height: 1.5;
 }
 .snap-list { margin: 0; padding-left: 1.1em; font-size: var(--fs-sm); line-height: 1.9; color: var(--text-sub); }
+
+/* 幂等锁记录（提交过的委托 + 复核结果） */
+.idem { margin-top: var(--sp-4); border-top: 1px solid var(--border-soft); padding-top: var(--sp-3); }
+.idem summary {
+  cursor: pointer; font-size: var(--fs-sm); color: var(--text-sub);
+  padding: 4px 0; user-select: none;
+}
+.idem summary:hover { color: var(--text); }
+.idem-list { margin: var(--sp-2) 0 0; padding: 0; list-style: none; }
+.idem-list li {
+  display: grid; gap: 2px var(--sp-3); padding: 7px 0;
+  border-bottom: 1px solid var(--border-soft);
+  grid-template-columns: auto 1fr;
+  font-size: var(--fs-xs);
+}
+.idem-list li:last-child { border-bottom: none; }
+.idem-list li.is-bad { color: var(--warn); }
+.idem-key { color: var(--text-sub); word-break: break-all; }
+.idem-list li.is-bad .idem-key { color: var(--warn); }
+.idem-note { grid-column: 2; color: var(--text-faint); line-height: 1.5; }
+.idem-list li.is-bad .idem-note { color: color-mix(in srgb, var(--warn) 80%, var(--text-faint)); }
 </style>
