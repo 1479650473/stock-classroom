@@ -8,7 +8,6 @@ const viewModules: Record<string, () => Promise<{ default: unknown }>> = {
   strategy: () => import('@/views/v6/Strategy.vue'),
   trade: () => import('@/views/v6/Trade.vue'),
   live: () => import('@/views/v6/Live.vue'),
-  fundarb: () => import('@/views/v6/FundArb.vue'),
   ai: () => import('@/views/v6/AI.vue'),
   data: () => import('@/views/v6/Data.vue'),
   settings: () => import('@/views/Settings.vue'),
@@ -20,7 +19,6 @@ const ALL_ROUTES: RouteRecordRaw[] = [
   { path: '/strategy', name: 'strategy', component: viewModules.strategy, meta: { title: '策略' } },
   { path: '/trade', name: 'trade', component: viewModules.trade, meta: { title: '交易' } },
   { path: '/live', name: 'live', component: viewModules.live, meta: { title: '实盘' } },
-  { path: '/arb', name: 'fundarb', component: viewModules.fundarb, meta: { title: '基金套利' } },
   { path: '/ai', name: 'ai', component: viewModules.ai, meta: { title: 'AI' } },
   { path: '/data', name: 'data', component: viewModules.data, meta: { title: '数据' } },
 
@@ -32,6 +30,8 @@ const ALL_ROUTES: RouteRecordRaw[] = [
   { path: '/overview', redirect: () => ({ path: '/' }) },
   { path: '/flow', redirect: () => ({ path: '/' }) },
   { path: '/kline', redirect: () => ({ path: '/market', query: { tab: 'stock' } }) },
+  // 「套利」已降级为「行情」的页内分支：旧书签/侧边导航习惯不失效
+  { path: '/arb', redirect: () => ({ path: '/market', query: { tab: 'arb' } }) },
   { path: '/picks', redirect: () => ({ path: '/trade', query: { tab: 'picks' } }) },
   { path: '/holdings', redirect: () => ({ path: '/trade', query: { tab: 'positions' } }) },
   { path: '/agentops', redirect: () => ({ path: '/ai', query: { tab: 'auto' } }) },

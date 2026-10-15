@@ -9,14 +9,32 @@ withDefaults(
     subtitle?: string
     /** 内容是否限制最大宽度并居中（默认 true） */
     contained?: boolean
+    /**
+     * 嵌入式：**不渲染自己的标题区**，只保留内容容器。
+     *
+     * 用途：某个视图原本是独立页面（有自己的 title/subtitle），现在被降级成
+     * 另一个页面的页内 Tab（如「套利」并入「行情」）。此时外层页面已经有标题，
+     * 再渲染一次就会出现"两层标题"，既重复又浪费纵向空间。
+     * 与 `PageHeader` 的 `embedded` 语义一致，保持全站两种容器行为统一。
+     */
+    embedded?: boolean
+    /**
+     * actions 移到内容流里（仅在 `embedded` 时有意义）。
+     *
+     * 为什么需要它：标题区被隐藏后，`#actions` 槽也会跟着没地方放。
+     * 但有些视图把**日期、同步按钮、设置入口**都放在 actions 里 ——
+     * 直接隐藏会丢功能。开启本项后，actions 改为在内容流顶部单独渲染一行，
+     * 既保留了入口，又不会重复标题。
+     */
+    actionsInline?: boolean
   }>(),
-  { contained: true },
+  { contained: true, embedded: false, actionsInline: false },
 )
 </script>
 
 <template>
   <div class="app-page" :class="{ 'app-page--contained': contained }">
-    <header class="app-page__head">
+    <header v-if="!embedded" class="app-page__head">
       <div class="app-page__titles">
         <h1 class="app-page__title">{{ title }}</h1>
         <p v-if="subtitle" class="app-page__subtitle">{{ subtitle }}</p>
@@ -25,6 +43,10 @@ withDefaults(
         <slot name="actions" />
       </div>
     </header>
+    <!-- 嵌入且要求内联时：actions 作为内容流的第一行（不重复标题） -->
+    <div v-if="embedded && actionsInline && $slots.actions" class="app-page__actions app-page__actions--inline">
+      <slot name="actions" />
+    </div>
     <slot />
   </div>
 </template>
@@ -67,5 +89,10 @@ withDefaults(
   align-items: center;
   gap: var(--sp-2);
   flex-wrap: wrap;
+}
+/* 内联 actions：靠右对齐，形成"日期 + 按钮"的一行工具条 */
+.app-page__actions--inline {
+  justify-content: flex-end;
+  margin-top: calc(var(--sp-2) * -1);
 }
 </style>

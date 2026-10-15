@@ -19,11 +19,10 @@ export const NAV: NavGroup[] = [
     label: '',
     items: [
       { path: '/', name: 'dashboard', title: '工作台', icon: 'overview', hint: '账户 · 关注 · 快捷操作' },
-      { path: '/market', name: 'market', title: '行情', icon: 'market', hint: '市场全景 · 个股K线' },
+      { path: '/market', name: 'market', title: '行情', icon: 'market', hint: '市场全景 · 个股K线 · ETF · LOF套利' },
       { path: '/strategy', name: 'strategy', title: '策略', icon: 'research', hint: '环境 · 回测 · 进化 · 回放' },
       { path: '/trade', name: 'trade', title: '交易', icon: 'trade', hint: '三体系总览 · 模拟盘 · 持仓/下单/选股' },
       { path: '/live', name: 'live', title: '实盘', icon: 'wallet', hint: '国信金太阳 · 盘前启动 · 账户读取 · 下单 · 收盘快照' },
-      { path: '/arb', name: 'fundarb', title: '套利', icon: 'compare', hint: 'LOF 折溢价 · 申购赎回成本' },
       { path: '/ai', name: 'ai', title: 'AI', icon: 'chat', hint: 'AI 操盘手 · 对话操盘 · 工具台' },
       { path: '/data', name: 'data', title: '数据', icon: 'database', hint: '数据管道 · 数据库 · 训练' },
     ],

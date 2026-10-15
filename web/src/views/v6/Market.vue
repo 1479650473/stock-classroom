@@ -12,6 +12,7 @@ import LoadingBlock from '@/components/ui/LoadingBlock.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import KlineChart from '@/components/charts/KlineChart.vue'
 import EtfPanel from '@/components/EtfPanel.vue'
+import FundArb from '@/views/v6/FundArb.vue'
 import Icon from '@/components/Icon.vue'
 import { getIndices, getSectors, getNorthFlow, getKline, getKlineMinute, getKlineAnalysis, getCyq, searchStock, getFundFlow } from '@/api'
 import type { IndexQuote, KlineBar, KlinePeriod, MinuteBar, StockRef, FundFlowBar, AutoAnalysis } from '@/api'
@@ -19,7 +20,7 @@ import { SUB_SPECS } from '@/lib/indicators'
 import type { ChipRow } from '@/lib/indicators'
 import { usePersistedRef } from '@/composables/usePersistedRef'
 
-type Tab = 'market' | 'stock' | 'etf'
+type Tab = 'market' | 'stock' | 'etf' | 'arb'
 type Period = 'ts' | '1' | '5' | '15' | '30' | '60' | 'daily' | 'weekly' | 'monthly'
 
 const route = useRoute()
@@ -29,9 +30,15 @@ const TABS = [
   { value: 'market', label: '市场', icon: 'market' },
   { value: 'stock', label: '个股', icon: 'kline' },
   { value: 'etf', label: 'ETF', icon: 'kline' },
+  { value: 'arb', label: '套利', icon: 'compare' },
 ]
 
-const tab = ref<Tab>(route.query.tab === 'stock' ? 'stock' : route.query.tab === 'etf' ? 'etf' : 'market')
+/** 四个 Tab 的合法值，用于把 URL 上的 ?tab= 收敛到已知集合 */
+const TAB_VALUES = TABS.map((t) => t.value) as Tab[]
+
+const tab = ref<Tab>(
+  TAB_VALUES.includes(route.query.tab as Tab) ? (route.query.tab as Tab) : 'market',
+)
 // 记住上次查看的股票与周期，下次打开自动恢复
 const code = usePersistedRef('market.code', String(route.query.code || ''))
 const stockName = ref(String(route.query.name || ''))
@@ -386,7 +393,9 @@ watch(period, () => { if (code.value) loadKline() })
 watch(
   () => route.query,
   (q) => {
-    if (q.tab === 'stock' && tab.value !== 'stock') tab.value = 'stock'
+    // 把 ?tab= 同步到页内 Tab（覆盖全部已知值，不再只认 stock）
+    const qt = String(q.tab || '')
+    if (TAB_VALUES.includes(qt as Tab) && tab.value !== qt) tab.value = qt as Tab
     const qp = String(q.period || '')
     if (qp && PERIOD_OPTIONS.some((o) => o.value === qp) && qp !== period.value) period.value = qp as Period
     if (q.code && String(q.code) !== code.value) {
@@ -693,12 +702,21 @@ onMounted(() => {
       <div v-else-if="tab === 'etf'" class="pane">
         <EtfPanel />
       </div>
+
+      <!-- 套利：原「套利」独立页降级为行情页分支。
+           它自带 AppPage（已 embedded）+ SectionCard，所以这里用 padding:0 的 pane，
+           避免和外层 SectionCard 的内边距叠成双层留白。 -->
+      <div v-else-if="tab === 'arb'" class="pane pane--bare">
+        <FundArb embedded />
+      </div>
     </SectionCard>
   </AppPage>
 </template>
 
 <style scoped>
 .pane { padding: var(--sp-5); }
+/* 嵌入式子页：自己带容器与间距，父层不再补内边距 */
+.pane--bare { padding: 0; }
 .indices {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));

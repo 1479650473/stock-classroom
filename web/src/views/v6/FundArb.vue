@@ -23,6 +23,15 @@ import {
 
 const jobs = useJobsStore()
 
+/**
+ * embedded：本视图已从独立页面（侧边导航「套利」）降级为**行情页的一个页内 Tab**。
+ * 嵌入时不渲染自己的标题区，避免与外层页面标题重复、也省掉一层纵向空间。
+ * 与 `Research/Optimize/Replay` 被 Strategy 嵌入时同款约定。
+ *
+ * 用 `props.embedded` 而非解构：模板里要持续跟踪该值。
+ */
+const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
+
 // ---------------- 过滤 & 成本参数（持久化） ----------------
 const direction = usePersistedRef<string>('arb.direction', 'all')
 const minSpace = usePersistedRef<number>('arb.minSpace', 0)
@@ -395,7 +404,12 @@ const columns = [
 </script>
 
 <template>
-  <AppPage title="基金套利" subtitle="LOF 折溢价：场内价 vs 单位净值，扣申购/赎回/佣金/转托管/滑点后的净空间">
+  <AppPage
+    title="基金套利"
+    subtitle="LOF 折溢价：场内价 vs 单位净值，扣申购/赎回/佣金/转托管/滑点后的净空间"
+    :embedded="props.embedded"
+    actions-inline
+  >
     <template #actions>
       <div class="arb-actions">
         <span class="arb-date">
