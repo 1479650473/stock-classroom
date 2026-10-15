@@ -1,31 +1,49 @@
 <script setup lang="ts">
-import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onActivated, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppPage from '@/components/ui/AppPage.vue'
 import PageToolbar from '@/components/ui/PageToolbar.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
-import StatTile from '@/components/ui/StatTile.vue'
 import DataTable from '@/components/ui/DataTable.vue'
 import type { DataColumn } from '@/components/ui/DataTable.vue'
-import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import TradeSystems from '@/components/TradeSystems.vue'
 import SimPanel from '@/components/SimPanel.vue'
+import Live from '@/views/v6/Live.vue'
 import FormField from '@/components/ui/FormField.vue'
 import Drawer from '@/components/ui/Drawer.vue'
-import EmptyGuide from '@/components/ui/EmptyGuide.vue'
 import Icon from '@/components/Icon.vue'
 import { useToastStore } from '@/stores/toast'
 import {
-  listAccounts, createAccount, renameAccount, resetAccount, deleteAccount,
-  getPositions, getOrders, placeOrder, cancelOrder, refreshPrices,
+  listAccounts, createAccount, resetAccount,
   getNavHistory, getPicks, runPicks,
 } from '@/api'
-import type { AccountSummary, Position, Order, PickItem } from '@/api'
+import type { AccountSummary, PickItem } from '@/api'
 import { useEChart, cssVar } from '@/composables/useEChart'
 import { areaLineStyle, tooltipStyle } from '@/lib/chartTheme'
 import { usePersistedRef } from '@/composables/usePersistedRef'
 
-type Tab = 'systems' | 'positions' | 'order' | 'orders' | 'picks' | 'sim'
+/**
+ * 交易页（2026-10-16 合并「实盘」）
+ *
+ * ## 合并前的重复
+ *   · **交易**（一级）＝ 通用模拟账户的 持仓/下单/订单/选股/模拟盘
+ *   · **实盘**（一级）＝ 国信金太阳真实客户端 启动/解锁/读账户/下单/对账/快照
+ *   两边在「持仓」「下单」「订单」三处职责重复，一边模拟一边真实，
+ *   同级并存很容易点错。
+ *
+ * ## 合并后（董事长裁定）
+ *   · **删掉模拟账户的「人工操作」**：`持仓` / `下单` / `订单` 三个 tab 移除。
+ *     这套东西原本目的是"操作用来模拟"，现在实盘可用 → 模拟下单已无意义。
+ *   · **实盘整页并入**为一个 tab（原一级「实盘」的全部功能）。
+ *   · **模拟盘按新定位保留**：它已不是"动手练手"的地方，而是
+ *     **策略自行驱动**的结果展示 —— 净值曲线 / 持仓明细 / 交易流水
+ *     正是用来"看策略真实在干什么"的，因此**完整保留**（见 SimPanel，未改动）。
+ *
+ * ## 为什么删掉模拟持仓/订单不丢信息
+ * 「模拟盘」tab 内本就有**持仓明细**与**交易流水**（按账户 + 按调仓日分组），
+ * 同样来自模拟账户快照 —— 覆盖面够了，且带"哪个策略、哪次调仓"的上下文，比裸表更好读。
+ */
+type Tab = 'systems' | 'live' | 'picks' | 'sim'
 
 const route = useRoute()
 const router = useRouter()
@@ -33,102 +51,53 @@ const toast = useToastStore()
 
 const TABS = [
   { value: 'systems', label: '体系总览', icon: 'layers' },
-  { value: 'positions', label: '持仓', icon: 'holdings' },
-  { value: 'order', label: '下单', icon: 'trade' },
-  { value: 'orders', label: '订单', icon: 'log' },
+  { value: 'live', label: '实盘', icon: 'wallet' },
   { value: 'picks', label: '选股', icon: 'picks' },
-  { value: 'sim', label: '模拟盘', icon: 'wallet' },
+  { value: 'sim', label: '模拟盘', icon: 'compare' },
 ]
 
-const tab = ref<Tab>(normalizeTab(route.query.tab))
-const accounts = ref<AccountSummary[]>([])
-// 记住上次选择的账户与下单表单
-const selectedId = usePersistedRef<number | null>('trade.accountId', null)
-const loading = ref(true)
-const loadError = ref('')
+const TAB_VALUES = TABS.map((t) => t.value) as Tab[]
 
-const positions = ref<Position[]>([])
-const orders = ref<Order[]>([])
-const picks = ref<PickItem[]>([])
-const picksStale = ref(false)
-const picksRunning = ref(false)
-const nav = ref<number[]>([])
-const navEl = ref<HTMLElement | null>(null)
-const advancedOpen = ref(false)
-const accountBusy = ref(false)
-const accountDraft = reactive({
-  name: '',
-  newName: '',
-  newCapital: 100000,
-})
-
-const form = usePersistedRef('trade.form', {
-  side: 'buy' as 'buy' | 'sell',
-  code: '',
-  name: '',
-  order_type: 'market' as 'market' | 'limit',
-  price: 0,
-  qty: 100,
-})
-const submitting = ref(false)
-
-const currentAccount = computed(() =>
-  accounts.value.find((a) => a.account_id === selectedId.value) ?? null,
-)
-
-watch(
-  currentAccount,
-  (a) => {
-    accountDraft.name = a?.name || ''
-  },
-  { immediate: true },
-)
-const positionRows = computed(() => positions.value as unknown as Record<string, unknown>[])
-const orderRows = computed(() => orders.value as unknown as Record<string, unknown>[])
-const pickRows = computed(() => picks.value as unknown as Record<string, unknown>[])
-const posMarketValue = computed(() => positions.value.reduce((s, p) => s + p.market_value, 0))
-const posFloatPnl = computed(() => positions.value.reduce((s, p) => s + p.float_pnl, 0))
-
+/** 归一：新值 + 旧 URL 兼容 */
 function normalizeTab(v: unknown): Tab {
   const s = String(v || '')
-  return (['systems', 'positions', 'order', 'orders', 'picks', 'sim'] as const).includes(s as Tab)
-    ? (s as Tab)
-    : 'systems'
+  if (TAB_VALUES.includes(s as Tab)) return s as Tab
+  // 被移除的三个 tab 都是"模拟账户人工操作"，其信息现在在「模拟盘」里 → 落到 sim
+  if (s === 'positions' || s === 'order' || s === 'orders') return 'sim'
+  return 'systems'
 }
 
-/** 账户相关页签（持仓/下单/订单/选股）才显示账户栏；总览与模拟盘不显示 */
-const showAccountBar = computed(() => ['positions', 'order', 'orders', 'picks'].includes(tab.value))
+const tab = ref<Tab>(normalizeTab(route.query.tab))
+
+watch(tab, (v) => {
+  if (route.query.tab !== v) router.replace({ query: { ...route.query, tab: v } })
+})
+watch(
+  () => route.query.tab,
+  (v) => {
+    const n = normalizeTab(v)
+    if (n !== tab.value) tab.value = n
+  },
+)
 
 const SUBTITLES: Record<Tab, string> = {
   systems: '三个程序交易体系：固定策略（因子公式）· 外部 LLM 决策 · 本地预测模型',
-  positions: '通用模拟账户 · 持仓 · 下单 · 订单 · 选股',
-  order: '通用模拟账户 · 持仓 · 下单 · 订单 · 选股',
-  orders: '通用模拟账户 · 持仓 · 下单 · 订单 · 选股',
-  picks: '通用模拟账户 · 持仓 · 下单 · 订单 · 选股',
-  sim: '体系三 · 本地预测模型（stock-ml 策略账户快照）',
+  live: '国信金太阳真实客户端 · 盘前启动/解锁 · 账户读取 · 下单 · 成交对账 · 收盘快照',
+  picks: '多因子评分候选池（点「运行选股」重新扫描）',
+  sim: '模拟账户 · 各策略净值曲线 · 持仓明细 · 交易流水（策略自行驱动）',
 }
-const subtitle = computed(() => SUBTITLES[tab.value])
 
-watch(tab, (v) => {
-  const q = { ...route.query, tab: v }
-  if (route.query.tab !== v) router.replace({ query: q })
-})
+// ---------------- 账户（仅用于模拟盘查看 / 选股上下文） ----------------
+const accounts = ref<AccountSummary[]>([])
+const selectedId = usePersistedRef<number | null>('trade.accountId', null)
+const nav = ref<number[]>([])
+const advancedOpen = ref(false)
+const accountBusy = ref(false)
+const draft = ref({ newName: '', newCapital: 100000 })
 
-watch(
-  () => route.query,
-  (q) => {
-    const next = normalizeTab(q.tab)
-    if (next !== tab.value) tab.value = next
-    if (q.code) {
-      form.value.code = String(q.code)
-      form.value.name = String(q.name || '')
-      form.value.side = q.side === 'sell' ? 'sell' : 'buy'
-      form.value.qty = Number(q.qty) || 100
-      if (next !== 'order') tab.value = 'order'
-    }
-  },
-)
+const current = computed(() => accounts.value.find((a) => a.account_id === selectedId.value) || null)
 
+const navEl = ref<HTMLElement | null>(null)
 const { draw: drawNav } = useEChart(navEl, () => {
   const n = nav.value
   const start = n[0] || 0
@@ -138,136 +107,53 @@ const { draw: drawNav } = useEChart(navEl, () => {
     tooltip: { trigger: 'axis', ...tooltipStyle() },
     xAxis: { type: 'category', data: idx.map((_, i) => i), axisLabel: { show: false }, axisLine: { lineStyle: { color: cssVar('--border') } } },
     yAxis: { type: 'value', scale: true, splitLine: { lineStyle: { color: cssVar('--border-soft') } } },
-    series: [{
-      type: 'line', data: idx,
-      ...areaLineStyle(cssVar('--gold'), 2, 0.3),
-    }],
+    series: [{ type: 'line', data: idx, ...areaLineStyle(cssVar('--gold'), 2, 0.3) }],
   }
 })
 
 async function loadAccounts() {
-  // 已有账户数据时静默刷新，避免切回交易页看到整页转圈
-  loading.value = !accounts.value.length
-  loadError.value = ''
   try {
     accounts.value = await listAccounts()
     if (accounts.value.length) {
       if (!selectedId.value || !accounts.value.some((a) => a.account_id === selectedId.value)) {
         selectedId.value = accounts.value[0].account_id
       }
-      await refreshAccountData()
+      await loadNav()
     }
-  } catch (e) {
-    loadError.value = e instanceof Error ? e.message : '账户加载失败'
-  } finally {
-    loading.value = false
-  }
-}
-
-async function handleCreateAccount() {
-  const name = accountDraft.newName.trim()
-  const capital = Number(accountDraft.newCapital)
-  if (!name) { toast.error('请输入账户名称'); return }
-  if (!Number.isFinite(capital) || capital <= 0) { toast.error('请输入有效的初始资金'); return }
-  accountBusy.value = true
-  try {
-    const id = await createAccount(name, capital)
-    await loadAccounts()
-    if (typeof id === 'number') selectedId.value = id
-    await refreshAccountData()
-    accountDraft.newName = ''
-    accountDraft.newCapital = 100000
-    toast.success(`账户「${name}」已创建`)
-  } catch (e) {
-    toast.error('创建账户失败：' + msg(e))
-  } finally {
-    accountBusy.value = false
-  }
-}
-
-async function handleRenameAccount() {
-  if (!selectedId.value) return
-  const name = accountDraft.name.trim()
-  if (!name) { toast.error('账户名称不能为空'); return }
-  accountBusy.value = true
-  try {
-    await renameAccount(selectedId.value, name)
-    await loadAccounts()
-    toast.success('账户名称已更新')
-  } catch (e) {
-    toast.error('重命名失败：' + msg(e))
-  } finally {
-    accountBusy.value = false
-  }
-}
-
-async function handleResetAccount() {
-  if (!selectedId.value || !currentAccount.value) return
-  if (!window.confirm(`确认重置「${currentAccount.value.name}」？持仓、订单、成交和净值记录都会清空。`)) return
-  accountBusy.value = true
-  try {
-    await resetAccount(selectedId.value)
-    await refreshAccountData()
-    toast.success('账户已重置')
-  } catch (e) {
-    toast.error('重置失败：' + msg(e))
-  } finally {
-    accountBusy.value = false
-  }
-}
-
-async function handleDeleteAccount() {
-  if (!selectedId.value || !currentAccount.value) return
-  if (!window.confirm(`确认删除「${currentAccount.value.name}」？此操作不可撤销。`)) return
-  accountBusy.value = true
-  try {
-    const id = selectedId.value
-    await deleteAccount(id)
-    if (selectedId.value === id) selectedId.value = null
-    await loadAccounts()
-    advancedOpen.value = false
-    toast.success('账户已删除')
-  } catch (e) {
-    toast.error('删除失败：' + msg(e))
-  } finally {
-    accountBusy.value = false
-  }
-}
-
-async function refreshAccountData() {
-  if (!selectedId.value) return
-  await Promise.all([loadPositions(), loadOrders(), loadNav()])
-}
-
-async function loadPositions() {
-  if (!selectedId.value) return
-  try { positions.value = await getPositions(selectedId.value) }
-  catch (e) { toast.error('持仓加载失败：' + msg(e)) }
-}
-
-async function loadOrders() {
-  if (!selectedId.value) return
-  try { orders.value = await getOrders(selectedId.value) }
-  catch (e) { toast.error('订单加载失败：' + msg(e)) }
+  } catch { /* 后端未就绪时静默 */ }
 }
 
 async function loadNav() {
-  if (!selectedId.value) return
+  if (!selectedId.value) { nav.value = []; return }
   try {
     const r = await getNavHistory(selectedId.value)
     nav.value = r.nav || []
-    navEl.value && drawNav()
+    drawNav()
   } catch { nav.value = [] }
 }
+
+// ---------------- 选股 ----------------
+const picks = ref<PickItem[]>([])
+const picksStale = ref(false)
+const picksRunning = ref(false)
+
+const pickColumns: DataColumn[] = [
+  { key: 'code', title: '代码', cellClass: 'mono' },
+  { key: 'name', title: '名称' },
+  { key: 'price', title: '现价', align: 'right', format: (r) => Number(r.price).toFixed(2) },
+  { key: 'change_pct', title: '涨跌', align: 'right', sortable: true },
+  { key: 'score', title: '评分', align: 'right', sortable: true, format: (r) => Number(r.score).toFixed(1) },
+]
 
 async function loadPicks() {
   try {
     const d = await getPicks(20)
     picks.value = d.items
     picksStale.value = d.stale
-  } catch (e) { toast.error('选股加载失败：' + msg(e)) }
+  } catch { /* 无缓存时静默 */ }
 }
 
+/** 运行选股：触发任务后轮询 pick 结果，直到 stale 消失（沿用原实现） */
 async function rescanPicks() {
   picksRunning.value = true
   toast.info('开始扫描候选池…')
@@ -288,447 +174,128 @@ async function rescanPicks() {
       } catch { /* 轮询瞬断忽略 */ }
     }, 3000)
   } catch (e) {
-    toast.error('扫描失败：' + msg(e))
     picksRunning.value = false
+    toast.error('扫描失败：' + (e instanceof Error ? e.message : String(e)))
   }
 }
 
-async function submitOrder() {
-  if (!selectedId.value) { toast.error('请先选择账户'); return }
-  if (!form.value.code) { toast.error('请输入股票代码'); return }
-  if (!form.value.qty || form.value.qty <= 0) { toast.error('请输入有效数量'); return }
-  submitting.value = true
+// ---------------- 账户设置（只保留新建 / 重置） ----------------
+async function doCreateAccount() {
+  const name = draft.value.newName.trim()
+  if (!name) { toast.error('请输入账户名'); return }
+  accountBusy.value = true
   try {
-    await placeOrder({
-      account_id: selectedId.value,
-      code: form.value.code,
-      name: form.value.name || undefined,
-      side: form.value.side,
-      order_type: form.value.order_type,
-      price: form.value.order_type === 'limit' ? form.value.price : undefined,
-      qty: form.value.qty,
-    })
-    toast.success(`${form.value.side === 'buy' ? '买入' : '卖出'}委托已提交`)
-    await Promise.all([loadOrders(), loadPositions()])
-    tab.value = 'orders'
+    await createAccount(name, draft.value.newCapital)
+    draft.value.newName = ''
+    await loadAccounts()
+    toast.success('账户已创建')
   } catch (e) {
-    toast.error('委托失败：' + msg(e))
-  } finally {
-    submitting.value = false
-  }
+    toast.error('创建失败：' + (e instanceof Error ? e.message : String(e)))
+  } finally { accountBusy.value = false }
 }
 
-async function buyPick(p: PickItem) {
-  if (!selectedId.value) { toast.error('请先选择账户'); return }
-  try {
-    await placeOrder({
-      account_id: selectedId.value,
-      code: p.code,
-      name: p.name,
-      side: 'buy',
-      order_type: 'limit',
-      price: p.price,
-      qty: 100,
-    })
-    toast.success(`已提交买入 ${p.name} (${p.code}) ×100`)
-    await loadOrders()
-  } catch (e) {
-    toast.error('买入失败：' + msg(e))
-  }
-}
-
-function sellPosition(p: Position) {
-  form.value.code = p.code
-  form.value.name = p.name
-  form.value.side = 'sell'
-  form.value.order_type = 'market'
-  form.value.qty = p.qty
-  tab.value = 'order'
-}
-
-async function handleCancel(id: number) {
-  try {
-    await cancelOrder(id)
-    toast.success('撤单成功')
-    await loadOrders()
-  } catch (e) { toast.error('撤单失败：' + msg(e)) }
-}
-
-async function handleRefresh() {
+async function doResetAccount() {
   if (!selectedId.value) return
+  if (!confirm('确定重置该账户？持仓与订单都会清空。')) return
+  accountBusy.value = true
   try {
-    await refreshPrices(selectedId.value)
-    toast.success('价格已刷新')
-    await refreshAccountData()
-  } catch (e) { toast.error('刷新价格失败：' + msg(e)) }
+    await resetAccount(selectedId.value)
+    await loadAccounts()
+    toast.success('账户已重置')
+  } catch (e) {
+    toast.error('重置失败：' + (e instanceof Error ? e.message : String(e)))
+  } finally { accountBusy.value = false }
 }
 
-function msg(e: unknown) { return e instanceof Error ? e.message : String(e) }
-
-function fmtMoney(v: number) {
-  if (Math.abs(v) >= 1e8) return (v / 1e8).toFixed(2) + '亿'
-  if (Math.abs(v) >= 1e4) return (v / 1e4).toFixed(2) + '万'
-  return v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-}
-function fmtPct(v: number) { return (v >= 0 ? '+' : '') + v.toFixed(2) + '%' }
-
-const positionColumns: DataColumn[] = [
-  { key: 'code', title: '代码', cellClass: 'mono' },
-  { key: 'name', title: '名称' },
-  { key: 'qty', title: '持仓', align: 'right', format: (r) => Number(r.qty).toLocaleString() },
-  { key: 'cost_price', title: '成本', align: 'right', format: (r) => Number(r.cost_price).toFixed(2) },
-  { key: 'current_price', title: '现价', align: 'right', format: (r) => Number(r.current_price).toFixed(2) },
-  { key: 'market_value', title: '市值', align: 'right', format: (r) => fmtMoney(Number(r.market_value)) },
-  { key: 'float_pnl', title: '盈亏', align: 'right', sortable: true },
-  { key: 'pnl_pct', title: '盈亏%', align: 'right' },
-  { key: 'last_buy_date', title: '买入日期' },
-]
-
-const orderColumns: DataColumn[] = [
-  { key: 'created_at', title: '时间', format: (r) => String(r.created_at || '').slice(5, 16) },
-  { key: 'side', title: '方向' },
-  { key: 'code', title: '代码', cellClass: 'mono' },
-  { key: 'name', title: '名称' },
-  { key: 'price', title: '价格', align: 'right' },
-  { key: 'qty', title: '数量', align: 'right', format: (r) => Number(r.qty).toLocaleString() },
-  { key: 'status', title: '状态' },
-]
-
-const pickColumns: DataColumn[] = [
-  { key: 'code', title: '代码', cellClass: 'mono' },
-  { key: 'name', title: '名称' },
-  { key: 'price', title: '现价', align: 'right', format: (r) => Number(r.price).toFixed(2) },
-  { key: 'change_pct', title: '涨跌', align: 'right', sortable: true },
-  { key: 'score', title: '评分', align: 'right', sortable: true, format: (r) => Number(r.score).toFixed(1) },
-]
-
-onActivated(() => {
-  // 切回交易页：静默刷新账户与持仓（有旧数据就不显示加载态）
-  if (selectedId.value) void refreshAccountData()
-})
-
+onActivated(() => { if (tab.value === 'picks') void loadPicks() })
 onMounted(async () => {
   await loadAccounts()
   if (tab.value === 'picks') await loadPicks()
 })
-
-watch(tab, async (v) => {
-  if (v === 'picks' && !picks.value.length) await loadPicks()
-})
+watch(tab, (v) => { if (v === 'picks' && !picks.value.length) void loadPicks() })
+watch(selectedId, () => { void loadNav() })
 </script>
 
 <template>
-  <AppPage title="交易" :subtitle="subtitle">
-    <template #actions>
-      <template v-if="showAccountBar">
-      <select
-        v-if="accounts.length > 1"
-        v-model="selectedId"
-        class="ui-select"
-        style="width: 140px"
-        @change="refreshAccountData"
-      >
-        <option v-for="a in accounts" :key="a.account_id" :value="a.account_id">{{ a.name }}</option>
-      </select>
-      <button class="ui-btn" :disabled="!selectedId" @click="handleRefresh">
-        <Icon name="refresh" :size="14" /><span>刷新价格</span>
-      </button>
-      <button class="ui-btn ui-btn--primary" @click="tab = 'order'">
-        <Icon name="plus" :size="14" /><span>下单</span>
-      </button>
-      </template>
-    </template>
-
-    <EmptyGuide
-      v-if="showAccountBar && !loading && !accounts.length"
-      icon="wallet"
-      title="还没有模拟账户"
-      desc="先创建一个账户，就可以开始模拟交易了。"
-    >
-      <template #action>
-        <button class="ui-btn ui-btn--primary" @click="advancedOpen = true">账户设置</button>
-      </template>
-    </EmptyGuide>
-
-    <template v-else>
-      <div v-if="showAccountBar && currentAccount" class="metrics">
-        <StatTile label="总资产" :value="fmtMoney(currentAccount.total_assets)" icon="wallet" />
-        <StatTile
-          label="总盈亏"
-          :value="fmtMoney(currentAccount.total_profit)"
-          :trend="currentAccount.total_profit >= 0 ? 'up' : 'down'"
-          :hint="fmtPct(currentAccount.total_profit_pct)"
-          :hint-trend="currentAccount.total_profit >= 0 ? 'up' : 'down'"
-        />
-        <StatTile label="持仓市值" :value="fmtMoney(posMarketValue)" :hint="`${positions.length} 只`" />
-        <StatTile
-          label="浮动盈亏"
-          :value="fmtMoney(posFloatPnl)"
-          :trend="posFloatPnl >= 0 ? 'up' : 'down'"
-        />
-        <StatTile label="可用余额" :value="fmtMoney(currentAccount.balance)" />
+  <AppPage title="交易" :subtitle="SUBTITLES[tab]">
+    <SectionCard :padded="false">
+      <div style="padding: 0 var(--sp-5)">
+        <PageToolbar v-model="tab" :tabs="TABS" advanced @advanced="advancedOpen = true">
+          <template #extra>
+            <button
+              v-if="tab === 'picks'"
+              class="ui-btn ui-btn--primary ui-btn--sm"
+              :disabled="picksRunning"
+              @click="rescanPicks"
+            >
+              <Icon :name="picksRunning ? 'refresh' : 'search'" :size="14" :class="{ spin: picksRunning }" />
+              {{ picksRunning ? '扫描中…' : '运行选股' }}
+            </button>
+            <span v-if="tab === 'picks' && picksStale" class="ui-chip ui-chip--gold">缓存可刷新</span>
+          </template>
+        </PageToolbar>
       </div>
 
-      <SectionCard :padded="false">
-        <div style="padding: 0 var(--sp-5)">
-          <PageToolbar v-model="tab" :tabs="TABS" advanced @advanced="advancedOpen = true">
-            <template #extra>
-              <span v-if="tab === 'orders'" class="ui-chip">{{ orders.length }} 笔</span>
-              <span v-if="tab === 'picks' && picksStale" class="ui-chip ui-chip--gold">缓存可刷新</span>
-            </template>
-          </PageToolbar>
-        </div>
+      <!-- 体系总览 -->
+      <div v-if="tab === 'systems'" class="pane">
+        <TradeSystems @go="(t) => (tab = normalizeTab(t))" />
+      </div>
 
-        <!-- 体系总览（三大程序交易体系） -->
-        <div v-if="tab === 'systems'" class="pane">
-          <TradeSystems @go="(t) => (tab = t as Tab)" />
-        </div>
+      <!-- 实盘：整页并入（原一级「实盘」） -->
+      <div v-else-if="tab === 'live'" class="pane pane--bare">
+        <Live />
+      </div>
 
-        <!-- 持仓 -->
-        <div v-else-if="tab === 'positions'" class="pane">
-          <DataTable
-            :columns="positionColumns"
-            :rows="positionRows"
-            compact
-            row-key="id"
-            empty-title="当前空仓"
-            empty-desc="到「选股」挑一只，或在「下单」里手动买入。"
-            :page-size="20"
-          >
-            <template #cell-float_pnl="{ row }">
-              <span :class="Number(row.float_pnl) >= 0 ? 'up' : 'down'">{{ fmtMoney(Number(row.float_pnl)) }}</span>
-            </template>
-            <template #cell-pnl_pct="{ row }">
-              <span :class="Number(row.float_pnl) >= 0 ? 'up' : 'down'">
-                {{ fmtPct(Number(row.cost_price) ? ((Number(row.current_price) - Number(row.cost_price)) / Number(row.cost_price)) * 100 : 0) }}
-              </span>
-            </template>
-            <template #actions="{ row }">
-              <div class="icon-actions">
-                <button
-                  class="icon-action icon-action--up tip"
-                  data-tip="卖出：按市价清仓该持仓"
-                  @click="sellPosition(row as unknown as Position)"
-                >
-                  <Icon name="minus" :size="14" />
-                </button>
-              </div>
-            </template>
-          </DataTable>
-        </div>
+      <!-- 选股 -->
+      <div v-else-if="tab === 'picks'" class="pane">
+        <DataTable
+          :columns="pickColumns"
+          :rows="picks as unknown as Record<string, unknown>[]"
+          compact
+          row-key="code"
+          storage-key="trade.picks"
+          empty-title="还没有选股结果"
+          empty-desc="点右上角「运行选股」生成今日候选。"
+        />
+      </div>
 
-        <!-- 下单 -->
-        <div v-else-if="tab === 'order'" class="pane">
-          <div class="order-form">
-            <FormField label="方向">
-              <SegmentedControl
-                v-model="form.side"
-                block
-                :options="[{ value: 'buy', label: '买入' }, { value: 'sell', label: '卖出' }]"
-              />
-            </FormField>
-            <FormField label="股票代码" required>
-              <input v-model="form.code" class="ui-input num" placeholder="600519" maxlength="6" />
-            </FormField>
-            <FormField label="名称">
-              <input v-model="form.name" class="ui-input" placeholder="可选" />
-            </FormField>
-            <FormField label="委托类型">
-              <select v-model="form.order_type" class="ui-select">
-                <option value="market">市价</option>
-                <option value="limit">限价</option>
-              </select>
-            </FormField>
-            <FormField v-if="form.order_type === 'limit'" label="委托价">
-              <input v-model.number="form.price" type="number" step="0.01" class="ui-input num" />
-            </FormField>
-            <FormField label="数量（股）">
-              <input v-model.number="form.qty" type="number" step="100" min="100" class="ui-input num" />
-            </FormField>
-            <div class="order-form__submit">
-              <button
-                class="ui-btn ui-btn--primary"
-                :disabled="submitting"
-                @click="submitOrder"
-              >
-                {{ submitting ? '提交中…' : form.side === 'buy' ? '确认买入' : '确认卖出' }}
-              </button>
-            </div>
-          </div>
-        </div>
+      <!-- 模拟盘：策略自行驱动的结果（净值 / 持仓明细 / 交易流水） -->
+      <div v-else class="pane">
+        <SimPanel />
+      </div>
+    </SectionCard>
 
-        <!-- 订单 -->
-        <div v-else-if="tab === 'orders'" class="pane">
-          <DataTable
-            :columns="orderColumns"
-            :rows="orderRows"
-            compact
-            row-key="id"
-            empty-title="暂无订单"
-            empty-desc="下单后会在这里显示，未成交的可撤单。"
-            :page-size="20"
-          >
-            <template #cell-side="{ row }">
-              <span class="ui-chip" :class="row.side === 'buy' ? 'ui-chip--up' : 'ui-chip--down'">
-                {{ row.side === 'buy' ? '买入' : '卖出' }}
-              </span>
-            </template>
-            <template #cell-price="{ row }">
-              {{ (Number(row.filled_price) || Number(row.price) || 0).toFixed(2) }}
-            </template>
-            <template #cell-status="{ row }">
-              <span class="ui-chip" :class="row.status === 'filled' ? 'ui-chip--down' : row.status === 'pending' ? 'ui-chip--gold' : ''">
-                {{ row.status === 'filled' ? '已成交' : row.status === 'pending' ? '挂单中' : row.status === 'cancelled' ? '已撤单' : row.status }}
-              </span>
-            </template>
-            <template #actions="{ row }">
-              <div v-if="row.status === 'pending'" class="icon-actions">
-                <button
-                  class="icon-action icon-action--danger tip"
-                  data-tip="撤单"
-                  @click="handleCancel(Number(row.id))"
-                >
-                  <Icon name="close" :size="14" />
-                </button>
-              </div>
-            </template>
-          </DataTable>
-        </div>
-
-        <!-- 选股 -->
-        <div v-else-if="tab === 'picks'" class="pane">
-          <DataTable
-            :columns="pickColumns"
-            :rows="pickRows"
-            compact
-            row-key="code"
-            :loading="picksRunning"
-            empty-title="暂无选股结果"
-            empty-desc="点击「重新扫描」运行多因子评分，生成 Top 20 候选。"
-            :page-size="20"
-          >
-            <template #cell-change_pct="{ row }">
-              <span :class="Number(row.change_pct) >= 0 ? 'up' : 'down'">
-                {{ fmtPct(Number(row.change_pct)) }}
-              </span>
-            </template>
-            <template #cell-score="{ row }">
-              <span class="gold">{{ Number(row.score).toFixed(1) }}</span>
-            </template>
-            <template #actions="{ row }">
-              <div class="icon-actions">
-                <button
-                  class="icon-action icon-action--gold tip"
-                  data-tip="按评分买入"
-                  @click="buyPick(row as unknown as PickItem)"
-                >
-                  <Icon name="plus" :size="14" />
-                </button>
-              </div>
-            </template>
-            <template #empty-action>
-              <button class="ui-btn ui-btn--primary" :disabled="picksRunning" @click="rescanPicks">
-                {{ picksRunning ? '扫描中…' : '重新扫描' }}
-              </button>
-            </template>
-          </DataTable>
-        </div>
-
-        <!-- 模拟盘（体系三 · 本地预测模型） -->
-        <div v-else-if="tab === 'sim'" class="pane">
-          <SimPanel />
-        </div>
-      </SectionCard>
-
-      <!-- 净值曲线 -->
-      <SectionCard v-if="tab === 'positions' && nav.length > 1" title="账户净值曲线">
-        <div ref="navEl" class="nav-chart" />
-      </SectionCard>
-    </template>
-
-    <Drawer v-model:open="advancedOpen" title="账户设置" desc="创建、重命名或重置模拟账户">
-      <div class="account-admin">
-        <section v-if="currentAccount" class="account-block">
-          <div class="account-block__head">
-            <div>
-              <div class="account-block__name">{{ currentAccount.name }}</div>
-              <div class="account-block__meta">
-                初始资金 {{ fmtMoney(currentAccount.initial_capital) }} · 持仓 {{ currentAccount.positions }} 只
-              </div>
-            </div>
-            <span class="ui-chip ui-chip--gold">当前账户</span>
-          </div>
-          <FormField label="账户名称">
-            <input v-model="accountDraft.name" class="ui-input" maxlength="24" @keyup.enter="handleRenameAccount" />
-          </FormField>
-          <div class="account-actions">
-            <button class="ui-btn ui-btn--primary" :disabled="accountBusy" @click="handleRenameAccount">
-              保存名称
+    <!-- 高级设置：只保留新建/重置（模拟账户的人工下单已移除） -->
+    <Drawer v-model:open="advancedOpen" title="模拟账户设置" desc="这些账户由策略驱动；此处仅用于新建与重置">
+      <div class="adv">
+        <FormField label="新建账户">
+          <div class="adv-row">
+            <input v-model="draft.newName" class="ui-input" placeholder="账户名" />
+            <button class="ui-btn ui-btn--primary" :disabled="accountBusy" @click="doCreateAccount">
+              <Icon name="plus" :size="14" /> 创建
             </button>
           </div>
-        </section>
-
-        <section class="account-block">
-          <h3 class="account-block__title">新建账户</h3>
-          <FormField label="账户名称" required>
-            <input v-model="accountDraft.newName" class="ui-input" placeholder="例如：趋势实验" maxlength="24" />
-          </FormField>
-          <FormField label="初始资金" required>
-            <input v-model.number="accountDraft.newCapital" class="ui-input num" type="number" min="1000" step="10000" />
-          </FormField>
-          <div class="account-actions">
-            <button class="ui-btn ui-btn--primary" :disabled="accountBusy" @click="handleCreateAccount">
-              <Icon name="plus" :size="14" /><span>创建账户</span>
+        </FormField>
+        <FormField label="当前账户">
+          <div class="adv-row">
+            <span class="mono">{{ current?.name || '—' }}</span>
+            <button class="ui-btn ui-btn--danger" :disabled="accountBusy || !selectedId" @click="doResetAccount">
+              <Icon name="restore" :size="14" /> 重置账户
             </button>
           </div>
-        </section>
-
-        <section v-if="currentAccount" class="account-block account-block--danger">
-          <h3 class="account-block__title">危险操作</h3>
-          <p class="account-block__hint">
-            重置会清空该账户的持仓、订单、成交和净值记录；删除账户不可撤销。
-          </p>
-          <div class="account-actions">
-            <button class="ui-btn ui-btn--danger" :disabled="accountBusy" @click="handleResetAccount">重置账户</button>
-            <button class="ui-btn ui-btn--danger" :disabled="accountBusy" @click="handleDeleteAccount">删除账户</button>
-          </div>
-        </section>
+        </FormField>
       </div>
     </Drawer>
   </AppPage>
 </template>
 
 <style scoped>
-/* .metrics 已收敛到全局样式（styles/base.css） */
-.pane { padding: var(--sp-2) var(--sp-5) var(--sp-5); }
-.order-form {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: var(--sp-4);
-  max-width: 760px;
-  padding-top: var(--sp-4);
-}
-.order-form__submit { display: flex; align-items: flex-end; }
-.order-form__submit .ui-btn { width: 100%; }
-.nav-chart { height: 260px; }
-.mono { font-family: var(--font-mono); }
-.gold { color: var(--gold); font-weight: 600; }
-
-.account-admin { display: flex; flex-direction: column; gap: var(--sp-4); }
-.account-block {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-3);
-  padding: var(--sp-4);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-md);
-  background: var(--bg);
-}
-.account-block--danger { border-color: color-mix(in srgb, var(--up) 35%, var(--border-soft)); }
-.account-block__head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-3); }
-.account-block__name { font-size: var(--fs-lg); font-weight: 650; }
-.account-block__meta { margin-top: 3px; color: var(--text-faint); font-size: var(--fs-xs); }
-.account-block__title { margin: 0; font-size: var(--fs-md); font-weight: 600; color: var(--text); }
-.account-block__hint { margin: 0; color: var(--text-sub); font-size: var(--fs-xs); line-height: 1.6; }
-.account-actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
+.pane { padding: var(--sp-5); }
+/* 嵌入式子页（实盘）：左右不再补内边距（它自带的卡片已有内边距），
+   但要保留上/下的呼吸，否则内容会顶到 Tab 栏的底边框上。 */
+.pane--bare { padding: var(--sp-5) 0; }
+.adv { display: flex; flex-direction: column; gap: var(--sp-5); }
+.adv-row { display: flex; align-items: center; gap: var(--sp-3); }
+.adv-row .ui-input { flex: 1; }
+.spin { animation: m-spin 0.9s linear infinite; }
 </style>
