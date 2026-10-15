@@ -219,6 +219,55 @@ def status_summary():
             'logintest.log': mtime('logintest.log'),
             'query.log': mtime('query.log'),
             'orders.log': mtime('orders.log'),
+            'unlock.log': mtime('unlock.log'),
         },
         'snapshots': list_snapshots(5),
+        'unlock': unlock_state(),
+        'login_guard': login_guard_state(),
+    }
+
+
+def unlock_state():
+    """最近一次解锁尝试的结果（供 UI 提示"到底锁没锁、上次解锁成没成"）。
+
+    判定顺序（**从权威到推断**）：
+      1. 最近一次 `--unlock` 的 last-result.json —— 那是最直接的证据
+      2. 否则解析 unlock.log 末尾的成功/失败标记
+    两种都没有 → known=False（**未知就是未知，不猜**）。
+    """
+    out = {'known': False, 'ok': None, 'ts': None, 'detail': None, 'log_tail': ''}
+    d = tool_dir()
+    tail = _tail(os.path.join(d, 'unlock.log'))
+
+    lr = last_result() or {}
+    if (lr.get('command') or '') == 'unlock':
+        out['known'] = True
+        out['ok'] = bool(lr.get('ok'))
+        out['ts'] = lr.get('ts')
+        out['detail'] = lr.get('message')
+        out['log_tail'] = tail
+        return out
+
+    if tail:
+        out['log_tail'] = tail
+        if '✅ 解锁成功' in tail:
+            out.update(known=True, ok=True, detail='解锁成功（锁定文案已消失）')
+        elif '仍未锁定' in tail or '未处于锁定状态' in tail:
+            out.update(known=True, ok=True, detail='未处于锁定状态，无需解锁')
+        elif '解锁失败' in tail or '已被本工具自锁' in tail:
+            out.update(known=True, ok=False, detail='解锁失败（见日志）')
+    return out
+
+
+def login_guard_state():
+    """登录自锁状态：密码被判错后工具会拒绝再试（防连续失败锁账户）。"""
+    p = os.path.join(tool_dir(), 'login-guard.json')
+    j = _read_json(p)
+    if not j:
+        return {'guarded': False}
+    return {
+        'guarded': True,
+        'reason': j.get('Reason') or j.get('reason'),
+        'ts': j.get('Ts') or j.get('ts'),
+        'cred_hash': (j.get('CredHash') or j.get('credHash') or '')[:12],
     }

@@ -154,6 +154,38 @@ def snapshot_take():
     return ok(r)
 
 
+# ────────────────────── 会话解锁（券商交易保护超时重锁） ──────────────────────
+#
+# 与首次登录是两条不同的路径：
+#   首次登录 → 顶层弹窗（账号 + 密码两个输入框）
+#   超时重锁 → **嵌在主窗口里的对话框**（无标题、只有 1 个密码框）
+#   所以 `--logintest` 找不到它，必须走工具的 `--unlock`。
+#
+# 为什么这个端点比其它"读"端点更敏感：
+#   它会**代替人输入交易密码**。券商普遍有"密码错误 N 次锁定"，
+#   所以工具有**登录自锁**（login-guard.json：密码被判错后拒绝再试）与
+#   **最多尝试 1 次**的硬约束。本端点不放松其中任何一条：
+#   不提供"重试"参数、不做循环、失败只如实回报并让自锁生效。
+
+@bp.route("/unlock", methods=["POST"])
+def unlock():
+    """解锁被（交易保护）锁定的交易界面。
+
+    请求体（都可选）：
+      { "cred_file": "E:/certs/k.txt", "timeout": 180 }
+
+    安全约束（由工具侧强制，本层不改）：
+      · 密码只从凭据文件读，**绝不经过 HTTP 请求体**，也不落日志
+      · 键盘输入只进前台窗口，未到前台即中止
+      · **最多尝试 1 次**；失败即写 login-guard.json 自锁，防止连续失败锁账户
+    """
+    body = request.get_json(silent=True) or {}
+    cred = body.get("cred_file") or os.environ.get("SC_TRADE_CRED", "E:/certs/k.txt")
+    r = tb.run_readonly(["--unlock", "TdxW", cred],
+                        timeout=_n(body.get("timeout"), 200) or 200, log_name="unlock.log")
+    return ok(r)
+
+
 # ────────────────────────── 写：真实委托 ──────────────────────────
 
 @bp.route("/orderflow", methods=["POST"])

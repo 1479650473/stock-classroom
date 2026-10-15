@@ -10,7 +10,7 @@ import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import { useToastStore } from '@/stores/toast'
 import {
   getLiveStatus, queryLivePanel, queryLiveQuote, liveStartup, liveSnapshot,
-  getLiveFills, liveOrderflow, listLiveSnapshots, getLiveIdempotency,
+  getLiveFills, liveOrderflow, listLiveSnapshots, getLiveIdempotency, liveUnlock,
   type LiveStatus, type LiveRun, type LiveOrderBody,
 } from '@/api'
 
@@ -38,13 +38,57 @@ const severity = computed<'ok' | 'notready' | 'bad'>(() => {
   if (!l) return 'bad'
   if (l.ok) return 'ok'
   const m = l.message || ''
-  if (m.includes('未打开') || m.includes('登录')) return 'notready'
+  if (m.includes('未打开') || m.includes('登录') || m.includes('锁定')) return 'notready'
   return 'bad'
 })
 const severityText = computed(() => (
   severity.value === 'ok' ? '就绪'
     : severity.value === 'notready' ? '客户端未就绪' : '失败'
 ))
+
+/* ───────────── 会话解锁（券商交易保护超时重锁） ───────────── */
+
+const unlockBusy = ref(false)
+const unlockRun = ref<LiveRun | null>(null)
+
+const unlockState = computed(() => st.value?.unlock)
+const guard = computed(() => st.value?.login_guard)
+
+/**
+ * 是否需要解锁：仅当最近一次结果明确是"交易视图未打开/已锁定"时才提示。
+ * **不把 known=false 当成"未锁定"** —— 未知就是未知。
+ */
+const looksLocked = computed(() => {
+  const m = st.value?.last?.message || ''
+  return m.includes('未打开') || m.includes('锁定') || m.includes('登录')
+})
+
+/** 上次解锁是否失败（失败会让工具自锁，必须显式提示，别让用户反复点） */
+const unlockFailed = computed(() => unlockState.value?.known === true && unlockState.value.ok === false)
+
+async function doUnlock() {
+  if (guard.value?.guarded) {
+    toast.error('工具已自锁（上次密码被判错）。更新凭据文件后才会自动解除，或删除 login-guard.json。')
+    return
+  }
+  if (!confirm(
+    '将自动输入交易密码解锁交易界面。\n\n'
+    + '• 密码只从凭据文件读取，不会经过网页/日志\n'
+    + '• 工具最多只尝试 1 次；若密码被判错会写入自锁，之后不再自动重试\n'
+    + '• 输入期间请不要操作鼠标键盘（会抢前台焦点）\n\n'
+    + '确定现在解锁？',
+  )) return
+
+  unlockBusy.value = true
+  try {
+    const r = await liveUnlock()
+    unlockRun.value = r
+    reportRun(r, '解锁成功')
+    await loadStatus()
+  } catch (e: unknown) {
+    toast.error('解锁失败：' + (e instanceof Error ? e.message : String(e)))
+  } finally { unlockBusy.value = false }
+}
 
 /* ───────────── 面板读取 ───────────── */
 type PanelKey = 'positions' | 'funds' | 'deals' | 'cancel'
@@ -271,6 +315,9 @@ onMounted(async () => {
     <PageHeader title="实盘" subtitle="国信金太阳 · 盘前启动 / 账户读取 / 下单 / 收盘快照">
       <template #right>
         <div class="hdr">
+          <button v-if="looksLocked" class="ui-btn unlock-btn" :disabled="unlockBusy || guard?.guarded" @click="doUnlock">
+            <Icon name="alert" :size="14" /> {{ unlockBusy ? '解锁中…' : '解锁交易界面' }}
+          </button>
           <button class="ui-btn" :disabled="acting" @click="doStartup">
             <Icon name="play" :size="14" /> {{ acting ? '执行中…' : '一键启动/登录' }}
           </button>
@@ -281,6 +328,45 @@ onMounted(async () => {
         </div>
       </template>
     </PageHeader>
+
+    <!-- ⓪ 解锁提示：只在"看起来被锁"时出现，且放在最前面（这是拦路的那一步） -->
+    <Card v-if="looksLocked || unlockRun || guard?.guarded" class="sec unlock-card">
+      <div class="sec-head">
+        <div>
+          <h2 class="sec-title">
+            <Icon name="alert" :size="15" /> 交易界面需要解锁
+          </h2>
+          <p class="sec-sub">
+            券商的「交易保护」在长时间未操作后会把交易界面锁上。注意：<b>这个界面和首次登录不一样</b> ——
+            首次登录是弹窗（账号+密码），超时重锁是<b>嵌在主窗口里的对话框</b>，只有一个交易密码框。
+          </p>
+        </div>
+        <button class="ui-btn unlock-btn" :disabled="unlockBusy || !!guard?.guarded" @click="doUnlock">
+          <Icon name="play" :size="14" /> {{ unlockBusy ? '解锁中…' : '解锁' }}
+        </button>
+      </div>
+
+      <p v-if="guard?.guarded" class="err-box">
+        <Icon name="alert" :size="13" />
+        工具已自锁：{{ guard.reason || '上次交易密码被服务器判错' }}
+        —— 请人工确认密码并更新凭据文件（内容变更后自动解除自锁），或删除 login-guard.json
+      </p>
+
+      <p v-if="unlockState?.known" class="sec-sub" :class="unlockState.ok ? 'ok-t' : 'bad-t'">
+        上次解锁：{{ unlockState.ok ? '成功' : '失败' }}
+        <template v-if="unlockState.ts"> · {{ unlockState.ts }}</template>
+        <template v-if="unlockState.detail"> · {{ unlockState.detail }}</template>
+      </p>
+      <p v-else class="sec-sub faint">上次解锁结果：未知（本会话还没尝试过）</p>
+
+      <div v-if="unlockFailed" class="err-box">
+        <Icon name="alert" :size="13" />
+        解锁失败会让工具<b>写自锁</b>，之后不会自动重试 —— 这是刻意的：
+        券商普遍"密码错误 N 次锁账户"，连续自动重试的代价远大于一次没解开。
+      </div>
+
+      <pre v-if="unlockRun?.log_tail" class="log mono">{{ unlockRun.log_tail }}</pre>
+    </Card>
 
     <!-- ① 工具与连接状态：先看这个，再决定能不能操作 -->
     <Card class="sec">
@@ -590,6 +676,14 @@ onMounted(async () => {
 .sec-title { font-size: var(--fs-lg); font-weight: 600; color: var(--text); margin: 0 0 var(--sp-1); }
 .sec-sub { margin: 0; font-size: var(--fs-sm); color: var(--text-sub); line-height: 1.55; }
 .hdr { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
+
+/* 解锁卡：用警示色，因为它是"拦路"的那一步 */
+.unlock-card { border: 1px solid color-mix(in srgb, var(--warn) 50%, var(--border)); }
+.unlock-card .sec-title { display: flex; align-items: center; gap: 6px; color: var(--warn); }
+.unlock-btn {
+  background: var(--warn); border-color: var(--warn); color: #1a1206; font-weight: 600;
+}
+.unlock-btn:disabled { opacity: 0.5; }
 
 .bg-toggle {
   display: inline-flex; align-items: center; gap: 6px;

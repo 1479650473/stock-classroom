@@ -999,6 +999,8 @@ export interface LiveStatus {
   } | null
   files: Record<string, string | null>
   snapshots: string[]
+  unlock: LiveUnlockState
+  login_guard: { guarded: boolean; reason?: string | null; ts?: string | null; cred_hash?: string }
 }
 
 export const getLiveStatus = () => api.get<LiveStatus>('/api/live/status', undefined, { ttl: 0 })
@@ -1031,8 +1033,33 @@ export const getLiveIdempotency = () =>
 export const listLiveSnapshots = (limit = 30) =>
   api.get<{ snapshots: string[] }>('/api/live/snapshots', { limit }, { ttl: 0 })
 
+/** 上次解锁尝试的结果。known=false 表示**未知**（不要当成"未锁定"）。 */
+export interface LiveUnlockState {
+  known: boolean
+  ok: boolean | null
+  ts?: string | null
+  detail?: string | null
+  log_tail?: string
+}
+
 export const getLiveSnapshot = (name: string) =>
   api.get<Record<string, unknown>>(`/api/live/snapshots/${encodeURIComponent(name)}`, undefined, { ttl: 0 })
+
+/**
+ * 解锁被（券商交易保护）锁定的交易界面。
+ *
+ * 与「首次登录」是**两条不同路径**：首次登录是顶层弹窗（账号+密码两个框），
+ * 超时重锁是**嵌在主窗口里的对话框**（无标题、只有 1 个密码框），
+ * `--logintest` 找不到它，所以单独走 `--unlock`。
+ *
+ * 安全约定（工具侧强制，本层不放松）：
+ *  · 密码只从**凭据文件**读，绝不经过 HTTP 请求体
+ *  · 键盘输入只进前台窗口，未到前台即中止
+ *  · **最多尝试 1 次**；失败即写 login-guard.json 自锁（防连续失败锁账户）
+ * 所以这里不提供任何"重试次数"参数，也不做循环。
+ */
+export const liveUnlock = (credFile?: string, timeout = 200) =>
+  api.post<LiveRun>('/api/live/unlock', { cred_file: credFile, timeout })
 
 /**
  * **会产生真实委托**的下单/撤单。
