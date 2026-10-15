@@ -152,6 +152,22 @@ onBeforeUnmount(() => {
 .result .code { color: var(--text-sub); width: 70px; }
 .result .name { flex: 1; }
 .result .tag { font-size: var(--fs-xs); color: var(--text-faint); }
-.fade-enter-active, .fade-leave-active { transition: opacity var(--dur-fast); }
+/* 命令面板入场：遮罩淡入 + 面板轻微缩放/上浮。
+   只做 opacity 会显得"凭空出现"；加一点缩放与位移才有"面板被唤出"的手感。
+   离开刻意更快 —— 用户已经决定关闭，不该等动画。 */
+.fade-enter-active { transition: opacity var(--dur) var(--ease-out); }
+.fade-leave-active { transition: opacity var(--dur-fast) linear; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
+.fade-enter-active .palette {
+  transition: transform var(--dur) var(--ease-spring), opacity var(--dur) var(--ease-out);
+}
+.fade-enter-from .palette {
+  transform: translate3d(0, -8px, 0) scale(0.985);
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fade-enter-active, .fade-leave-active { transition: none; }
+}
+:root[data-motion='reduced'] .fade-enter-active,
+:root[data-motion='reduced'] .fade-leave-active { transition: none; }
 </style>

@@ -116,6 +116,18 @@
 }
 .m-float { animation: m-float 3.4s var(--ease) infinite; }
 
+/* ---------------- 进度 ----------------
+   不确定态滑块：进度未知时来回扫，而不是傻停在 0%（停着会被当成"卡死"） */
+@keyframes m-sweep {
+  0%   { transform: translate3d(-110%, 0, 0); }
+  100% { transform: translate3d(320%, 0, 0); }
+}
+/* 确定态的流光：叠在填充条上，表达"还在推进" */
+@keyframes m-progress-sheen {
+  from { background-position: 180% 0; }
+  to   { background-position: -80% 0; }
+}
+
 /* 表格行入场：**只级联前 12 行**。
    长表格（500 行）若全量级联，滚到下面还在逐行浮现，像"下雨"而不是"加载"；
    只让首屏可见部分参与，且用 backwards 填充 —— 未开始的行保持原样，不会先隐形。 */

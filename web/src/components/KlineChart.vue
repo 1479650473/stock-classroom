@@ -172,5 +172,9 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 480px;
   min-height: 360px;
+  /* 容器入场淡入（关键帧在动效层 motion.css）。
+     刻意不动 K 线本身：几百上千根柱子的绘制动画很贵，
+     且会掩盖"数据已就绪"的时点。 */
+  animation: m-fade-in var(--dur-slow) var(--ease-out) both;
 }
 </style>

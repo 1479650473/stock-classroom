@@ -1141,7 +1141,13 @@ watch(strategyId, (v) => {
 
 /* ── 图表 ── */
 .chart-wrap { position: relative; width: 100%; }
-.chart { width: 100%; min-height: 380px; height: clamp(380px, 55vh, 640px); }
+/* 图表容器的入场淡入：给"这张图是画出来的"一点仪式感。
+     刻意**不动 K 线本身** —— 4500 根柱子的绘制动画很贵，且会掩盖"数据已就绪"的时点；
+     只让容器淡入，视觉上一样有"进场"，成本近乎为零。 */
+.chart {
+  width: 100%; min-height: 380px; height: clamp(380px, 55vh, 640px);
+  animation: m-fade-in var(--dur-slow) var(--ease-out) both;
+}
 
 /* ── 账户/指标卡 ── */
 .acct-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-3); }

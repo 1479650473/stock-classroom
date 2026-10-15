@@ -7,6 +7,7 @@ import StatTile from '@/components/ui/StatTile.vue'
 import EmptyGuide from '@/components/ui/EmptyGuide.vue'
 import LoadingBlock from '@/components/ui/LoadingBlock.vue'
 import Icon from '@/components/Icon.vue'
+import ProgressBar from '@/components/ui/ProgressBar.vue'
 import Drawer from '@/components/ui/Drawer.vue'
 import { usePersistedRef } from '@/composables/usePersistedRef'
 import { getBootstrap, getOverview, getPicks } from '@/api'
@@ -235,7 +236,11 @@ const QUICK = [
               <template v-if="fresh.rows != null"> · 共 {{ (fresh.rows / 1e6).toFixed(1) }}M 行</template>
             </div>
             <div v-if="updating" class="fresh__progress">
-              {{ updateJob?.msg }} <span class="mono">{{ updateJob?.pct }}%</span>
+              <ProgressBar
+                :pct="updateJob?.pct ?? null"
+                :active="true"
+                :label="updateJob?.msg || '数据更新中…'"
+              />
             </div>
           </div>
         </div>

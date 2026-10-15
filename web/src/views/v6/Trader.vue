@@ -8,6 +8,7 @@ import LoadingBlock from '@/components/ui/LoadingBlock.vue'
 import Drawer from '@/components/ui/Drawer.vue'
 import FormField from '@/components/ui/FormField.vue'
 import Icon from '@/components/Icon.vue'
+import ProgressBar from '@/components/ui/ProgressBar.vue'
 import { useToastStore } from '@/stores/toast'
 import { useJobsStore } from '@/stores/jobs'
 import {
@@ -298,8 +299,7 @@ function toolLine(t: { tool: string; args?: Record<string, unknown>; error?: str
 
       <!-- 运行进度 -->
       <div v-if="isRunning" class="progress">
-        <div class="progress__bar"><div class="progress__fill" :style="{ width: (runningJob?.pct || 0) + '%' }" /></div>
-        <div class="progress__msg">{{ runningJob?.msg || '执行中…' }}</div>
+        <ProgressBar :pct="runningJob?.pct ?? null" :active="true" :label="runningJob?.msg || '执行中…'" />
       </div>
 
       <!-- 自我风格 -->
@@ -700,10 +700,6 @@ function toolLine(t: { tool: string; args?: Record<string, unknown>; error?: str
 .dot--ok { background: var(--ok); }
 .dot--off { background: var(--text-faint); }
 
-.progress { display: flex; flex-direction: column; gap: 6px; }
-.progress__bar { height: 4px; border-radius: 999px; background: var(--panel-2); overflow: hidden; }
-.progress__fill { height: 100%; background: var(--accent); transition: width 0.3s ease; }
-.progress__msg { font-size: var(--fs-xs); color: var(--text-faint); }
 
 .decision { display: flex; flex-direction: column; gap: var(--sp-4); }
 .decision__row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }

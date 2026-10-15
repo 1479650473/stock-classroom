@@ -16,6 +16,7 @@ import { useJobsStore } from '@/stores/jobs'
 import { useToastStore } from '@/stores/toast'
 import Tooltip from '@/components/ui/Tooltip.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
+import ProgressBar from '@/components/ui/ProgressBar.vue'
 import { useEChart, cssVar } from '@/composables/useEChart'
 import {
   getAlphaAllocation, getAlphaCompositeReport, getAlphaMeta, getAlphaRun, getAlphaRuns, getAlphaSmb, getAlphaZoo,
@@ -306,11 +307,12 @@ onMounted(async () => { await Promise.all([load(), loadMeta(), loadZoo(), loadCo
       </template>
 
       <div v-if="running" class="prog">
-        <div class="prog__bar"><i :style="{ width: progress + '%' }" /></div>
-        <div class="prog__meta">
-          <span>{{ progress }}%</span>
-          <span class="prog__msg">{{ progressMsg }}</span>
-        </div>
+        <ProgressBar
+          :pct="activeJob?.pct ?? null"
+          :active="true"
+          size="md"
+          :label="progressMsg"
+        />
       </div>
 
       <div v-if="openForm" class="form">
@@ -728,11 +730,7 @@ onMounted(async () => { await Promise.all([load(), loadMeta(), loadZoo(), loadCo
 .zoo__meta { margin-left: auto; }
 .comp { display: flex; flex-direction: column; gap: 10px; }
 .sum__cell .v.small { font-size: var(--fs-xs); font-weight: 500; }
-.prog { display: flex; flex-direction: column; gap: 6px; margin: 10px 0 2px; }
-.prog__bar { height: 6px; border-radius: 999px; background: var(--panel-2); overflow: hidden; }
-.prog__bar i { display: block; height: 100%; background: var(--accent); transition: width .3s; }
-.prog__meta { display: flex; gap: 10px; font-size: var(--fs-xs); color: var(--text-sub); }
-.prog__msg { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prog { margin: 10px 0 2px; }
 .form { margin-top: 10px; padding: 12px; border-radius: var(--radius-sm); background: var(--panel-2); }
 .form__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
 .runs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
