@@ -129,7 +129,7 @@ const simSum = () => {
           </div>
         </div>
         <div class="sys-card__foot">
-          <span class="sys-card__where">AI 页 · AI 操盘手</span>
+          <span class="sys-card__where">AI 页 · AI 操盘手（已停用）</span>
           <button class="ui-btn ui-btn--sm" @click="router.push({ path: '/ai', query: { tab: 'trader' } })">
             查看详情
           </button>

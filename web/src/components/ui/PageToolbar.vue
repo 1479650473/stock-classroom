@@ -8,7 +8,22 @@ import Icon from '@/components/Icon.vue'
 withDefaults(
   defineProps<{
     modelValue: string
-    tabs: { value: string; label: string; icon?: string }[]
+    tabs: {
+      value: string
+      label: string
+      icon?: string
+      /**
+       * 角标：贴在标签右侧的小字（如「已停用」）。
+       *
+       * 为什么不直接拼进 label：label 参与宽度计算与换行，写成
+       * 「AI 操盘手（已停用）」会让 Tab 很长、且把状态和真名字糊在一起。
+       * 单独角标既能独立样式化，以后也能按状态换色。
+       *
+       * 刻意**不**用它禁用点击：停用的功能仍应可进入（查历史、看旧决策、重新启用），
+       * 角标只负责"如实告知状态"。
+       */
+      badge?: string
+    }[]
     /** 是否显示"高级设置"按钮 */
     advanced?: boolean
   }>(),
@@ -35,6 +50,7 @@ const emit = defineEmits<{
       >
         <Icon v-if="t.icon" :name="t.icon" :size="14" />
         <span>{{ t.label }}</span>
+        <span v-if="t.badge" class="page-toolbar__badge">{{ t.badge }}</span>
       </button>
     </nav>
     <div class="page-toolbar__extra">
@@ -79,5 +95,17 @@ const emit = defineEmits<{
   border-bottom-color: var(--gold);
   font-weight: 600;
 }
+/* 角标：贴右侧的小字。用中性灰底，避免和"红涨绿跌"的语义色抢注意力 */
+.page-toolbar__badge {
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-soft);
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  line-height: 1.5;
+}
+:root[data-motion='reduced'] .page-toolbar__badge { transition: none; }
 .page-toolbar__extra { display: flex; align-items: center; gap: var(--sp-2); }
 </style>

@@ -23,7 +23,7 @@ export const NAV: NavGroup[] = [
       { path: '/strategy', name: 'strategy', title: '策略', icon: 'research', hint: '环境 · 回测 · 进化 · 回放' },
       { path: '/trade', name: 'trade', title: '交易', icon: 'trade', hint: '三体系总览 · 模拟盘 · 持仓/下单/选股' },
       { path: '/live', name: 'live', title: '实盘', icon: 'wallet', hint: '国信金太阳 · 盘前启动 · 账户读取 · 下单 · 收盘快照' },
-      { path: '/ai', name: 'ai', title: 'AI', icon: 'chat', hint: 'AI 操盘手 · 对话操盘 · 工具台' },
+      { path: '/ai', name: 'ai', title: 'AI', icon: 'chat', hint: 'AI 操盘台 · AI 工具台 · 自主交易员（已停用）' },
       { path: '/data', name: 'data', title: '数据', icon: 'database', hint: '数据管道 · 数据库 · 训练' },
     ],
   },

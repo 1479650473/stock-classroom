@@ -34,7 +34,8 @@ const ALL_ROUTES: RouteRecordRaw[] = [
   { path: '/arb', redirect: () => ({ path: '/market', query: { tab: 'arb' } }) },
   { path: '/picks', redirect: () => ({ path: '/trade', query: { tab: 'picks' } }) },
   { path: '/holdings', redirect: () => ({ path: '/trade', query: { tab: 'positions' } }) },
-  { path: '/agentops', redirect: () => ({ path: '/ai', query: { tab: 'auto' } }) },
+  // AI 页内标签 2026-10-16 改名为 操盘台/工具台；旧 URL 语义一致，值保留兼容
+  { path: '/agentops', redirect: () => ({ path: '/ai', query: { tab: 'tools' } }) },
   { path: '/agent', redirect: () => ({ path: '/ai', query: { tab: 'chat' } }) },
   { path: '/optimize', redirect: () => ({ path: '/strategy', query: { tab: 'optimize' } }) },
   { path: '/replay', redirect: () => ({ path: '/strategy', query: { tab: 'replay' } }) },
