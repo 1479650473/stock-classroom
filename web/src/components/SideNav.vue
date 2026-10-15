@@ -59,8 +59,30 @@ const route = useRoute()
   color: var(--text-sub);
   font-size: var(--fs-md);
   transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+  /* 应用启动时导航依次滑入（比整列"啪"地出现有生气） */
+  animation: m-slide-right var(--dur) var(--ease-out) both;
+  animation-delay: calc(var(--ni, 0) * 26ms);
 }
-.nav-item .ic { color: var(--text-faint); transition: color var(--dur-fast); }
+.nav-item .ic {
+  color: var(--text-faint);
+  transition: color var(--dur-fast);
+  /* 图标再晚 60ms 跟上，做出"文字先到、图标跟上"的层次 */
+  animation: m-fade-in var(--dur) var(--ease-out) both;
+  animation-delay: calc(var(--ni, 0) * 26ms + 60ms);
+}
+/* 逐项延迟：静态展开（比 JS 计算省，且首帧就是对的） */
+.nav-item:nth-of-type(1) { --ni: 0; }
+.nav-item:nth-of-type(2) { --ni: 1; }
+.nav-item:nth-of-type(3) { --ni: 2; }
+.nav-item:nth-of-type(4) { --ni: 3; }
+.nav-item:nth-of-type(5) { --ni: 4; }
+.nav-item:nth-of-type(6) { --ni: 5; }
+.nav-item:nth-of-type(7) { --ni: 6; }
+.nav-item:nth-of-type(8) { --ni: 7; }
+.nav-item:nth-of-type(9) { --ni: 8; }
+.nav-item:nth-of-type(10) { --ni: 9; }
+:root[data-motion='reduced'] .nav-item,
+:root[data-motion='reduced'] .nav-item .ic { animation: none; }
 .nav-item:hover { background: var(--bg-raised); color: var(--text); transform: translateX(2px); }
 .nav-item { will-change: transform; }
 .nav-item:hover .ic { color: var(--text); }
@@ -78,7 +100,10 @@ const route = useRoute()
 .nav-item.active .bar {
   background: var(--gold);
   box-shadow: 0 0 10px color-mix(in srgb, var(--gold) 60%, transparent);
+  /* 当前页指示条轻微呼吸 —— 让"我在哪"这件事持续可见但不吵 */
+  animation: m-breathe 3.2s var(--ease) infinite;
 }
+:root[data-motion='reduced'] .nav-item.active .bar { animation: none; }
 .nav-item .txt { flex: 1; }
 .spacer { flex: 1; }
 .foot { font-size: var(--fs-xs); text-align: center; padding: var(--sp-2); letter-spacing: 0.5px; }

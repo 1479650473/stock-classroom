@@ -1,0 +1,163 @@
+/* ============================================================
+   Motion layer — 动效系统（2026-10-16）
+
+   目标：让界面「活」起来，但**不闹**。三条自律：
+   1. **只动 GPU 友好属性**（transform / opacity / filter）。
+      绝不动 width/height/top/left —— 那些会触发布局重排，掉帧且带内联样式抖动。
+   2. **有节奏，不铺满**。入场用短促的 stagger（级联），常驻动画只给"实时"语义
+      （脉冲点、骨架微光），其余一律"交互才动"。
+   3. **必须能被关掉**：既尊重系统 `prefers-reduced-motion`，也尊重用户在
+      设置里选的「动效：精简」（`data-motion='reduced'`，见 appearance.css）。
+      两者任一命中 → 本文件全部动画归零（见文件末尾的兜底块）。
+
+   与既有实现的关系：
+   · `appearance.css` 负责"动效时长"开关（--dur-* 归零）
+   · `base.css` 已有 hover/active 质感（.card / .ui-btn / .tbl）
+   · 本文件只补**入场 / 级联 / 常驻 / 状态切换**这四类缺口，不重复既有的事
+   ============================================================ */
+
+/* ---------------- 级联索引 ----------------
+   用法：给一组同级元素写 style="--i:0/1/2..."，它们就会依次入场。
+   没有 --i 时退化为 0（统一入场，不会因为缺索引而不动）。 */
+:root {
+  --stagger-step: 42ms;   /* 相邻元素的入场间隔 */
+  --stagger-cap: 10;      /* 最多级联到第 10 个，避免长列表末尾等太久 */
+  --lift: -2px;           /* 悬停抬升距离 */
+}
+
+/* ---------------- 入场关键帧 ---------------- */
+@keyframes m-fade-up {
+  from { opacity: 0; transform: translate3d(0, 10px, 0); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes m-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes m-scale-in {
+  from { opacity: 0; transform: scale(0.94); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes m-slide-right {
+  from { opacity: 0; transform: translate3d(-10px, 0, 0); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ---------------- 入场工具类 ----------------
+   注意 `both` 填充模式：动画开始前保持 from 状态，结束后保持 to 状态。
+   否则会出现"先显示原样、再闪一下淡入"的抖动。 */
+.m-in    { animation: m-fade-up var(--dur-slow) var(--ease-out) both; }
+.m-in-f  { animation: m-fade-in var(--dur-slow) var(--ease-out) both; }
+.m-in-s  { animation: m-scale-in var(--dur) var(--ease-spring) both; }
+.m-in-r  { animation: m-slide-right var(--dur) var(--ease-out) both; }
+
+/* 带级联的入场：读 --i 计算延迟 */
+.m-stagger {
+  animation: m-fade-up var(--dur-slow) var(--ease-out) both;
+  animation-delay: calc(min(var(--i, 0), var(--stagger-cap)) * var(--stagger-step));
+}
+
+/* ---------------- 常驻（只给"实时"语义）---------------- */
+
+/* 实时脉冲：用于"进行中"的状态点。双环扩散，比单纯闪烁更"活"且不刺眼。 */
+@keyframes m-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 55%, transparent); }
+  70%  { box-shadow: 0 0 0 7px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.m-live {
+  position: relative;
+  display: inline-block;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: m-pulse 1.9s var(--ease-out) infinite;
+}
+
+/* 骨架微光：给 LoadingBlock 的占位条加一道扫光（比纯静态灰块"在动"） */
+@keyframes m-shimmer {
+  from { background-position: -160% 0; }
+  to   { background-position: 260% 0; }
+}
+.m-shimmer {
+  background-image: linear-gradient(
+    100deg,
+    transparent 20%,
+    color-mix(in srgb, var(--text) 9%, transparent) 50%,
+    transparent 80%
+  );
+  background-size: 180% 100%;
+  background-repeat: no-repeat;
+  animation: m-shimmer 1.5s linear infinite;
+}
+
+/* 数据刷新微闪：表格/数值更新时给一次极短高亮（不改变布局） */
+@keyframes m-flash {
+  from { background-color: var(--flash); }
+  to   { background-color: transparent; }
+}
+.m-flash { animation: m-flash 0.75s var(--ease-out) both; }
+
+/* 呼吸：极轻微缩放，用于"当前选中/正在运行"的强调块 */
+@keyframes m-breathe {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.035); }
+}
+.m-breathe { animation: m-breathe 2.6s var(--ease) infinite; }
+
+/* 轮转（用于"同步中"的图标） */
+@keyframes m-spin { to { transform: rotate(360deg); } }
+.m-spin { animation: m-spin 0.9s linear infinite; }
+
+/* ---------------- 交互反馈增强 ----------------
+   base.css 已给 .ui-btn 做了 hover 抬升/按压回弹；这里补：
+   · 图标类按钮（比如卡片右上角"刷新"）与可点卡片统一的"抬升"质感
+   · 键盘可达性：focus-visible 已有 ring，不重复 */
+
+/* 可点卡片：hover 时轻微抬升 + 边框提亮（已有 .card.hoverable 时本类多余，故只作补充） */
+.m-lift {
+  transition: transform var(--dur) var(--ease-out), box-shadow var(--dur) var(--ease-out);
+  will-change: transform;
+}
+.m-lift:hover { transform: translate3d(0, var(--lift), 0); box-shadow: var(--shadow-2); }
+
+/* 数字变动：不改变宽度地做一次"上浮重入"（避免表格列宽跳动） */
+@keyframes m-tick {
+  0%   { opacity: 0.35; transform: translate3d(0, -4px, 0); }
+  100% { opacity: 1; transform: none; }
+}
+.m-tick { animation: m-tick 0.45s var(--ease-out) both; }
+
+/* ---------------- 路由切换 ----------------
+   App.vue 里的 .page-* 已存在；这里补一层"内容级联"：
+   切到新页时，页面直接子块依次入场。 */
+.nav-fade-enter-active { transition: opacity 0.16s var(--ease-out); }
+.nav-fade-leave-active { transition: opacity 0.09s linear; }
+.nav-fade-enter-from, .nav-fade-leave-to { opacity: 0; }
+
+/* ---------------- 兜底：两种"关掉动效"的入口都要生效 ----------------
+   1) 系统偏好 prefers-reduced-motion
+   2) 用户在设置里选的「动效：精简」→ <html data-motion="reduced">
+   同时把常驻动画也停掉（否则"精简"了但脉冲点还在闪，等于没关）。 */
+@media (prefers-reduced-motion: reduce) {
+  [class*='m-in'], [class*='m-stagger'], .m-flash, .m-tick {
+    animation: none !important;
+  }
+  .m-live, .m-shimmer, .m-breathe, .m-spin { animation: none !important; }
+  .m-lift:hover { transform: none; }
+}
+
+:root[data-motion='reduced'] [class*='m-in'],
+:root[data-motion='reduced'] [class*='m-stagger'],
+:root[data-motion='reduced'] .m-flash,
+:root[data-motion='reduced'] .m-tick,
+:root[data-motion='reduced'] .m-live,
+:root[data-motion='reduced'] .m-shimmer,
+:root[data-motion='reduced'] .m-breathe,
+:root[data-motion='reduced'] .m-spin {
+  animation: none !important;
+}
+:root[data-motion='reduced'] .m-lift:hover { transform: none; }
+
+/* 「无背景纹理」模式下也别再跑扫光（那是纯装饰，最费 GPU） */
+:root[data-backdrop='none'] .m-shimmer { animation: none !important; }

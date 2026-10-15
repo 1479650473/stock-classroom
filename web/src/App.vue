@@ -81,6 +81,26 @@ onMounted(() => {
   overflow-y: auto;
   padding: var(--sp-5);
 }
+/* 页面级级联入场：动效层 motion.css 提供 .m-stagger 的关键帧与 --i 延迟约定。
+   作用在 `.content` 的直接子块上（页面根容器会把它自己的区块摊平上来），
+   于是整页会"自上下依次浮现"，而不是一次性硬切。
+   ⚠️ 只在**首次挂载**时播一次 —— 主页面都被 KeepAlive 缓存，切回来不会重播，
+      否则每次导航都重新入场，反而变成噪音。 */
+.content > * {
+  animation: m-fade-up var(--dur-slow) var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * var(--stagger-step));
+}
+.content > *:nth-child(1) { --i: 0; }
+.content > *:nth-child(2) { --i: 1; }
+.content > *:nth-child(3) { --i: 2; }
+.content > *:nth-child(4) { --i: 3; }
+.content > *:nth-child(5) { --i: 4; }
+.content > *:nth-child(6) { --i: 5; }
+.content > *:nth-child(7) { --i: 6; }
+.content > *:nth-child(8) { --i: 7; }
+.content > *:nth-child(n + 9) { --i: 8; }
+/* 用户在设置里选了「动效：精简」时，整页入场一并停掉 */
+:root[data-motion='reduced'] .content > * { animation: none; }
 /* 页面切换：out-in 模式下两段动画是串行的，所以刻意压短（总时长 ≈ 260ms），
    否则每次导航都要"等动画"—— 在有了 KeepAlive 之后动画反而是主要延迟来源。 */
 .page-leave-active {

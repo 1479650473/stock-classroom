@@ -27,11 +27,21 @@ defineSlots<{ default?: {}; header?: {}; footer?: {} }>()
   background: var(--bg-raised);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-lg);
-  transition: border-color var(--dur-fast) var(--ease);
+  /* 悬停时边框提亮 + 轻微抬升（只用 transform，不触发重排） */
+  transition: border-color var(--dur-fast) var(--ease),
+              transform var(--dur) var(--ease-out),
+              box-shadow var(--dur) var(--ease-out);
 }
-.card--hl:hover {
+/* 只有"可交互"卡片才抬升；纯展示卡片不该因为鼠标划过而跳，
+   否则整页都在抖。带 href 或 highlight 的视为可交互。 */
+.card--hl:hover,
+a > .card:hover {
   border-color: var(--accent);
 }
+.card:hover:has(.card-hd) {
+  box-shadow: var(--shadow-2);
+}
+:root[data-motion='reduced'] .card:hover { transform: none; box-shadow: none; }
 .card--pad {
   padding: var(--sp-4);
 }
