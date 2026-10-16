@@ -1,4 +1,23 @@
 <script setup lang="ts">
+/**
+ * 交易员回放（TraderReplay）—— 原 `views/v6/Replay.vue`，2026-10-16 改名。
+ *
+ * ## 它是什么
+ * 回放 **LLM 交易员**的决策过程：逐日展示每位交易员的 `thinking`（思考）与
+ * `reflection`（复盘），并可**续跑 / 蒸馏成实盘策略 / 删除**。
+ * 走的是 `trader_replay` 任务流（后端 `jobman.submit("trader_replay", …)`），
+ * 因此这里用 `streamJob` 而不是同步请求。
+ *
+ * ## ⚠️ 别和「策略回放」搞混（这正是本次改名的原因）
+ * `views/StrategyReplay.vue`（原 `views/Replay.vue`）回放的是**固定策略**的
+ * 历史表现（K线买卖点 + 逐日盈亏 + 回合结算），`getReplay(code, strategyId, …)`
+ * 同步返回，图表是 K线 + 柱 + 折线。
+ * 两者**契约、图表、交互都不同，不是重复实现** —— 曾经因为都叫 `Replay.vue`
+ * 被误判为重复建设，故双双改名以杜绝再犯。
+ *
+ * 使用方：`views/v6/TraderHub.vue` 的 replay 模式（本地名一直是 `TraderReplay`，
+ * 只有文件名不对，本次一并扶正）。
+ */
 import { computed, onMounted, ref, watch } from 'vue'
 import * as echarts from 'echarts/core'
 import { LineChart } from 'echarts/charts'

@@ -12,7 +12,7 @@ import { getTraderProfiles, createTraderProfile, updateTraderProfile, deleteTrad
 import type { TraderProfile } from '@/api'
 import TraderOverview from '@/views/v6/TraderOverview.vue'
 import TraderDetail from '@/views/v6/Trader.vue'
-import TraderReplay from '@/views/v6/Replay.vue'
+import TraderReplay from '@/views/v6/TraderReplay.vue'
 
 const toast = useToastStore()
 

@@ -10,7 +10,7 @@ import EmptyGuide from '@/components/ui/EmptyGuide.vue'
 import Icon from '@/components/Icon.vue'
 import Research from '@/views/Research.vue'
 import Optimize from '@/views/Optimize.vue'
-import Replay from '@/views/Replay.vue'
+import StrategyReplay from '@/views/StrategyReplay.vue'
 import AlphaMine from '@/components/AlphaMine.vue'
 import { getRegime } from '@/api'
 import type { RegimeData } from '@/api'
@@ -143,7 +143,7 @@ function fmtMetric(v: number): string {
 
       <!-- 回放 -->
       <div v-else-if="tab === 'replay'" class="pane">
-        <Replay embedded />
+        <StrategyReplay embedded />
       </div>
 
       <!-- 因子挖掘 -->

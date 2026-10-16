@@ -1,4 +1,21 @@
 <script setup lang="ts">
+/**
+ * 策略回放（StrategyReplay）—— 原 `views/Replay.vue`，2026-10-16 改名。
+ *
+ * ## 它是什么
+ * 把**固定策略**（E33 家族等，来自 `getReplayStrategies`）的历史表现**逐日重放**：
+ * 按策略规则在 K 线上标注买卖点、每天结算持仓盈亏与账户权益，最后给一份回合结算。
+ * 数据是**同步返回**的（`getReplay(code, strategyId, 2500, …)`），图表用 K线 + 柱 + 折线。
+ *
+ * ## ⚠️ 别和「交易员回放」搞混（这正是本次改名的原因）
+ * `views/v6/TraderReplay.vue`（原 `views/v6/Replay.vue`）是**另一个东西**：
+ * 回放 **LLM 交易员**的决策过程（`thinking` / `reflection`），走 `trader_replay` 任务流，
+ * 用的是 `getTraderReplays / createTraderReplay / continueTraderReplay / distillTraderReplay`。
+ * 两者**契约、图表、交互都不同，不是重复实现** —— 曾经因为都叫 `Replay.vue`
+ * 被误判为重复建设，故双双改名以杜绝再犯。
+ *
+ * 使用方：`views/v6/Strategy.vue` 的「策略回放」tab（`<StrategyReplay embedded />`）。
+ */
 import { computed, onMounted, onBeforeUnmount, ref, watch, nextTick } from 'vue'
 
 // 嵌入模式: 隐藏页面标题, 只保留操作区(供策略页 Tab 内嵌)
