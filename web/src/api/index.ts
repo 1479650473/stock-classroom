@@ -950,6 +950,66 @@ export const getArbStats = () => api.get<Record<string, unknown>>('/api/fund-arb
 export const syncArb = (mode: 'daily' | 'fees' | 'backfill' | 'list' = 'daily') =>
   api.post<{ job: JobHandle; mode: string }>('/api/fund-arb/sync', { mode })
 
+/* ─────────────────────── 实盘策略决策（pali）───────────────────────
+ * 董事长 2026-10-17 定调：「开发软件要尽量为策略服务」。
+ * 软件原先的「选股」是 `compute_factor_picks()` 全市场扫描，**与实盘无关**；
+ * 这一组接口**只读**展示实盘策略真正的决策结果（决策 CSV + 排雷 JSON）。
+ *
+ * 口径：pred / ff20 / rank / 排雷 level **一律原样透传**，前端不加工、不换算。
+ */
+
+/** 排雷结论。NOT_CHECKED = 程序没跑它（正常）；UNKNOWN = 该查却没记录（异常） */
+export type RiskLevel = 'PASS' | 'CAUTION' | 'REJECT' | 'UNKNOWN' | 'NOT_CHECKED'
+
+export interface StrategyPick {
+  code: string
+  name: string
+  industry: string
+  /** 模型打分（原值，来自 decision CSV） */
+  pred: number | null
+  /** 20 日资金流 */
+  ff20: number | null
+  ff_ok: boolean
+  rank: number | null
+  board: string
+  board_cn: string
+  is_main_board: boolean
+  risk_level: RiskLevel
+  risk_level_cn: string
+  risk_flags: string[]
+  risk_reds: string[]
+  risk_yels: string[]
+  ann_total: number | null
+  /** 被什么挡住（空 = 可买）*/
+  blocked_by: string[]
+  /** 策略硬约束判定：只主板 + 只买 PASS */
+  buyable: boolean
+}
+
+export interface StrategyPicksResult {
+  available: boolean
+  reason?: string
+  date: string | null
+  source?: string
+  total?: number
+  /** checked = 有排雷记录的条数；depth = 排雷深度（pali --top N） */
+  risk: { available: boolean; ts?: string | null; reason?: string; checked?: number; depth?: number }
+  items: StrategyPick[]
+  buyable_count?: number
+  position: Record<string, unknown> | null
+  /** 策略执行摘要（AUTO_LOG.md 的最近一段，人工可读） */
+  summary?: { available: boolean; date?: string; lines?: string[]; reason?: string }
+}
+
+export const getStrategyPicks = (date?: string) =>
+  api.get<StrategyPicksResult>('/api/strategy/picks', date ? { date } : undefined, { ttl: 0 })
+
+export const getStrategyDates = () =>
+  api.get<{ dates: string[] }>('/api/strategy/dates', undefined, { ttl: 0 })
+
+export const getStrategyMeta = () =>
+  api.get<Record<string, unknown>>('/api/strategy/meta', undefined, { ttl: 0 })
+
 /* ─────────────────────────── 实盘（trade-automation 桥接） ───────────────────────────
  * 后端 backend/api/blueprints/live.py 把 C# 工具包成 HTTP。
  * 约定：返回的是**工具自己的产物**（last-result.json / 各 *.log），

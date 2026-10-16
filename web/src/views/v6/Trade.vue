@@ -8,6 +8,7 @@ import DataTable from '@/components/ui/DataTable.vue'
 import type { DataColumn } from '@/components/ui/DataTable.vue'
 import TradeSystems from '@/components/TradeSystems.vue'
 import SimPanel from '@/components/SimPanel.vue'
+import StrategyPicks from '@/components/StrategyPicks.vue'
 import Live from '@/views/v6/Live.vue'
 import FormField from '@/components/ui/FormField.vue'
 import Drawer from '@/components/ui/Drawer.vue'
@@ -246,17 +247,38 @@ watch(selectedId, () => { void loadNav() })
         <Live />
       </div>
 
-      <!-- 选股 -->
+      <!-- 选股：默认展示**实盘策略（pali）真正的决策**（为策略服务）；
+           软件自带的「全市场扫描」降为对照，放在下方。 -->
       <div v-else-if="tab === 'picks'" class="pane">
-        <DataTable
-          :columns="pickColumns"
-          :rows="picks as unknown as Record<string, unknown>[]"
-          compact
-          row-key="code"
-          storage-key="trade.picks"
-          empty-title="还没有选股结果"
-          empty-desc="点右上角「运行选股」生成今日候选。"
-        />
+        <StrategyPicks />
+
+        <details class="scan">
+          <summary>
+            <Icon name="search" :size="13" />
+            软件自带的「全市场扫描」（多因子，<b>与实盘策略无关</b>）· 点开对照
+          </summary>
+          <div class="scan__body">
+            <p class="scan__hint">
+              这是软件自己跑的多因子扫描，<b>实盘不用它</b>。保留仅为对照参考。
+            </p>
+            <div class="scan__bar">
+              <button class="ui-btn ui-btn--sm" :disabled="picksRunning" @click="rescanPicks">
+                <Icon :name="picksRunning ? 'refresh' : 'search'" :size="13" :class="{ spin: picksRunning }" />
+                {{ picksRunning ? '扫描中…' : '运行扫描' }}
+              </button>
+              <span v-if="picksStale" class="ui-chip ui-chip--gold">缓存可刷新</span>
+            </div>
+            <DataTable
+              :columns="pickColumns"
+              :rows="picks as unknown as Record<string, unknown>[]"
+              compact
+              row-key="code"
+              storage-key="trade.picks"
+              empty-title="还没有扫描结果"
+              empty-desc="点「运行扫描」生成。"
+            />
+          </div>
+        </details>
       </div>
 
       <!-- 模拟盘：策略自行驱动的结果（净值 / 持仓明细 / 交易流水） -->
@@ -298,4 +320,17 @@ watch(selectedId, () => { void loadNav() })
 .adv-row { display: flex; align-items: center; gap: var(--sp-3); }
 .adv-row .ui-input { flex: 1; }
 .spin { animation: m-spin 0.9s linear infinite; }
+
+/* 「全市场扫描」折叠区：实盘策略是主角，它是配角，所以默认收起 */
+.scan { margin-top: var(--sp-5); }
+.scan > summary {
+  display: flex; align-items: center; gap: 6px;
+  padding: 9px 12px; cursor: pointer; user-select: none;
+  border: 1px solid var(--border-soft); border-radius: var(--radius-md);
+  background: var(--bg-panel); color: var(--text-sub); font-size: var(--fs-sm);
+}
+.scan > summary:hover { color: var(--text); border-color: var(--border-strong); }
+.scan__body { padding-top: var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-3); }
+.scan__hint { margin: 0; font-size: var(--fs-sm); color: var(--text-faint); }
+.scan__bar { display: flex; align-items: center; gap: var(--sp-3); }
 </style>

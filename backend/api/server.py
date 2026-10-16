@@ -84,6 +84,9 @@ def create_app():
     # 实盘操作 (桥接 trade-automation：盘前启动/读持仓资金成交/实时行情/下单/收盘快照)
     from .blueprints import live
     app.register_blueprint(live.bp)
+    # 实盘策略决策 (只读展示 pali 的 decision CSV + 排雷 JSON —— 为策略服务)
+    from .blueprints import strategy
+    app.register_blueprint(strategy.bp)
     # 因子挖掘 (公式搜索 + 回测奖励, AlphaGPT 式)
     from .blueprints import alpha
     app.register_blueprint(alpha.bp)
