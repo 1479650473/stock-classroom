@@ -1058,19 +1058,28 @@ export interface LiveAccountEstimate {
   price?: number | null
   market_value?: number | null
   float_pnl?: number | null
+  /** 当日盈亏（当天赚/亏多少），与"持仓浮盈"是两个不同指标 */
+  day_pnl?: number | null
   /** 可用资金（后端字段名是 cash，不是 available —— 避免与布尔标志冲突） */
   cash?: number | null
   total_assets?: number | null
-  /** 收盘读数（与主读数**同一时点自洽**的另一条记录） */
-  close?: {
+  /**
+   * 盘中参照（当天较早一次完整读数，通常 09:35 的「核对」行）。
+   * 主读数取的是**收盘/最新**状态，这个只用于对照"盘中 → 收盘"的变化。
+   */
+  intraday?: {
     market_value?: number | null
     float_pnl?: number | null
     total_assets?: number | null
+    price?: number | null
+    cash?: number | null
     raw?: string
   } | null
   carried_over?: boolean
   raw?: string
   candidates?: number
+  /** 每个字段取自 AUTO_LOG 的哪一行（provenance，排查用） */
+  field_sources?: Record<string, number>
   /** 算术自校验：把"能不能对上账"显式算出来，界面据此警示 */
   checks?: {
     assets_identity?: LiveAccountCheck

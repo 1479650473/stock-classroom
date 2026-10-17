@@ -527,6 +527,10 @@ def account_estimate() -> dict:
         'code_qty': re.compile(r'(\d{6})\s*[×xX*]\s*([\d,]+)'),
         'qty_only': re.compile(r'持仓[：:]\s*([\d,]+)\s*股'),
         'assets_only': re.compile(r'(?<!总)资产\s*([\d,]+\.?\d*)'),
+        # 「（当日 +7）」这种写法。注意 `当日盈亏：002659` 里「当日」后接「盈亏」不是数字，不会误匹配
+        'day_pnl': re.compile(r'当日\s*([+-]?[\d,]+\.?\d*)\s*[)）]'),
+        # 「账户 3510.54」（周报基线写法）
+        'account_total': re.compile(r'账户\s*([\d,]+\.?\d*)'),
         'cost_hold': re.compile(r'@\s*(?:成本\s*)?([\d.]+)'),
         'stale': re.compile(r'沿用.*核对值'),
     }
@@ -550,23 +554,33 @@ def account_estimate() -> dict:
         return line.replace('*', '').replace('−', '-').replace('－', '-')
 
     def parse_section(date: str | None, body: list[str]) -> dict:
-        """把一天里的每一行解析成**独立候选读数**，再挑一条最完整、且同源自洽的。
+        """解析一个交易日的账户状态，**以"最新一处提到"为准**。
 
-        ## ⚠️ 第二个坑：不能"逐字段跨行拼"
-        第一版是逐字段填充（缺哪个补哪个），结果把同一天不同时点的数字混在一起：
-        `市值 3248`（收盘）配 `总资产 3566.54`（09:35 盘前）——
-        **两个数不自洽**（3304 + 262.54 = 3566.54 才是同一时点）。
-        所以现在：**一行 = 一条完整读数**，只从同一行取值，绝不跨行拼。
+        ## ⚠️ 这里推翻了前两版的设计（两次都是因为"选取依据"错了）
+
+        **第一版**：逐字段填充（缺哪个补哪个）→ 把同一天不同时点的数字混在一起
+        （`市值 3248` 收盘配 `总资产 3566.54` 盘前，差 262.54），数字不自洽。
+        当时的结论是"不能跨行拼"，改成了——
+
+        **第二版**：**一行 = 一条完整读数**，挑"字段最多"的那行。
+        结果挑中了 09:35 的盘中核对行（6 个字段），
+        于是界面显示 `浮盈 +29.97 / 市值 3304` ——
+        **但当天收盘实际是 `浮盈 −26.25 / 市值 3248`**（董事长一眼看出不对）。
+        教训：**账户总览要的是"最新状态"，不是"字段最全的那条"**。
+
+        **这一版**：**每个字段取当天最后一次出现的值**（从后往前扫，先到先得）。
+        各字段各自来自"它最近一次被记录的那一行"，并且**记录 provenance**。
+        跨行是必要的（收盘行常缺「可用」，周报行常缺「市值」），
+        但只要每项都取"最新一次记录"，拼出来就是**当前真实状态**，
+        而且能用恒等式验证（实测拼出来仍完全自洽）。
         """
         cands = []
-        for raw_ln in (x.strip() for x in body):
+        for idx, raw_ln in enumerate(x.strip() for x in body):
             if not raw_ln.startswith('-'):
                 continue
-            if not re.search(r'可用|总资产|市值|浮盈|持仓', raw_ln):
-                continue
             s = _clean(raw_ln)      # 去 markdown 星号 / Unicode 负号
-            c = {'code': None, 'qty': None, 'cost': None, 'price': None,
-                 'market_value': None, 'float_pnl': None,
+            c = {'idx': idx, 'code': None, 'qty': None, 'cost': None, 'price': None,
+                 'market_value': None, 'float_pnl': None, 'day_pnl': None,
                  'cash': None, 'total_assets': None, 'raw': raw_ln[:200],
                  'carried_over': bool(P['stale'].search(s))}
 
@@ -582,7 +596,8 @@ def account_estimate() -> dict:
                 m = P['cost_hold'].search(s)
                 if m:
                     c['cost'] = _num(m.group(1))
-            for key in ('cash', 'total_assets', 'market_value', 'float_pnl', 'price'):
+            for key in ('cash', 'total_assets', 'market_value', 'float_pnl',
+                        'price', 'day_pnl'):
                 m = P[key].search(s)
                 if m:
                     c[key] = _num(m.group(1))
@@ -590,51 +605,75 @@ def account_estimate() -> dict:
                 m = P['assets_only'].search(s)
                 if m:
                     c['total_assets'] = _num(m.group(1))
+            # 「账户 3510.54」这种周报基线写法
+            if c['total_assets'] is None:
+                m = P['account_total'].search(s)
+                if m:
+                    c['total_assets'] = _num(m.group(1))
 
-            c['n_fields'] = sum(1 for k in ('code', 'qty', 'cash',
-                                            'total_assets', 'market_value', 'price')
+            c['n_fields'] = sum(1 for k in ('code', 'qty', 'cash', 'total_assets',
+                                            'market_value', 'price')
                                 if c[k] is not None)
             cands.append(c)
 
         if not cands:
             return {'as_of': date, 'available': False, 'raw': []}
 
-        # 主读数：字段最多者；并列取**靠后**（同一天里盘后更新）
-        best = max(enumerate(cands), key=lambda t: (t[1]['n_fields'], t[0]))[1]
-        best['as_of'] = date
+        # ── 主读数：每个字段取「当天最后一次出现」 ──
+        latest: dict = {}
+        src: dict = {}
+        FIELDS = ('code', 'qty', 'cost', 'cash', 'total_assets',
+                  'market_value', 'float_pnl', 'day_pnl')
+        for c in reversed(cands):           # 从最晚的行开始
+            for k in FIELDS:
+                if latest.get(k) is None and c.get(k) is not None:
+                    latest[k] = c[k]
+                    src[k] = c['idx']
 
-        # 收盘读数：另有一条只含 市值+总资产（没有可用资金）的更晚记录时，单独带出，
-        # 让界面能显示"盘前核对 → 收盘"的变化，而不是把两者混成一个数。
-        close = None
-        if best['cash'] is not None:
-            for c in reversed(cands):
-                if c is best:
-                    continue
-                if (c['cash'] is None and c['total_assets'] is not None
-                        and c['market_value'] is not None):
-                    close = {'market_value': c['market_value'],
-                             'float_pnl': c['float_pnl'],
-                             'total_assets': c['total_assets'],
-                             'raw': c['raw']}
-                    break
-        best['close'] = close
-        best['candidates'] = len(cands)
-        best['has_reading'] = best['n_fields'] >= 2
+        # 现价必须与「市值」来自**同一行** —— 否则会出现"盘中价 4.72 配收盘市值 3248"
+        # 这种自相矛盾的组合（踩过：界面显示现价 4.72 但 3248/700 = 4.64）。
+        # 取市值来源那一行；该行没有现价就用 市值/数量 推导（整股场景下精确）。
+        mv_src_idx = src.get('market_value')
+        price_src = next((c for c in cands if c['idx'] == mv_src_idx), None) if mv_src_idx is not None else None
+        if price_src is not None and price_src['price'] is not None:
+            latest['price'] = price_src['price']
+            src['price'] = price_src['idx']
+        elif latest.get('market_value') is not None and latest.get('qty'):
+            latest['price'] = round(latest['market_value'] / latest['qty'], 4)
+            src['price'] = mv_src_idx
+        else:
+            latest['price'] = None
 
-        return best
+        # 盘中参照：字段最多的那条（通常就是 09:35 的「核对」行），供界面做对照
+        intraday = None
+        strongest = max(cands, key=lambda c: (c['n_fields'], c['idx']))
+        if strongest['n_fields'] >= 3 and strongest['idx'] != max(src.values() or [0]):
+            intraday = {
+                'market_value': strongest['market_value'],
+                'float_pnl': strongest['float_pnl'],
+                'total_assets': strongest['total_assets'],
+                'price': strongest['price'],
+                'cash': strongest['cash'],
+                'raw': strongest['raw'],
+            }
+
+        out = {**latest, 'as_of': date, 'intraday': intraday,
+               'candidates': len(cands), 'field_sources': src,
+               'has_reading': sum(1 for k in ('cash', 'total_assets', 'market_value')
+                                  if latest.get(k) is not None) >= 2}
+        return out
 
     best = None
-    best_score = -1
     for date, body in sections:
         if not date:
             continue
         got = parse_section(date, body)
-        score = got.get('n_fields') or 0
-        # 文件是新→旧：第一个达标的就是最新可用章节
-        if score > best_score:
-            best, best_score = got, score
-        if score >= 5:      # 可用/总资产/代码/数量/市值 齐全
+        # 文件是新→旧：**第一个有读数的章节就是最新的**，直接用它
+        if got.get('has_reading'):
+            best = got
             break
+        if best is None and got.get('candidates'):
+            best = got
 
     if not best or not best.get('has_reading'):
         return {'available': False, 'reason': 'AUTO_LOG.md 里未解析到账户读数'}

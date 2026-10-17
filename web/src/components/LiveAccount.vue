@@ -137,8 +137,8 @@ const badChecks = computed(() => {
     .map(([k, v]) => ({ key: k, formula: v.formula ?? '', diff: v.diff }))
 })
 
-/** 收盘浮盈（与盘前分开，绝不混算） */
-const closePnl = computed(() => est.value?.close?.float_pnl ?? null)
+/** 盘中参照（当天较早的一次完整读数，用于对照，不参与主数字） */
+const intraday = computed(() => est.value?.intraday ?? null)
 
 /**
  * 刷新账户：客户端**只能一次读一个面板**，所以先读资金、再读持仓。
@@ -200,15 +200,15 @@ async function doRefresh() {
       </div>
     </header>
 
-    <!-- 数字区 -->
+    <!-- 数字区：主数字 = **收盘/最新**状态；盘中值作为对照放在副行 -->
     <div v-if="hasEst" class="acct__grid">
       <div class="acct__cell">
         <span class="acct__k">总资产</span>
         <b class="acct__v">{{ money(est?.total_assets) }}</b>
-        <span v-if="est?.close?.total_assets != null" class="acct__sub">
-          收盘 {{ money(est.close.total_assets) }}
+        <span class="acct__sub">
+          <template v-if="intraday?.total_assets != null">盘中 {{ money(intraday.total_assets) }}</template>
+          <template v-else>—</template>
         </span>
-        <span v-else class="acct__sub acct__sub--ghost">—</span>
       </div>
 
       <div class="acct__cell">
@@ -220,27 +220,34 @@ async function doRefresh() {
       <div class="acct__cell">
         <span class="acct__k">持仓市值</span>
         <b class="acct__v">{{ money(est?.market_value) }}</b>
-        <span v-if="est?.close?.market_value != null" class="acct__sub">
-          收盘 {{ money(est.close.market_value) }}
+        <span class="acct__sub">
+          <template v-if="intraday?.market_value != null">盘中 {{ money(intraday.market_value) }}</template>
+          <template v-else>—</template>
         </span>
-        <span v-else class="acct__sub acct__sub--ghost">—</span>
       </div>
 
       <div class="acct__cell">
-        <span class="acct__k">持仓浮盈</span>
+        <span class="acct__k">持仓盈亏</span>
         <b class="acct__v" :class="(est?.float_pnl ?? 0) >= 0 ? 'up' : 'down'">
           {{ signed(est?.float_pnl) }}
         </b>
-        <!-- 收盘浮盈必须也给出来：否则用户会拿「收盘市值」配「盘前浮盈」，怎么算都对不上 -->
         <span class="acct__sub">
-          <template v-if="closePnl != null">
-            收盘 <b :class="closePnl >= 0 ? 'up' : 'down'">{{ signed(closePnl) }}</b>
+          <template v-if="intraday?.float_pnl != null">
+            盘中 <b :class="intraday.float_pnl >= 0 ? 'up' : 'down'">{{ signed(intraday.float_pnl) }}</b>
           </template>
           <template v-else-if="pnlPct != null" :class="(est?.float_pnl ?? 0) >= 0 ? 'up' : 'down'">
             {{ pnlPct >= 0 ? '+' : '' }}{{ pnlPct.toFixed(2) }}%
           </template>
           <template v-else>—</template>
         </span>
+      </div>
+
+      <div class="acct__cell">
+        <span class="acct__k">当日盈亏</span>
+        <b class="acct__v" :class="(est?.day_pnl ?? 0) >= 0 ? 'up' : 'down'">
+          {{ signed(est?.day_pnl) }}
+        </b>
+        <span class="acct__sub acct__sub--ghost">当天</span>
       </div>
     </div>
 
@@ -307,7 +314,7 @@ async function doRefresh() {
         · {{ est?.source || '来源未知' }}
       </span>
       <span v-if="est?.carried_over" class="acct__note">含"沿用核对值"的条目</span>
-      <span v-if="est?.close" class="acct__note">收盘数据另列，不与盘前混算</span>
+      <span v-if="intraday" class="acct__note">盘中值仅作对照，主数字取最新一处记录</span>
     </footer>
   </section>
 </template>
@@ -343,7 +350,7 @@ async function doRefresh() {
 .acct__dot-label { font-size: var(--fs-xs); color: var(--text-faint); }
 
 .acct__grid {
-  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 1px; background: var(--border-soft);
 }
 .acct__cell {
