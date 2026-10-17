@@ -8,7 +8,7 @@ import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import LoadingBlock from '@/components/ui/LoadingBlock.vue'
 import EmptyGuide from '@/components/ui/EmptyGuide.vue'
 import Icon from '@/components/Icon.vue'
-import { getStrategyPicks, getStrategyDates, type StrategyPicksResult, type StrategyPick } from '@/api'
+import { getStrategyPicks, getStrategyDates, type StrategyPicksResult, type StrategyPick, type StrategyPoolInfo } from '@/api'
 import { usePersistedRef } from '@/composables/usePersistedRef'
 
 /**
@@ -58,6 +58,9 @@ onMounted(async () => {
 
 const items = computed<StrategyPick[]>(() => data.value?.items || [])
 const shown = computed(() => (onlyBuyable.value ? items.value.filter((x) => x.buyable) : items.value))
+
+/** 池边界（扩池后自动变化；契约见后端 /api/strategy/picks 的 pool 字段） */
+const pool = computed<StrategyPoolInfo | undefined>(() => data.value?.pool)
 
 const riskStats = computed(() => {
   const c: Record<string, number> = { PASS: 0, CAUTION: 0, REJECT: 0, UNKNOWN: 0, NOT_CHECKED: 0 }
@@ -176,6 +179,20 @@ function pickDate(v: string) {
         这是<b>实盘策略真正用的决策</b>（<span class="mono">{{ data?.source || '—' }}</span>），
         原样展示、软件侧不做任何加工。<b>与「全市场扫描」是两套东西</b> —— 后者是软件自带的对照扫描，与实盘无关。
       </p>
+
+      <!-- 池边界说明：防止把「池内 rank」误读成「全市场排名」。
+           扩池后这里的数字会自动跟着变（不要写死 100）。 -->
+      <p v-if="pool" class="sp__scope">
+        <Icon name="info" :size="13" />
+        <span>
+          排序范围：<b>{{ pool.name || '策略池' }}</b>
+          （<b>{{ pool.ranked }}</b> 只<template v-if="pool.skipped"> / 池内 {{ pool.size }} 只，{{ pool.skipped }} 只因数据不全被跳过</template>）。
+          <b>rank 是池内排名，不是全市场排名</b> —— 当前 A 股约 5500 只，本池只是其中被策略选定的子集。
+          <template v-if="pool.matched != null && pool.matched !== pool.ranked">
+            <span class="sp__scope-warn">⚠ 池与决策匹配 {{ pool.matched }}/{{ pool.ranked }}，可能选错了池</span>
+          </template>
+        </span>
+      </p>
     </SectionCard>
 
     <LoadingBlock v-if="loading && !data" :rows="5" />
@@ -194,7 +211,12 @@ function pickDate(v: string) {
     <template v-else-if="data">
       <!-- 概览：先回答"现在能不能买、买了什么" -->
       <div class="sp__tiles">
-        <StatTile label="候选（100 池）" :value="items.length" unit="只" hint="策略打分排序" />
+        <StatTile
+          label="候选"
+          :value="items.length"
+          unit="只"
+          :hint="pool ? `池内 ${pool.size} 只 · 策略打分排序` : '策略打分排序'"
+        />
         <StatTile
           label="可买入"
           :value="data.buyable_count ?? 0"
@@ -258,6 +280,17 @@ function pickDate(v: string) {
 .sp__ctrl { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
 .sp__toggle { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--text-sub); cursor: pointer; }
 .sp__hint { margin: var(--sp-3) 0 0; font-size: var(--fs-sm); color: var(--text-sub); line-height: 1.6; }
+
+/* 池边界说明：常显、低干扰，但句子里有"不是全市场排名"这个关键限定 */
+.sp__scope {
+  display: flex; align-items: flex-start; gap: 6px;
+  margin: var(--sp-2) 0 0; padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: var(--bg-overlay); border: 1px solid var(--border-soft);
+  font-size: var(--fs-sm); color: var(--text-sub); line-height: 1.6;
+}
+.sp__scope > svg { flex: none; margin-top: 2px; color: var(--text-faint); }
+.sp__scope-warn { color: var(--warn); font-weight: 600; }
 
 .sp__tiles { display: grid; gap: var(--sp-3); grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
 

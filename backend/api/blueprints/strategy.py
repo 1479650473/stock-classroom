@@ -48,14 +48,28 @@ def risk():
 
 @bp.route("/meta")
 def meta():
-    """策略数据源的健康信息：路径、可用性 —— 便于排查"为什么没有候选"。"""
+    """策略数据源的健康信息：路径、可用性、**池边界** —— 便于排查"为什么候选少了"。
+
+    注意：`pool.size` 是**当前策略池**的大小（扩池后会变），
+    调用方不要假设它是 100。
+    """
     import os
     out = ss.output_dir()
+    pinfo = ss.pool_info()
     return ok({
         'stockml_dir': ss.SM_DIR,
         'output_dir': out,
         'exists': os.path.isdir(out),
-        'pool_size': len(ss.load_pool()),
+        'pool': pinfo,
+        'pool_size': pinfo.get('size'),
+        'risk_top_n': ss.RISK_TOP_N,
         'decisions': ss.list_decisions(5),
         'has_risk_check': ss.latest_risk_check().get('available'),
     })
+
+
+@bp.route("/pool/reload", methods=["POST"])
+def reload_pool():
+    """池元数据缓存重载 —— **扩池后**若策略侧换了 pool_meta.json，调这个不用重启后端。"""
+    ss.recount_pool()
+    return ok(ss.pool_info(), message="池元数据已重载")

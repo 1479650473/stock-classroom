@@ -50,8 +50,117 @@ def output_dir() -> str:
     return os.path.join(linglai_dir(), 'output')
 
 
-def pool_path() -> str:
-    return os.path.join(SM_DIR, 'data', 'test_pool100', 'pool_meta.json')
+def pool_from_decision_script() -> str | None:
+    """读策略脚本里**声明的**池路径 —— 这是权威来源，优先级仅次于环境变量。
+
+    ## 为什么必须这么做（踩坑记录）
+    `data/` 下有 9 个 `test_pool100*` 变体（v2/v3/v4/fix/fix2…），
+    **它们包含的 100 只代码完全相同**，只有特征/数据版本不同。
+    所以"按代码匹配"会全部并列 100/100，退化成谁新选谁 ——
+    实测就挑错了 `test_pool100_v4fix2`，而策略用的是 `test_pool100`。
+
+    → 正确做法：**读 `daily_decision.py` 里 `POOL = os.path.join(ROOT, 'data', ...)` 的声明**。
+      这是策略自己在说"我用哪个池"，比任何启发式都可靠。
+      解析失败就返回 None（调用方退回代码匹配），**不猜**。
+
+    只读脚本文本，不 import、不执行 —— 不触碰策略侧任何东西。
+    """
+    script = os.path.join(linglai_dir(), 'scripts', 'daily_decision.py')
+    if not os.path.isfile(script):
+        return None
+    try:
+        with open(script, 'r', encoding='utf-8') as f:
+            src = f.read()
+    except Exception:
+        return None
+
+    # 形如：POOL = os.path.join(ROOT, 'data', 'test_pool100', 'pool_meta.json')
+    m = re.search(
+        r"POOL\s*=\s*os\.path\.join\(\s*ROOT\s*,\s*['\"]data['\"]\s*,\s*['\"]([^'\"]+)['\"]\s*,\s*['\"]pool_meta\.json['\"]\s*\)",
+        src,
+    )
+    if not m:
+        return None
+    p = os.path.join(SM_DIR, 'data', m.group(1), 'pool_meta.json')
+    return p if os.path.isfile(p) else None
+
+
+def list_pool_candidates() -> list[dict]:
+    """列出所有候选池及各自规模（仅供诊断/UI 显示，不用于猜测）。"""
+    data_dir = os.path.join(SM_DIR, 'data')
+    out = []
+    if not os.path.isdir(data_dir):
+        return out
+    cands = glob.glob(os.path.join(data_dir, 'test_pool*', 'pool_meta.json'))
+    if not cands:
+        cands = glob.glob(os.path.join(data_dir, '*', 'pool_meta.json'))
+    for p in sorted(set(cands)):
+        j = _read_json(p)
+        codes = set()
+        if isinstance(j, dict) and isinstance(j.get('pool'), list):
+            codes = {str(it.get('code') or '').strip() for it in j['pool']}
+            codes.discard('')
+        out.append({
+            'path': p,
+            'name': os.path.basename(os.path.dirname(p)),
+            'size': len(codes),
+            'mtime': os.path.getmtime(p) if os.path.isfile(p) else 0,
+        })
+    return out
+
+
+def pool_path(codes: set[str] | None = None) -> str | None:
+    """定位策略池的 pool_meta.json —— **池无关**，且**以策略实际使用的为准**。
+
+    董事长 2026-10-17：「我下一步会做**扩池**」，所以不能写死 `test_pool100`、不能假设规模 100。
+
+    ## ⚠️ 这里踩过一个坑（必须记下来）
+    第一版做法是"取池最大、并列取最新" —— 结果挑中了 `test_pool100_v4fix2`，
+    而策略实际用的是 `test_pool100`（`daily_decision.py` 里写死的）。
+    **"猜一个更新/更大的池"会静默用错池**，名称/行业全部对不上，且很难发现。
+
+    ## 现在的做法：**用决策结果反查匹配（自校验）**
+    传入 `codes`（来自 decision CSV 的实际打分代码），选**代码交集最大**的池。
+    这样"策略用哪个池"由策略自己的产出来证明，而不是靠猜：
+      · 扩池后新池自然包含新代码 → 自动匹配到新池，软件零改动
+      · 匹配度过低说明池文件与决策不一致 → 由 `pool_info.matched` 暴露给界面
+
+    查找顺序（**权威优先，猜测垫底**）：
+      1. 环境变量 `SC_STRATEGY_POOL` —— 显式指定，最高优先级
+      2. **策略脚本 `daily_decision.py` 里声明的 POOL** —— 权威来源（见下方踩坑记录）
+      3. 按 `codes` 交集最大挑选（并列时偏好更大池）
+      4. 无 `codes` 时：池最大 → 最新（仅兜底，调用方应视为"推断"）
+
+    ## ⚠️ 这里踩过一个坑（必须记下来）
+    第一版做法是"取池最大、并列取最新" —— 挑中了 `test_pool100_v4fix2`，
+    而策略实际用的是 `test_pool100`（`daily_decision.py` 里写死的）。
+    **9 个 `test_pool100*` 变体的 100 只代码完全相同**，所以"按代码匹配"也全并列，
+    仍会退化成谁新选谁 → **仍然选错**。
+    最终解法：**读策略脚本里的声明**（`pool_from_decision_script()`），那是策略自己说的。
+    """
+    explicit = os.environ.get('SC_STRATEGY_POOL')
+    if explicit and os.path.isfile(explicit):
+        return explicit
+
+    # 权威：策略脚本声明的池
+    declared = pool_from_decision_script()
+    if declared:
+        return declared
+
+    cands = [c for c in list_pool_candidates() if os.path.isfile(c['path'])]
+    if not cands:
+        return None
+
+    if codes:
+        def _overlap(c: dict) -> tuple[int, int, float]:
+            j = _read_json(c['path'])
+            pset = set()
+            if isinstance(j, dict) and isinstance(j.get('pool'), list):
+                pset = {str(it.get('code') or '').strip() for it in j['pool']}
+            return (len(pset & codes), c['size'], c['mtime'])
+        return max(cands, key=_overlap)['path']
+
+    return max(cands, key=lambda c: (c['size'], c['mtime']))['path']
 
 
 def _read_json(path: str):
@@ -62,24 +171,62 @@ def _read_json(path: str):
         return None
 
 
-# ── 100 池：code -> {name, industry} ───────────────────────────────────
-_pool_cache: dict | None = None
+# ── 策略池：code -> {name, industry} ───────────────────────────────────
+# 缓存按「池文件路径」建键 —— 池的选择依赖决策代码（自校验），
+# 不同日期/不同池之间不能共用一份缓存。
+_pool_cache: dict[str, dict] = {}
 
 
-def load_pool() -> dict:
-    """读 100 池元数据。失败返回空 dict（调用方按"无名称"降级展示）。"""
-    global _pool_cache
-    if _pool_cache is not None:
-        return _pool_cache
-    j = _read_json(pool_path())
+def load_pool(codes: set[str] | None = None) -> dict:
+    """读策略池元数据（code -> {name, industry}）。**池无关**：路径由 pool_path(codes) 决定。
+
+    失败返回空 dict（调用方按"无名称"降级展示，绝不编造名称）。
+    """
+    p = pool_path(codes)
+    if not p:
+        return {}
+    if p in _pool_cache:
+        return _pool_cache[p]
+    j = _read_json(p)
     out: dict = {}
     if isinstance(j, dict) and isinstance(j.get('pool'), list):
         for it in j['pool']:
             c = str(it.get('code') or '').strip()
             if c:
                 out[c] = {'name': it.get('name') or '', 'industry': it.get('industry') or ''}
-    _pool_cache = out
+    _pool_cache[p] = out
     return out
+
+
+def pool_info(codes: set[str] | None = None) -> dict:
+    """池的元信息，供界面显示"池有多大、叫什么、匹配度如何"。
+
+    扩池后 `size` 会自动变化 —— 前端**不要写死 100**。
+    `matched` = 池与决策代码的交集数，用于暴露"池文件与决策不一致"。
+    """
+    pool = load_pool(codes)
+    p = pool_path(codes)
+    j = _read_json(p) if p else None
+    meta = {}
+    if isinstance(j, dict):
+        for k in ('total_samples', 'n_sectors', 'test_start'):
+            if k in j:
+                meta[k] = j[k]
+    pset = set(pool.keys())
+    return {
+        'path': p,
+        'name': os.path.basename(os.path.dirname(p)) if p else None,
+        'size': len(pset),
+        'meta': meta,
+        # 自校验：决策里有多少只能在这个池里找到（< size 说明可能选错了池）
+        'matched': (len(pset & codes) if codes else None),
+        'candidates': list_pool_candidates(),
+    }
+
+
+def recount_pool() -> None:
+    """清池缓存（扩池后若策略侧换了 pool_meta.json，重载时用）。"""
+    _pool_cache.clear()
 
 
 # ── 决策 CSV ───────────────────────────────────────────────────────────
@@ -111,15 +258,15 @@ def load_decision(date8: str | None = None) -> dict:
     if not os.path.isfile(path):
         return {'available': False, 'date': d, 'items': [], 'reason': f'文件不存在: {path}'}
 
-    pool = load_pool()
-    items = []
+    # 两遍：先解析 CSV 拿到真实代码集合，再用它**自校验**出正确的池
+    # （池路径依赖决策代码，不能先猜池、再解析决策 —— 那样会静默用错池）
+    raw = []
     try:
         with open(path, 'r', encoding='utf-8-sig', newline='') as f:
             for row in csv.DictReader(f):
                 code = str(row.get('code') or '').strip()
                 if not code:
                     continue
-                meta = pool.get(code, {})
 
                 def _f(k):
                     v = row.get(k)
@@ -129,10 +276,8 @@ def load_decision(date8: str | None = None) -> dict:
                         return None
 
                 ff_ok_raw = str(row.get('ff_ok') or '').strip().lower()
-                items.append({
+                raw.append({
                     'code': code,
-                    'name': meta.get('name') or '',
-                    'industry': meta.get('industry') or '',
                     'pred': _f('pred'),
                     'ff20': _f('ff20'),
                     'ff_ok': ff_ok_raw in ('true', '1', 'yes'),
@@ -141,11 +286,20 @@ def load_decision(date8: str | None = None) -> dict:
     except Exception as e:
         return {'available': False, 'date': d, 'items': [], 'reason': f'解析失败: {type(e).__name__}: {e}'}
 
+    codes = {r['code'] for r in raw}
+    pool = load_pool(codes)
+    items = [{
+        **r,
+        'name': (pool.get(r['code']) or {}).get('name') or '',
+        'industry': (pool.get(r['code']) or {}).get('industry') or '',
+    } for r in raw]
+
     items.sort(key=lambda x: (x['rank'] is None, x['rank'] or 0))
     return {
         'available': True, 'date': d, 'items': items,
         'source': os.path.relpath(path, SM_DIR).replace('\\', '/'),
         'total': len(items),
+        'codes': codes,
     }
 
 
@@ -328,6 +482,7 @@ def strategy_picks(date8: str | None = None) -> dict:
             'available': False,
             'reason': dec.get('reason'),
             'date': dec.get('date'),
+            'pool': {**pool_info(None), 'ranked': 0, 'scope_note': 'rank 为策略池内排名，非全市场排名'},
             'risk': {'available': risk.get('available'), 'ts': risk.get('ts'), 'reason': risk.get('reason')},
             'items': [],
             'position': pos,
@@ -378,28 +533,52 @@ def strategy_picks(date8: str | None = None) -> dict:
         it['buyable'] = not reasons
 
     # 持仓的池内排名（用同一份决策即可得出，无需再查库）
+    #
+    # Top20% 门槛必须**显式算出来并返回**，不要只在两边各写一遍：
+    #   · 分母用 `len(items)`（实际被打分的只数），**不是池大小** ——
+    #     因为数据不全的票会被 daily_decision 跳过，两者可能不等（扩池后更明显）
+    #   · 扩池后门槛会自动变大（200 池 → 40），前端据此显示即可，**不要写死 20**
+    top20_threshold = max(1, int(round(len(items) * 0.2)))
+
     position_ctx = None
     if pos:
         code = pos.get('code')
         if code:
             hit = next((x for x in items if x['code'] == code), None)
+            rk = (hit or {}).get('rank')
             position_ctx = {
                 **pos,
                 'name': pos.get('name') or ((hit or {}).get('name') or ''),
-                'rank': (hit or {}).get('rank'),
+                'rank': rk,
                 'pred': (hit or {}).get('pred'),
-                # 策略卖出条件：跌出 Top20%（rank > 20）或 FF 转好
-                'in_top20': (isinstance((hit or {}).get('rank'), (int, float))
-                             and (hit or {})['rank'] <= max(1, int(len(items) * 0.2))),
+                # 策略卖出条件：跌出 Top20%（rank > 门槛）或 FF 转好
+                'in_top20': (isinstance(rk, (int, float)) and rk <= top20_threshold),
+                'top20_threshold': top20_threshold,
+                # 持仓不在当日决策里（例如已清仓或数据缺失）→ 明确区分
+                'in_decision': hit is not None,
             }
         else:
-            position_ctx = {**pos, 'rank': None, 'pred': None, 'in_top20': None}
+            position_ctx = {**pos, 'rank': None, 'pred': None,
+                            'in_top20': None, 'top20_threshold': top20_threshold,
+                            'in_decision': None}
 
+    pinfo = pool_info(dec.get('codes'))
     return {
         'available': True,
         'date': dec['date'],
         'source': dec.get('source'),
         'total': dec.get('total'),
+        # ── 池边界（扩池后自动变化，前端不得写死）──
+        'pool': {
+            **pinfo,
+            # 池大小 vs 实际被打分的只数：两者可能不等（数据不全的票会被跳过）
+            'pool_size': pinfo.get('size'),
+            'ranked': len(items),
+            'skipped': max(0, (pinfo.get('size') or 0) - len(items)),
+            # rank 是**池内排名**，不是全市场排名 —— 必须让界面能说清楚
+            'scope_note': 'rank 为策略池内排名，非全市场排名',
+        },
+        'top20_threshold': top20_threshold,
         'risk': {'available': risk.get('available'), 'ts': risk.get('ts'),
                  'reason': risk.get('reason'), 'checked': len(by_code), 'depth': depth},
         'items': items,

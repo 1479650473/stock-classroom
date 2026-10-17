@@ -986,12 +986,34 @@ export interface StrategyPick {
   buyable: boolean
 }
 
+export interface StrategyPoolInfo {
+  /** 池目录名（如 test_pool100）。**不要假设规模是 100** —— 扩池后会变 */
+  name: string | null
+  path: string | null
+  /** 池内股票数 */
+  size: number
+  /** 池与当日决策代码的交集数；< ranked 说明可能选错了池 */
+  matched: number | null
+  meta?: Record<string, unknown>
+  /** 所有候选池（诊断用） */
+  candidates?: { name: string; size: number; path: string; mtime: number }[]
+  /** 当日实际被打分的只数（数据不全的票会被跳过，可能 < size） */
+  ranked?: number
+  skipped?: number
+  /** 口径说明：rank 为池内排名 */
+  scope_note?: string
+}
+
 export interface StrategyPicksResult {
   available: boolean
   reason?: string
   date: string | null
   source?: string
   total?: number
+  /** 池边界（扩池后自动变化，前端不得写死） */
+  pool?: StrategyPoolInfo
+  /** Top20% 的实际门槛（扩池后自动变大，不要写死 20） */
+  top20_threshold?: number
   /** checked = 有排雷记录的条数；depth = 排雷深度（pali --top N） */
   risk: { available: boolean; ts?: string | null; reason?: string; checked?: number; depth?: number }
   items: StrategyPick[]
