@@ -1032,6 +1032,47 @@ export const getStrategyDates = () =>
 export const getStrategyMeta = () =>
   api.get<Record<string, unknown>>('/api/strategy/meta', undefined, { ttl: 0 })
 
+/* ─────────── 多日决策追踪 ───────────
+ * 单日快照看不出趋势，但策略的续持/卖出判断依赖**跨日变化**
+ * （跌出 Top20% 或 FF 转好）。这个接口补上那一层。
+ *
+ * 口径：只汇总真实存在的决策日期，**缺的日子留空不插值**。
+ */
+export interface StrategyTrendItem {
+  code: string
+  name: string
+  industry: string
+  /** 每日 rank；缺该日决策时为 null */
+  ranks: Record<string, number | null>
+  preds: Record<string, number | null>
+  ff_ok: Record<string, boolean | null>
+  rank_latest: number | null
+  rank_first: number | null
+  /** 最新 rank − 最早 rank；**负数 = 排名上升（更靠前）** */
+  delta: number | null
+  pred_latest: number | null
+  pred_delta: number | null
+  days_present: number
+  in_top20: boolean
+  threshold_latest: number | null
+}
+
+export interface StrategyTrendResult {
+  available: boolean
+  reason?: string
+  /** 升序日期（YYYYMMDD） */
+  dates: string[]
+  /** 每日 Top20% 门槛（按当日实际打分只数算） */
+  thresholds: Record<string, number>
+  items: StrategyTrendItem[]
+  total?: number
+  note?: string
+  source?: string
+}
+
+export const getStrategyTrend = (days = 5) =>
+  api.get<StrategyTrendResult>('/api/strategy/trend', { days }, { ttl: 0 })
+
 /* ─────────────────────── 实盘账户总览 ───────────────────────
  * 打开实盘页**立刻**能看到账户数据，不必先点"读取"。
  * 数据来自策略侧 AUTO_LOG.md 的**人工核对记录**（最可靠），并如实带出时间与来源；

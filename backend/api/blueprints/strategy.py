@@ -40,6 +40,20 @@ def dates():
     return ok({"dates": ss.list_decisions(60)})
 
 
+@bp.route("/trend")
+def trend():
+    """跨多日决策追踪：每只股票的 rank / pred / FF 变化。
+
+    策略的续持/卖出判断依赖**跨日变化**（跌出 Top20% 或 FF 转好），
+    单日快照看不出趋势 —— 这个端点补上那一层。
+
+    查询参数：`days`（默认 5，1~30）
+    """
+    from ..envelope import int_arg
+    days = int_arg(request.args.get('days'), 5, 1, 30)
+    return ok(ss.decision_trend(days))
+
+
 @bp.route("/risk")
 def risk():
     """最新一份排雷结果（全量，按 code 索引）。"""

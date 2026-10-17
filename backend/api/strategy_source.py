@@ -783,6 +783,95 @@ def account_history() -> dict:
     }
 
 
+# ── 多日决策追踪 ───────────────────────────────────────────────────────
+
+def decision_trend(days: int = 5) -> dict:
+    """跨多日汇总每只股票的 rank / pred / FF 变化 —— 看"策略在看什么、在变什么"。
+
+    ## 为什么需要这个
+    选股页原来只能看**单日快照**。但策略的续持/卖出判断恰恰依赖**跨日变化**：
+      · 卖出条件之一：**跌出 Top20%**（rank > 阈值）
+      · 卖出条件之二：**FF 转好**
+    只看一天，看不出"它正在逼近门槛"还是"刚掉出去"，也就看不出风险。
+
+    ## 口径
+    · 每天一份 `decision_<date>.csv`；**只汇总真实存在的日期**，缺的日子留空，
+      不插值、不填补（与 account_history 同一纪律）
+    · `rank` 原样透传；`delta` = 最新 rank − 最早 rank（负数 = 排名上升/更靠前）
+    · Top20% 阈值按**当日实际打分只数**算（`max(1, round(n*0.2))`），逐日各自计算
+    """
+    dates = list_decisions(max(1, min(30, days)))
+    if not dates:
+        return {'available': False, 'reason': '未找到任何 decision_*.csv', 'dates': [], 'items': []}
+
+    dates_asc = sorted(dates)          # 升序：旧 → 新
+    pool = load_pool()
+    # code -> {date: {rank,pred,ff_ok}}
+    series: dict[str, dict[str, dict]] = {}
+    thresholds: dict[str, int] = {}
+
+    for d in dates_asc:
+        dec = load_decision(d)
+        if not dec.get('available'):
+            continue
+        items = dec.get('items') or []
+        thresholds[d] = max(1, int(round(len(items) * 0.2)))
+        for it in items:
+            c = it['code']
+            series.setdefault(c, {})[d] = {
+                'rank': it.get('rank'),
+                'pred': it.get('pred'),
+                'ff_ok': it.get('ff_ok'),
+            }
+
+    if not series:
+        return {'available': False, 'reason': '决策文件都解析失败', 'dates': dates_asc, 'items': []}
+
+    rows = []
+    for code, by_date in series.items():
+        meta = pool.get(code) or {}
+        # 最新一天有数据的那天
+        latest_date = max(by_date.keys())
+        # 最早一天有数据的那天
+        first_date = min(by_date.keys())
+        r_latest = by_date[latest_date].get('rank')
+        r_first = by_date[first_date].get('rank')
+        p_latest = by_date[latest_date].get('pred')
+        p_first = by_date[first_date].get('pred')
+        thr_latest = thresholds.get(latest_date)
+        rows.append({
+            'code': code,
+            'name': meta.get('name') or '',
+            'industry': meta.get('industry') or '',
+            # 每日 rank（缺的日子为 None，界面留空）
+            'ranks': {d: (by_date.get(d) or {}).get('rank') for d in dates_asc},
+            'preds': {d: (by_date.get(d) or {}).get('pred') for d in dates_asc},
+            'ff_ok': {d: (by_date.get(d) or {}).get('ff_ok') for d in dates_asc},
+            'rank_latest': r_latest,
+            'rank_first': r_first,
+            # 负数 = 排名上升（更靠前），正数 = 下滑
+            'delta': (r_latest - r_first) if (r_latest is not None and r_first is not None) else None,
+            'pred_latest': p_latest,
+            'pred_delta': (p_latest - p_first) if (p_latest is not None and p_first is not None) else None,
+            'days_present': len(by_date),
+            'in_top20': (r_latest is not None and thr_latest is not None and r_latest <= thr_latest),
+            'threshold_latest': thr_latest,
+        })
+
+    # 排序：最新 rank 为准（缺失的排最后）
+    rows.sort(key=lambda x: (x['rank_latest'] is None, x['rank_latest'] or 0))
+
+    return {
+        'available': True,
+        'dates': dates_asc,
+        'thresholds': thresholds,
+        'items': rows,
+        'total': len(rows),
+        'note': '仅包含真实存在的决策日期，缺的日期留空（未插值）',
+        'source': 'output/sim/decision_*.csv',
+    }
+
+
 # ── 组装给前端的一份完整视图 ───────────────────────────────────────────
 
 def strategy_picks(date8: str | None = None) -> dict:

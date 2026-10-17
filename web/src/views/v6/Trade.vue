@@ -6,9 +6,11 @@ import PageToolbar from '@/components/ui/PageToolbar.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import DataTable from '@/components/ui/DataTable.vue'
 import type { DataColumn } from '@/components/ui/DataTable.vue'
+import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import TradeSystems from '@/components/TradeSystems.vue'
 import SimPanel from '@/components/SimPanel.vue'
 import StrategyPicks from '@/components/StrategyPicks.vue'
+import StrategyTrend from '@/components/StrategyTrend.vue'
 import LiveAccount from '@/components/LiveAccount.vue'
 import LiveAccountHistory from '@/components/LiveAccountHistory.vue'
 import type { LiveAccountHistory as LiveHistoryData, LiveAccountResult } from '@/api'
@@ -143,6 +145,18 @@ function onLiveLoaded(r: LiveAccountResult | null) {
 }
 
 // ---------------- 选股 ----------------
+/**
+ * 选股的两种看法：
+ *  · `day`   = 当日决策快照（策略现在看好谁）
+ *  · `trend` = 跨日 rank 追踪（谁在上升/下滑、是否逼近卖出门槛）
+ * 单日视图说不出"趋势"，趋势视图说不出"当下"，两者互补。
+ */
+type PicksMode = 'day' | 'trend'
+const picksMode = usePersistedRef<PicksMode>('trade.picksMode', 'day')
+const PICKS_MODES = [
+  { value: 'day', label: '当日决策' },
+  { value: 'trend', label: '跨日追踪' },
+]
 const picks = ref<PickItem[]>([])
 const picksStale = ref(false)
 const picksRunning = ref(false)
@@ -274,7 +288,13 @@ watch(selectedId, () => { void loadNav() })
       <!-- 选股：默认展示**实盘策略（pali）真正的决策**（为策略服务）；
            软件自带的「全市场扫描」降为对照，放在下方。 -->
       <div v-else-if="tab === 'picks'" class="pane">
-        <StrategyPicks />
+        <!-- 两种看法：当日快照 / 跨日追踪。默认当日（策略当下在看什么） -->
+        <div class="picks-mode">
+          <SegmentedControl v-model="picksMode" :options="PICKS_MODES" size="sm" />
+        </div>
+
+        <StrategyPicks v-if="picksMode === 'day'" />
+        <StrategyTrend v-else />
 
         <details class="scan">
           <summary>
@@ -355,6 +375,9 @@ watch(selectedId, () => { void loadNav() })
 }
 .live-note > svg { flex: none; margin-top: 2px; color: var(--text-faint); }
 .live-hist { margin-top: var(--sp-5); }
+
+/* 选股：当日 / 跨日 两种看法切换 */
+.picks-mode { display: flex; justify-content: flex-end; margin-bottom: var(--sp-4); }
 
 /* 「全市场扫描」折叠区：实盘策略是主角，它是配角，所以默认收起 */
 .scan { margin-top: var(--sp-5); }
