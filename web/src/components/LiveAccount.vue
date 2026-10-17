@@ -92,6 +92,55 @@ const posLabel = computed(() => {
 })
 
 /**
+ * 成本**必须显示 4 位小数**（4.6772）。
+ *
+ * ⚠️ 这里踩过一次：原来用时 `money()`（2 位）显示成 `4.68`，
+ * 用户按 `700 × 4.68 = 3276`、`3304 − 3276 = 28` 去对，与显示的浮盈 `+29.97` **差 1.97**，
+ * 于是判"账户对不上"。**1 分钱的显示精度在成本价上会被放大成近 2 元**。
+ * 成本价一律 4 位，并额外给出「成本额」让用户能直接验算。
+ */
+function cost4(v: number | null | undefined): string {
+  if (v == null || Number.isNaN(v)) return '—'
+  return v.toFixed(4)
+}
+
+/** 成本额 = 数量 × 成本价（供用户验算：市值 − 成本额 = 浮盈） */
+const costAmount = computed<number | null>(() => {
+  const e = est.value
+  if (e?.qty == null || e?.cost == null) return null
+  return e.qty * e.cost
+})
+
+/** 持仓明细一行（派生自同一条读数，保证与上方数字同源同口径） */
+const posRow = computed(() => {
+  const e = est.value
+  if (!e?.code) return null
+  return {
+    code: e.code,
+    name: e.name || e.code,
+    qty: e.qty,
+    cost: e.cost,
+    price: e.price,
+    costAmount: costAmount.value,
+    marketValue: e.market_value,
+    pnl: e.float_pnl,
+    pnlPct: pnlPct.value,
+  }
+})
+
+/** 自校验失败项（非空即警示 —— 数据自相矛盾时不能静默展示） */
+const badChecks = computed(() => {
+  const c = est.value?.checks
+  if (!c) return []
+  return Object.entries(c)
+    .filter(([, v]) => v && v.ok === false)
+    .map(([k, v]) => ({ key: k, formula: v.formula ?? '', diff: v.diff }))
+})
+
+/** 收盘浮盈（与盘前分开，绝不混算） */
+const closePnl = computed(() => est.value?.close?.float_pnl ?? null)
+
+/**
  * 刷新账户：客户端**只能一次读一个面板**，所以先读资金、再读持仓。
  * 失败不隐瞒 —— 把工具原话带出来（未登录/未打开时它会给明确原因）。
  */
@@ -129,7 +178,7 @@ async function doRefresh() {
           <span class="acct__code mono">{{ posLabel.code }}</span>
           <b class="acct__name">{{ posLabel.name }}</b>
           <span class="acct__qty">{{ posLabel.qty }} 股</span>
-          <span v-if="posLabel.cost != null" class="acct__cost">成本 {{ money(posLabel.cost) }}</span>
+          <span v-if="posLabel.cost != null" class="acct__cost">成本 {{ cost4(posLabel.cost) }}</span>
         </template>
         <template v-else-if="loading">
           <span class="acct__name">读取账户…</span>
@@ -182,8 +231,14 @@ async function doRefresh() {
         <b class="acct__v" :class="(est?.float_pnl ?? 0) >= 0 ? 'up' : 'down'">
           {{ signed(est?.float_pnl) }}
         </b>
-        <span class="acct__sub" :class="(est?.float_pnl ?? 0) >= 0 ? 'up' : 'down'">
-          <template v-if="pnlPct != null">{{ pnlPct >= 0 ? '+' : '' }}{{ pnlPct.toFixed(2) }}%</template>
+        <!-- 收盘浮盈必须也给出来：否则用户会拿「收盘市值」配「盘前浮盈」，怎么算都对不上 -->
+        <span class="acct__sub">
+          <template v-if="closePnl != null">
+            收盘 <b :class="closePnl >= 0 ? 'up' : 'down'">{{ signed(closePnl) }}</b>
+          </template>
+          <template v-else-if="pnlPct != null" :class="(est?.float_pnl ?? 0) >= 0 ? 'up' : 'down'">
+            {{ pnlPct >= 0 ? '+' : '' }}{{ pnlPct.toFixed(2) }}%
+          </template>
           <template v-else>—</template>
         </span>
       </div>
@@ -193,6 +248,54 @@ async function doRefresh() {
     <div v-else-if="!loading" class="acct__empty">
       <Icon name="alert" :size="14" />
       <span>{{ error || est?.reason || '暂无账户读数。客户端在线时点「刷新账户」读取。' }}</span>
+    </div>
+
+    <!-- 自校验失败警示：数据自相矛盾时必须让人看见，不能静默展示错误数字 -->
+    <div v-if="badChecks.length" class="acct__warn">
+      <Icon name="alert" :size="14" />
+      <div>
+        <b>账户数据自校验未通过</b>（下面的数字可能不可靠）：
+        <span v-for="(c, i) in badChecks" :key="c.key" class="acct__warn-item">
+          {{ i ? '；' : '' }}{{ c.formula || c.key }}<template v-if="c.diff != null">，差 {{ c.diff }}</template>
+        </span>
+      </div>
+    </div>
+
+    <!-- 持仓明细：一行一只票，并给出「成本额」让用户能直接验算 -->
+    <div v-if="hasEst && posRow" class="acct__pos">
+      <table class="acct__tbl">
+        <thead>
+          <tr>
+            <th>代码</th><th>名称</th><th class="r">数量</th>
+            <th class="r">成本价</th><th class="r">成本额</th>
+            <th class="r">现价</th><th class="r">市值</th><th class="r">浮盈</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">{{ posRow.code }}</td>
+            <td>{{ posRow.name }}</td>
+            <td class="r">{{ posRow.qty ?? '—' }}</td>
+            <td class="r mono">{{ cost4(posRow.cost) }}</td>
+            <td class="r mono">{{ money(posRow.costAmount) }}</td>
+            <td class="r">{{ money(posRow.price) }}</td>
+            <td class="r mono">{{ money(posRow.marketValue) }}</td>
+            <td class="r" :class="(posRow.pnl ?? 0) >= 0 ? 'up' : 'down'">
+              {{ signed(posRow.pnl) }}
+              <span v-if="posRow.pnlPct != null" class="acct__pct">
+                ({{ posRow.pnlPct >= 0 ? '+' : '' }}{{ posRow.pnlPct.toFixed(2) }}%)
+              </span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <!-- 把验算式直接写出来，省得用户自己找差在哪 -->
+      <p v-if="posRow.costAmount != null && posRow.marketValue != null && posRow.pnl != null" class="acct__verify">
+        验算：市值 {{ money(posRow.marketValue) }} − 成本额 {{ money(posRow.costAmount) }}
+        = <b>{{ signed(posRow.marketValue - posRow.costAmount) }}</b>
+        <span class="acct__verify-note">（与浮盈 {{ signed(posRow.pnl) }} 相差
+          {{ Math.abs((posRow.marketValue - posRow.costAmount) - posRow.pnl).toFixed(2) }}，属分位取整）</span>
+      </p>
     </div>
 
     <!-- 底部：数据来源与时间（诚实标注，这是本组件的核心纪律） -->
@@ -263,6 +366,41 @@ async function doRefresh() {
   display: flex; align-items: center; gap: 7px;
   padding: 18px 16px; font-size: var(--fs-sm); color: var(--text-sub);
 }
+
+/* 自校验失败：必须显眼 */
+.acct__warn {
+  display: flex; align-items: flex-start; gap: 7px;
+  padding: 10px 16px;
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+  font-size: var(--fs-sm); color: var(--warn); line-height: 1.6;
+}
+.acct__warn > svg { flex: none; margin-top: 2px; }
+.acct__warn-item { font-variant-numeric: tabular-nums; }
+
+/* 持仓明细 */
+.acct__pos { border-top: 1px solid var(--border-soft); }
+.acct__tbl { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+.acct__tbl th {
+  padding: 7px 12px; text-align: left; font-weight: 500;
+  color: var(--text-faint); font-size: var(--fs-xs);
+  background: var(--bg-overlay); border-bottom: 1px solid var(--border-soft);
+  white-space: nowrap;
+}
+.acct__tbl td { padding: 9px 12px; color: var(--text); border-bottom: 1px solid var(--border-soft); }
+.acct__tbl tr:last-child td { border-bottom: 0; }
+.acct__tbl .r { text-align: right; font-variant-numeric: tabular-nums; }
+.acct__tbl .up { color: var(--up); }
+.acct__tbl .down { color: var(--down); }
+.acct__pct { color: inherit; opacity: .75; font-size: var(--fs-xs); }
+
+.acct__verify {
+  margin: 0; padding: 8px 12px;
+  font-size: var(--fs-xs); color: var(--text-sub);
+  background: var(--bg-overlay);
+  font-variant-numeric: tabular-nums;
+}
+.acct__verify-note { color: var(--text-faint); }
 
 .acct__ft {
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;

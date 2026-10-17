@@ -643,6 +643,36 @@ def account_estimate() -> dict:
         pool = load_pool({best['code']})
         best['name'] = (pool.get(best['code']) or {}).get('name') or None
 
+    # ── 算术自校验：把"能不能对上账"这件事显式算出来，别让用户自己去核 ──
+    # 恒等式：持仓市值 + 可用资金 == 总资产
+    # 若不等，说明这条读数本身有问题（多半是跨时点拼）→ 界面必须警示。
+    mv, cash, ta = best.get('market_value'), best.get('cash'), best.get('total_assets')
+    checks = {}
+    if mv is not None and cash is not None and ta is not None:
+        left = mv + cash
+        diff = abs(left - ta)
+        checks['assets_identity'] = {
+            'ok': diff <= 1.0,          # 容忍 1 元内的四舍五入
+            'left': round(left, 2),
+            'right': round(ta, 2),
+            'diff': round(diff, 2),
+            'formula': '持仓市值 + 可用资金 = 总资产',
+        }
+
+    # 浮盈自校验：成本额 = 市值 - 浮盈，应约等于 数量 × 成本价
+    qty, cost, pnl = best.get('qty'), best.get('cost'), best.get('float_pnl')
+    if mv is not None and qty and cost and pnl is not None:
+        cost_amount = mv - pnl
+        implied = cost_amount / qty
+        checks['pnl_identity'] = {
+            'ok': abs(implied - cost) <= 0.01,
+            'cost_amount': round(cost_amount, 2),
+            'implied_cost': round(implied, 4),
+            'stated_cost': round(cost, 4),
+            'formula': '市值 − 浮盈 = 成本额 = 数量 × 成本价',
+        }
+
+    best['checks'] = checks
     best['available'] = True
     best['source'] = 'AUTO_LOG.md（策略侧人工核对记录）'
     return best

@@ -1039,6 +1039,12 @@ export const getStrategyMeta = () =>
  *
  * 口径纪律：每个数字都必须能追到"哪一天、什么来源"。陈旧就标陈旧。
  */
+export interface LiveAccountCheck {
+  ok: boolean
+  formula?: string
+  [k: string]: unknown
+}
+
 export interface LiveAccountEstimate {
   available: boolean
   reason?: string
@@ -1065,6 +1071,11 @@ export interface LiveAccountEstimate {
   carried_over?: boolean
   raw?: string
   candidates?: number
+  /** 算术自校验：把"能不能对上账"显式算出来，界面据此警示 */
+  checks?: {
+    assets_identity?: LiveAccountCheck
+    pnl_identity?: LiveAccountCheck
+  }
 }
 
 export interface LiveAccountResult {
