@@ -1087,6 +1087,31 @@ export interface LiveAccountEstimate {
   }
 }
 
+export interface LiveAccountHistoryItem {
+  date: string
+  total_assets: number | null
+  market_value: number | null
+  cash: number | null
+  float_pnl: number | null
+  day_pnl: number | null
+  price: number | null
+  qty: number | null
+  code: string | null
+  /** 当日读数是否通过恒等式校验；null = 当天没有足够字段可校验 */
+  checks_ok: boolean | null
+}
+
+export interface LiveAccountHistory {
+  available: boolean
+  reason?: string
+  items: LiveAccountHistoryItem[]
+  /** 有核对记录的天数（**不是**连续交易日） */
+  days: number
+  range: [string, string] | null
+  source?: string
+  note?: string
+}
+
 export interface LiveAccountResult {
   estimate: LiveAccountEstimate
   /** 最新快照里的干净浮点字段（次选来源） */
@@ -1095,6 +1120,8 @@ export interface LiveAccountResult {
   readable: boolean
   last?: Record<string, unknown> | null
   ta_dir?: string
+  /** 每日核对记录（升序）。只含真实存在记录的日期，未做插值补齐 */
+  history?: LiveAccountHistory
 }
 
 export const getLiveAccount = () => api.get<LiveAccountResult>('/api/live/account', undefined, { ttl: 0 })

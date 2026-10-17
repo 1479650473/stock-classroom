@@ -6,6 +6,19 @@ import { useToastStore } from '@/stores/toast'
 
 /**
  * 账户总览（实盘页顶部）—— 打开就能看到，不用先点"读取"。
+ */
+const props = withDefaults(defineProps<{
+  /** 是否允许"刷新账户"（客户端读取）。实盘页只做信息展示时可关掉 */
+  canRefresh?: boolean
+}>(), { canRefresh: true })
+
+const emit = defineEmits<{
+  /** 加载完成后把完整结果抛给父组件（父组件据此渲染账户走势，避免重复请求） */
+  (e: 'loaded', r: LiveAccountResult | null): void
+}>()
+
+/**
+ * 账户总览（实盘页顶部）—— 打开就能看到，不用先点"读取"。
  *
  * ## 为什么要这个组件
  * 券商客户端的面板读取靠 OCR：慢（9~13s）、且**必须客户端已登录**。
@@ -34,8 +47,10 @@ async function load(silent = false) {
   error.value = ''
   try {
     data.value = await getLiveAccount()
+    emit('loaded', data.value)
   } catch (e) {
     error.value = e instanceof Error ? e.message : '账户数据加载失败'
+    emit('loaded', null)
   } finally {
     loading.value = false
   }

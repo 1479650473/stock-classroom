@@ -138,6 +138,8 @@ def account():
         'readable': readable,
         'last': last,
         'ta_dir': (st or {}).get('ta_dir'),
+        # 账户历史（每日核对记录，升序）。只输出真实存在的日期，不插值。
+        'history': ss.account_history(),
     })
 
 

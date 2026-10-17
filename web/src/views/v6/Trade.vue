@@ -10,6 +10,8 @@ import TradeSystems from '@/components/TradeSystems.vue'
 import SimPanel from '@/components/SimPanel.vue'
 import StrategyPicks from '@/components/StrategyPicks.vue'
 import LiveAccount from '@/components/LiveAccount.vue'
+import LiveAccountHistory from '@/components/LiveAccountHistory.vue'
+import type { LiveAccountHistory as LiveHistoryData, LiveAccountResult } from '@/api'
 import FormField from '@/components/ui/FormField.vue'
 import Drawer from '@/components/ui/Drawer.vue'
 import Icon from '@/components/Icon.vue'
@@ -133,6 +135,13 @@ async function loadNav() {
   } catch { nav.value = [] }
 }
 
+// ---------------- 实盘账户历史（由 LiveAccount 加载后抛出，避免重复请求） ----------------
+const liveHistory = ref<LiveHistoryData | null>(null)
+
+function onLiveLoaded(r: LiveAccountResult | null) {
+  liveHistory.value = r?.history ?? null
+}
+
 // ---------------- 选股 ----------------
 const picks = ref<PickItem[]>([])
 const picksStale = ref(false)
@@ -247,7 +256,7 @@ watch(selectedId, () => { void loadNav() })
            他本人直接操作券商客户端即可，不需要页面上的"一键启动/下单/读取"。
            工具面板已移到「设置 → Agent 自动化工具」，后端接口全部保留（Agent 仍在用）。 -->
       <div v-else-if="tab === 'live'" class="pane">
-        <LiveAccount />
+        <LiveAccount @loaded="onLiveLoaded" />
 
         <p class="live-note">
           <Icon name="info" :size="13" />
@@ -257,6 +266,9 @@ watch(selectedId, () => { void loadNav() })
             本页面只做信息汇总，不代你操作下单。
           </span>
         </p>
+
+        <!-- 账户走势 + 每日核对记录：同属"信息"，不是操作 -->
+        <LiveAccountHistory v-if="liveHistory?.available" :history="liveHistory" class="live-hist" />
       </div>
 
       <!-- 选股：默认展示**实盘策略（pali）真正的决策**（为策略服务）；
@@ -332,6 +344,17 @@ watch(selectedId, () => { void loadNav() })
 .adv-row { display: flex; align-items: center; gap: var(--sp-3); }
 .adv-row .ui-input { flex: 1; }
 .spin { animation: m-spin 0.9s linear infinite; }
+
+/* 实盘页：账户信息说明 + 走势区间 */
+.live-note {
+  display: flex; align-items: flex-start; gap: 6px;
+  margin: var(--sp-4) 0 0; padding: 9px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-overlay); border: 1px solid var(--border-soft);
+  font-size: var(--fs-sm); color: var(--text-sub); line-height: 1.6;
+}
+.live-note > svg { flex: none; margin-top: 2px; color: var(--text-faint); }
+.live-hist { margin-top: var(--sp-5); }
 
 /* 「全市场扫描」折叠区：实盘策略是主角，它是配角，所以默认收起 */
 .scan { margin-top: var(--sp-5); }

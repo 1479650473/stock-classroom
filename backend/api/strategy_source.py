@@ -467,8 +467,21 @@ def load_position() -> dict | None:
 
 # ── 账户读数（AUTO_LOG，人工核对过的干净文本）────────────────────────────
 
-def account_estimate() -> dict:
-    """从 AUTO_LOG.md 解析**账户读数**（持仓/可用资金/总资产/市值/浮盈）。
+def log_section_dates() -> list[str]:
+    """AUTO_LOG.md 里所有日期的章节（**文件顺序，新→旧**）。"""
+    path = os.path.join(output_dir(), 'sim', 'AUTO_LOG.md')
+    if not os.path.isfile(path):
+        return []
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            src = f.read()
+    except Exception:
+        return []
+    return re.findall(r'^##\s+(\d{4}-\d{2}-\d{2})', src, flags=re.M)
+
+
+def account_estimate(upto: str | None = None) -> dict:
+    """从 AUTO_LOG.md 解析**账户读数**（持仓/可用资金/总资产/市值/浮盈/当日盈亏）。
 
     ## 为什么这里可以解析，而快照的 OCR 文本不行
     AUTO_LOG 是**人工核对后写的**结构化文本，字段带明确标签、数字干净：
@@ -486,6 +499,10 @@ def account_estimate() -> dict:
     现在：把文件切成 {日期: [行]}，按文件顺序（新→旧）逐章节解析，
     取**第一个字段足够完整**的章节。
     解析不到的字段**留 None，绝不臆造**。
+
+    ## 参数
+    `upto`：只考虑该日期及更早的章节（YYYY-MM-DD）。
+    用于 `account_history()` 逐日回放 —— **同一段解析逻辑，不重复实现**。
     """
     path = os.path.join(output_dir(), 'sim', 'AUTO_LOG.md')
     if not os.path.isfile(path):
@@ -667,6 +684,9 @@ def account_estimate() -> dict:
     for date, body in sections:
         if not date:
             continue
+        # 只考虑 upto 及更早（历史回放用）
+        if upto and date > upto:
+            continue
         got = parse_section(date, body)
         # 文件是新→旧：**第一个有读数的章节就是最新的**，直接用它
         if got.get('has_reading'):
@@ -715,6 +735,52 @@ def account_estimate() -> dict:
     best['available'] = True
     best['source'] = 'AUTO_LOG.md（策略侧人工核对记录）'
     return best
+
+
+def account_history() -> dict:
+    """账户历史：AUTO_LOG 每天一条「当日最终读数」，按日期**升序**返回。
+
+    ## 只输出真实存在的记录，不插值、不补齐
+    AUTO_LOG 目前只有 5 个交易日（2026-10-12 ~ 10-16）。**没有的日子就是没有**，
+    不能拿前一天的值补上 —— 那是编造数据。
+    所以返回里带 `days` 与 `range`，界面必须如实说明"共 N 天"。
+
+    ## 复用
+    逐日调用 `account_estimate(upto=date)`，**同一套解析逻辑**，避免两份实现漂移。
+    每个日期拿到的是"截至当天为止的最新读数"，即当天最终状态。
+    """
+    dates = log_section_dates()
+    if not dates:
+        return {'available': False, 'reason': 'AUTO_LOG.md 里没有日期章节', 'items': []}
+
+    items = []
+    for d in sorted(dates):          # 升序：最旧 → 最新
+        e = account_estimate(upto=d)
+        if not e.get('available'):
+            continue
+        items.append({
+            'date': e.get('as_of') or d,
+            'total_assets': e.get('total_assets'),
+            'market_value': e.get('market_value'),
+            'cash': e.get('cash'),
+            'float_pnl': e.get('float_pnl'),
+            'day_pnl': e.get('day_pnl'),
+            'price': e.get('price'),
+            'qty': e.get('qty'),
+            'code': e.get('code'),
+            'checks_ok': all((v or {}).get('ok') for v in (e.get('checks') or {}).values())
+                         if e.get('checks') else None,
+        })
+
+    return {
+        'available': bool(items),
+        'items': items,
+        'days': len(items),
+        'range': [items[0]['date'], items[-1]['date']] if items else None,
+        'source': 'AUTO_LOG.md（策略侧每日核对记录，非逐笔实时）',
+        # 说明：这是"有记录的天数"，不是连续交易日 —— 中间可能有缺失
+        'note': '仅包含 AUTO_LOG 中有核对记录的日期，未做插值补齐',
+    }
 
 
 # ── 组装给前端的一份完整视图 ───────────────────────────────────────────
