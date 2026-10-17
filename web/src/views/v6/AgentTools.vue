@@ -1,7 +1,20 @@
 <script setup lang="ts">
+/**
+ * Agent 自动化工具（原 `views/v6/Live.vue`）
+ *
+ * ## 为什么从「实盘」页搬到这里（2026-10-17）
+ * 董事长指出：**这些工具都是给 Agent 用的** ——
+ * 启动/登录、面板识屏读取、实时行情查询、下单、收盘快照，
+ * 全是**靠识屏 + 模拟输入驱动券商客户端**的自动化手段。
+ * 他本人可以直接操作券商软件，**不需要**走这些工具。
+ * 所以「实盘」页应只做**账户信息反馈**；这些工具移动到「设置」下的 Agent 专属区域，
+ * 保留给 Agent 与故障排查使用，**不再占用实盘版面**。
+ *
+ * ⚠️ 后端接口（`/api/live/*`）**全部保留** —— Agent 仍在用它们。
+ * 页面只是不再把"给机器用的操作面板"摆在人面前。
+ */
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import PageHeader from '@/components/PageHeader.vue'
-import LiveAccount from '@/components/LiveAccount.vue'
 import Card from '@/components/Card.vue'
 import Icon from '@/components/Icon.vue'
 import StatTile from '@/components/ui/StatTile.vue'
@@ -319,7 +332,11 @@ onMounted(async () => {
 
 <template>
   <div class="live">
-    <PageHeader title="实盘" subtitle="国信金太阳 · 盘前启动 / 账户读取 / 下单 / 收盘快照">
+    <PageHeader
+      title="Agent 自动化工具"
+      subtitle="识屏 + 模拟输入驱动券商客户端：启动/解锁 · 面板读取 · 行情 · 下单 · 收盘快照"
+      embedded
+    >
       <template #right>
         <div class="hdr">
           <button v-if="looksLocked" class="ui-btn unlock-btn" :disabled="unlockBusy || guard?.guarded" @click="doUnlock">
@@ -336,9 +353,11 @@ onMounted(async () => {
       </template>
     </PageHeader>
 
-    <!-- ⓪ 账户总览：**置顶**，打开就有数（不必先点"读取"）。
-         数据来自策略侧 AUTO_LOG 的人工核对记录 + 最新快照，并如实标注时间与来源。 -->
-    <LiveAccount />
+    <p class="scope-note">
+      <Icon name="info" :size="13" />
+      <span>这些是<b>给 Agent 用的自动化工具</b>（识屏 + 模拟输入驱动券商客户端）。
+        人工操作请<b>直接用券商客户端</b>，无需经过这里。账户信息请到「交易 → 实盘」看。</span>
+    </p>
 
     <!-- ⓪ 解锁提示：只在"看起来被锁"时出现，且放在最前面（这是拦路的那一步） -->
     <Card v-if="looksLocked || unlockRun || guard?.guarded" class="sec unlock-card">
@@ -686,6 +705,14 @@ onMounted(async () => {
 
 <style scoped>
 .live { max-width: 1280px; }
+.scope-note {
+  display: flex; align-items: flex-start; gap: 6px;
+  margin: 0 0 var(--sp-5); padding: 9px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-overlay); border: 1px solid var(--border-soft);
+  font-size: var(--fs-sm); color: var(--text-sub); line-height: 1.6;
+}
+.scope-note > svg { flex: none; margin-top: 2px; color: var(--text-faint); }
 .sec { margin-bottom: var(--sp-5); padding: var(--sp-5); }
 
 /* 可折叠区块（事后核对类）：默认收起，展开后内部卡片不再叠底边距 */

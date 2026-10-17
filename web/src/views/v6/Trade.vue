@@ -9,7 +9,7 @@ import type { DataColumn } from '@/components/ui/DataTable.vue'
 import TradeSystems from '@/components/TradeSystems.vue'
 import SimPanel from '@/components/SimPanel.vue'
 import StrategyPicks from '@/components/StrategyPicks.vue'
-import Live from '@/views/v6/Live.vue'
+import LiveAccount from '@/components/LiveAccount.vue'
 import FormField from '@/components/ui/FormField.vue'
 import Drawer from '@/components/ui/Drawer.vue'
 import Icon from '@/components/Icon.vue'
@@ -83,7 +83,7 @@ watch(
 
 const SUBTITLES: Record<Tab, string> = {
   systems: '三个程序交易体系：固定策略（因子公式）· 外部 LLM 决策 · 本地预测模型',
-  live: '国信金太阳真实客户端 · 盘前启动/解锁 · 账户读取 · 下单 · 成交对账 · 收盘快照',
+  live: '实盘账户信息 · 总资产 / 可用 / 持仓盈亏 / 当日盈亏 / 持仓明细',
   picks: '多因子评分候选池（点「运行选股」重新扫描）',
   sim: '模拟账户 · 各策略净值曲线 · 持仓明细 · 交易流水（策略自行驱动）',
 }
@@ -242,9 +242,21 @@ watch(selectedId, () => { void loadNav() })
         <TradeSystems @go="(t) => (tab = normalizeTab(t))" />
       </div>
 
-      <!-- 实盘：整页并入（原一级「实盘」） -->
-      <div v-else-if="tab === 'live'" class="pane pane--bare">
-        <Live />
+      <!-- 实盘：**只反馈账户信息**。
+           2026-10-17 董事长定调：识屏/模拟输入那些工具都是**给 Agent 用的**，
+           他本人直接操作券商客户端即可，不需要页面上的"一键启动/下单/读取"。
+           工具面板已移到「设置 → Agent 自动化工具」，后端接口全部保留（Agent 仍在用）。 -->
+      <div v-else-if="tab === 'live'" class="pane">
+        <LiveAccount />
+
+        <p class="live-note">
+          <Icon name="info" :size="13" />
+          <span>
+            账户数据取自<b>策略侧每日核对记录</b>（盘前 09:35 / 盘后 15:10，见 AUTO_LOG），
+            因此<b>不是逐笔实时</b>。要看实时明细请直接看券商客户端 ——
+            本页面只做信息汇总，不代你操作下单。
+          </span>
+        </p>
       </div>
 
       <!-- 选股：默认展示**实盘策略（pali）真正的决策**（为策略服务）；

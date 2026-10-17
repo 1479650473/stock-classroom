@@ -2,6 +2,7 @@
 import { ref, computed, reactive, onMounted } from 'vue'
 import PageHeader from '@/components/PageHeader.vue'
 import Card from '@/components/Card.vue'
+import AgentTools from '@/views/v6/AgentTools.vue'
 import Icon from '@/components/Icon.vue'
 import { useAppStore } from '@/stores/app'
 import { useToastStore } from '@/stores/toast'
@@ -400,6 +401,21 @@ async function save() {
         <pre class="log">{{ sch.log }}</pre>
       </div>
     </Card>
+
+    <!-- Agent 自动化工具：识屏 + 模拟输入驱动券商客户端。
+         2026-10-17 从「交易 → 实盘」搬来 —— 董事长指出这些是**给 Agent 用的**，
+         人工操作直接开券商客户端即可，不该摆在实盘页上。
+         默认收起：正常看盘不需要它，只有 Agent 排查/手动补跑时才展开。 -->
+    <details class="fold">
+      <summary>
+        <Icon name="agentops" :size="13" />
+        Agent 自动化工具（识屏驱动券商客户端）
+        <span class="fold__hint">— 给 Agent 与故障排查用，人工请直接操作券商客户端</span>
+      </summary>
+      <div class="fold__body">
+        <AgentTools />
+      </div>
+    </details>
   </div>
 </template>
 
@@ -558,4 +574,16 @@ async function save() {
 .switch input:checked + .switch__track .switch__thumb { transform: translateX(16px); background: var(--gold); }
 .switch__text { font-size: var(--fs-sm); color: var(--text-sub); }
 .small { font-size: var(--fs-xs); }
+
+/* Agent 工具折叠区：默认收起，展开后子组件自带间距 */
+.fold { margin-top: var(--sp-5); }
+.fold > summary {
+  display: flex; align-items: center; gap: 7px;
+  padding: 11px 14px; cursor: pointer; user-select: none;
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--bg-panel); color: var(--text-sub); font-size: var(--fs-sm);
+}
+.fold > summary:hover { color: var(--text); border-color: var(--border-strong); }
+.fold__hint { color: var(--text-faint); font-size: var(--fs-xs); }
+.fold__body { margin-top: var(--sp-4); }
 </style>
