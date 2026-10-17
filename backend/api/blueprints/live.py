@@ -90,6 +90,57 @@ def snapshot(name):
 
 # ────────────────────────── 读客户端（只读） ──────────────────────────
 
+@bp.route("/account")
+def account():
+    """账户总览 —— **打开页面即可看到**，不需要先点"读取"。
+
+    ## 为什么需要这个端点
+    券商客户端的面板读取要靠 OCR，慢（9~13s）且**必须客户端已登录**。
+    打开实盘页却是一片空白、要手动点四次"读取"，体验很差。
+    所以这里给出**最近一次已知的账户读数**，并**如实标注来源与时间**。
+
+    ## 数据来源与可信度（按优先级合并，各字段保留 provenance）
+    1. `AUTO_LOG.md` —— 策略侧**人工核对过**的账户读数（最可靠，含日期）
+    2. 最新 `snapshot_*.json` 的 `funds_value` / `max_buy_value` —— 干净浮点字段
+       （**刻意不解析 `positions_text`**：那是屏幕 OCR 原文，逐字空格/错字/全角连写，
+       解析必然出错；交易软件里输出错数字比不输出更危险）
+    3. 当前工具是否可读（来自 `/status` 的 severity）
+
+    每个数值旁边都带 `as_of`，前端必须把时间显示出来 —— 陈旧数据不能装作新鲜。
+    """
+    from .. import trade_bridge as tb
+    from .. import strategy_source as ss
+
+    est = ss.account_estimate()
+
+    # 最新快照：只取干净浮点字段
+    snaps = tb.list_snapshots(1)
+    snap_info = None
+    if snaps:
+        name = snaps[0] if isinstance(snaps[0], str) else (snaps[0].get('name') if isinstance(snaps[0], dict) else None)
+        j = tb.read_snapshot(name) if name else None
+        if isinstance(j, dict):
+            snap_info = {
+                'name': name,
+                'ts': j.get('ts'),
+                'funds_value': j.get('funds_value'),
+                'max_buy_value': j.get('max_buy_value'),
+            }
+
+    # 客户端当前是否可读（供前端决定"刷新账户"按钮是否可用）
+    st = tb.status_summary()
+    last = (st or {}).get('last') or {}
+    readable = bool((st or {}).get('available')) and bool(last.get('ok'))
+
+    return ok({
+        'estimate': est,
+        'snapshot': snap_info,
+        'readable': readable,
+        'last': last,
+        'ta_dir': (st or {}).get('ta_dir'),
+    })
+
+
 @bp.route("/query/<panel>")
 def query(panel):
     """读客户端面板。支持 ?bg=1 用后台模式（不抢前台焦点）。

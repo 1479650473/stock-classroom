@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import PageHeader from '@/components/PageHeader.vue'
+import LiveAccount from '@/components/LiveAccount.vue'
 import Card from '@/components/Card.vue'
 import Icon from '@/components/Icon.vue'
 import StatTile from '@/components/ui/StatTile.vue'
@@ -55,12 +56,18 @@ const unlockState = computed(() => st.value?.unlock)
 const guard = computed(() => st.value?.login_guard)
 
 /**
- * 是否需要解锁：仅当最近一次结果明确是"交易视图未打开/已锁定"时才提示。
- * **不把 known=false 当成"未锁定"** —— 未知就是未知。
+ * 是否需要**解锁**（不是"客户端没开"）。
+ *
+ * ⚠️ 这里收窄过一次判断条件：原来只要消息含「未打开/登录」就弹解锁卡，
+ * 但「交易视图未打开（可能需登录）」的真实含义是**客户端根本没开或没登录**，
+ * 这时候让人去点"解锁"是错的 —— 客户端没开时解锁必然失败。
+ * 所以：只有消息明确含「锁定」，或上次解锁明确失败时，才认为"需要解锁"。
+ * 「未打开/需登录」交给工具状态横幅去说明（那是另一回事）。
  */
 const looksLocked = computed(() => {
   const m = st.value?.last?.message || ''
-  return m.includes('未打开') || m.includes('锁定') || m.includes('登录')
+  if (m.includes('锁定')) return true
+  return unlockState.value?.known === true && unlockState.value.ok === false
 })
 
 /** 上次解锁是否失败（失败会让工具自锁，必须显式提示，别让用户反复点） */
@@ -329,6 +336,10 @@ onMounted(async () => {
       </template>
     </PageHeader>
 
+    <!-- ⓪ 账户总览：**置顶**，打开就有数（不必先点"读取"）。
+         数据来自策略侧 AUTO_LOG 的人工核对记录 + 最新快照，并如实标注时间与来源。 -->
+    <LiveAccount />
+
     <!-- ⓪ 解锁提示：只在"看起来被锁"时出现，且放在最前面（这是拦路的那一步） -->
     <Card v-if="looksLocked || unlockRun || guard?.guarded" class="sec unlock-card">
       <div class="sec-head">
@@ -418,7 +429,8 @@ onMounted(async () => {
             />
             <StatTile label="工具目录" :value="st.available ? '已找到' : '缺失'" />
           </div>
-          <p class="path faint mono">{{ st.tool_dir }}</p>
+          <!-- 工具路径属于排查信息，不用常占一行 -->
+          <p class="path faint mono" :title="st.tool_dir">工具：{{ st.tool_dir }}</p>
         </template>
       </template>
     </Card>
@@ -458,12 +470,11 @@ onMounted(async () => {
           <pre v-else-if="panelText" class="ocr mono">{{ panelText }}</pre>
           <p v-else class="faint">面板已读取，但工具未返回结构化行或文本。</p>
         </template>
-        <EmptyGuide
-          v-else
-          icon="holdings"
-          title="还没有读取"
-          desc="点「读取」获取持仓 / 资金 / 当日成交 / 当日委托。需要客户端已登录；未登录时工具会明确报错，不会返回误导性的空结果。"
-        />
+        <!-- 空态用一行说明即可：持仓/资金总览已在上方「账户总览」，
+             这里只剩"读成交/委托明细"一个用途，不值得占一大块引导区 -->
+        <p v-else class="faint hint-line">
+          未读取。客户端已登录时点「读取」可取成交 / 委托明细（持仓与资金已在上方总览）。
+        </p>
       </Card>
 
       <Card class="sec">
@@ -620,9 +631,15 @@ onMounted(async () => {
       </div>
     </Card>
 
-    <!-- ⑤ 成交与快照 -->
-    <div class="grid2">
-      <Card class="sec">
+    <!-- ⑤ 成交与快照：属于「事后核对」，默认收起，避免把主操作挤到下面 -->
+    <details class="fold">
+      <summary>
+        <Icon name="log" :size="13" />
+        事后核对：今日成交 · 收盘快照
+        <span v-if="idemUnverified" class="bad-t">（{{ idemUnverified }} 笔待核查）</span>
+      </summary>
+      <div class="grid2 fold__body">
+        <Card class="sec">
         <h2 class="sec-title">今日成交（对账）</h2>
         <p class="sec-sub">来源 fills_YYYYMMDD.jsonl；空表示当日无成交</p>
         <table v-if="fills.length" class="tbl">
@@ -662,13 +679,27 @@ onMounted(async () => {
         </ul>
         <p v-else class="faint">还没有快照。</p>
       </Card>
-    </div>
+      </div>
+    </details>
   </div>
 </template>
 
 <style scoped>
 .live { max-width: 1280px; }
 .sec { margin-bottom: var(--sp-5); padding: var(--sp-5); }
+
+/* 可折叠区块（事后核对类）：默认收起，展开后内部卡片不再叠底边距 */
+.fold { margin-bottom: var(--sp-5); }
+.fold > summary {
+  display: flex; align-items: center; gap: 7px;
+  padding: 10px 14px; cursor: pointer; user-select: none;
+  border: 1px solid var(--border-soft); border-radius: var(--radius-md);
+  background: var(--bg-panel); color: var(--text-sub); font-size: var(--fs-sm);
+}
+.fold > summary:hover { color: var(--text); border-color: var(--border-strong); }
+.fold__body { margin-top: var(--sp-4); }
+.fold__body .sec:last-child { margin-bottom: 0; }
+.hint-line { margin: var(--sp-4) 0 0; font-size: var(--fs-sm); line-height: 1.6; }
 .sec-head {
   display: flex; align-items: flex-start; justify-content: space-between;
   gap: var(--sp-4); margin-bottom: var(--sp-4);

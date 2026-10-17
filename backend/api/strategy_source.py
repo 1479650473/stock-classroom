@@ -465,6 +465,189 @@ def load_position() -> dict | None:
     return None
 
 
+# ── 账户读数（AUTO_LOG，人工核对过的干净文本）────────────────────────────
+
+def account_estimate() -> dict:
+    """从 AUTO_LOG.md 解析**账户读数**（持仓/可用资金/总资产/市值/浮盈）。
+
+    ## 为什么这里可以解析，而快照的 OCR 文本不行
+    AUTO_LOG 是**人工核对后写的**结构化文本，字段带明确标签、数字干净：
+      · `资金：可用 262.54（vs 昨日 262.34）| 持仓 002659×700 @4.6772 现价 4.80 市值 3367 浮盈 +92.97`
+      · `持仓：700 股 @成本 4.6775 | 可用 262.34 | 市值 3248`
+      · `当日盈亏：… | 市值 3339 | 持仓浮盈 +64.75 | 总资产 ≈3601.5`
+
+    而快照里的 `positions_text` 是**屏幕 OCR 原文**（`証 券 代 码 L` 逐字空格、`訕里` 错字、
+    全角句点连写），解析必然出错 —— 在交易软件里**输出错数字比不输出更危险**，故弃用 OCR 解析。
+
+    ## 做法
+    文件是**新→旧**排列（`## 2026-10-16` 在最前），所以**按章节解析、优先取最新**。
+    ⚠️ 踩过的坑：第一版用 `reversed(lines)` 从后往前扫，结果从**最旧**的章节开始，
+    解出了 10-13 的数据却当成最新 —— **方向错了，数字就错**。
+    现在：把文件切成 {日期: [行]}，按文件顺序（新→旧）逐章节解析，
+    取**第一个字段足够完整**的章节。
+    解析不到的字段**留 None，绝不臆造**。
+    """
+    path = os.path.join(output_dir(), 'sim', 'AUTO_LOG.md')
+    if not os.path.isfile(path):
+        return {'available': False, 'reason': f'未找到 AUTO_LOG.md（{path}）'}
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            lines = f.read().splitlines()
+    except Exception as e:
+        return {'available': False, 'reason': f'读取失败: {type(e).__name__}'}
+
+    # 切章节：保持文件顺序（新 → 旧）
+    sections: list[tuple[str | None, list[str]]] = []
+    cur_date: str | None = None
+    cur_lines: list[str] = []
+    for ln in lines:
+        m = re.match(r'^##\s+(\d{4}-\d{2}-\d{2})', ln)
+        if m:
+            if cur_lines or cur_date:
+                sections.append((cur_date, cur_lines))
+            cur_date, cur_lines = m.group(1), []
+            continue
+        if re.match(r'^##\s', ln):      # 非日期章节（如「日志规范」）→ 结束当前
+            sections.append((cur_date, cur_lines))
+            cur_date, cur_lines = None, []
+            continue
+        cur_lines.append(ln)
+    if cur_lines or cur_date:
+        sections.append((cur_date, cur_lines))
+
+    P = {
+        # 注意：这里的键名用 `cash` 表示「可用资金」，**不能叫 available** ——
+        # 外层还有个布尔 `available`（本条读数是否解析成功），两者同名会互相覆盖
+        # （踩过：布尔 True 把 262.54 覆盖成了 1，自洽校验直接炸）。
+        'cash': re.compile(r'可用[资金]*\s*([\d,]+\.?\d*)'),
+        'total_assets': re.compile(r'总资产\s*[≈~]?\s*([\d,]+\.?\d*)'),
+        'market_value': re.compile(r'市值\s*([\d,]+\.?\d*)'),
+        'float_pnl': re.compile(r'浮盈\s*([-−+]?[\d,]+\.?\d*)'),
+        'price': re.compile(r'现价\s*([\d.]+)'),
+        'code_qty': re.compile(r'(\d{6})\s*[×xX*]\s*([\d,]+)'),
+        'qty_only': re.compile(r'持仓[：:]\s*([\d,]+)\s*股'),
+        'assets_only': re.compile(r'(?<!总)资产\s*([\d,]+\.?\d*)'),
+        'cost_hold': re.compile(r'@\s*(?:成本\s*)?([\d.]+)'),
+        'stale': re.compile(r'沿用.*核对值'),
+    }
+
+    def _num(s: str) -> float | None:
+        try:
+            # 归一：去掉 markdown 粗体星号与千分位；全角/Unicode 负号 → ASCII '-'
+            t = str(s).replace('*', '').replace(',', '').replace('−', '-').replace('－', '-')
+            return float(t)
+        except (TypeError, ValueError):
+            return None
+
+    def _clean(line: str) -> str:
+        """把 AUTO_LOG 的行归一成便于正则的形态。
+
+        AUTO_LOG 里到处是 markdown 格式：`总资产 ≈**3510.5**`、`持仓浮盈 **−26.25**`。
+        星号会把数字和标签隔开，导致 `总资产\\s*[≈~]?\\s*(\\d+)` 匹配不到
+        （踩过：收盘那行整条解析失败，`close` 返回 null）。
+        所以先去掉 `*`、把 Unicode 负号换成 ASCII `-`。
+        """
+        return line.replace('*', '').replace('−', '-').replace('－', '-')
+
+    def parse_section(date: str | None, body: list[str]) -> dict:
+        """把一天里的每一行解析成**独立候选读数**，再挑一条最完整、且同源自洽的。
+
+        ## ⚠️ 第二个坑：不能"逐字段跨行拼"
+        第一版是逐字段填充（缺哪个补哪个），结果把同一天不同时点的数字混在一起：
+        `市值 3248`（收盘）配 `总资产 3566.54`（09:35 盘前）——
+        **两个数不自洽**（3304 + 262.54 = 3566.54 才是同一时点）。
+        所以现在：**一行 = 一条完整读数**，只从同一行取值，绝不跨行拼。
+        """
+        cands = []
+        for raw_ln in (x.strip() for x in body):
+            if not raw_ln.startswith('-'):
+                continue
+            if not re.search(r'可用|总资产|市值|浮盈|持仓', raw_ln):
+                continue
+            s = _clean(raw_ln)      # 去 markdown 星号 / Unicode 负号
+            c = {'code': None, 'qty': None, 'cost': None, 'price': None,
+                 'market_value': None, 'float_pnl': None,
+                 'cash': None, 'total_assets': None, 'raw': raw_ln[:200],
+                 'carried_over': bool(P['stale'].search(s))}
+
+            m = P['code_qty'].search(s)
+            if m:
+                c['code'], c['qty'] = m.group(1), _num(m.group(2))
+            if c['qty'] is None:
+                m = P['qty_only'].search(s)
+                if m:
+                    c['qty'] = _num(m.group(1))
+            # 成本只从「持仓」行取，别拿成交行的「买入 700@4.67」当成本
+            if '持仓' in s:
+                m = P['cost_hold'].search(s)
+                if m:
+                    c['cost'] = _num(m.group(1))
+            for key in ('cash', 'total_assets', 'market_value', 'float_pnl', 'price'):
+                m = P[key].search(s)
+                if m:
+                    c[key] = _num(m.group(1))
+            if c['total_assets'] is None:
+                m = P['assets_only'].search(s)
+                if m:
+                    c['total_assets'] = _num(m.group(1))
+
+            c['n_fields'] = sum(1 for k in ('code', 'qty', 'cash',
+                                            'total_assets', 'market_value', 'price')
+                                if c[k] is not None)
+            cands.append(c)
+
+        if not cands:
+            return {'as_of': date, 'available': False, 'raw': []}
+
+        # 主读数：字段最多者；并列取**靠后**（同一天里盘后更新）
+        best = max(enumerate(cands), key=lambda t: (t[1]['n_fields'], t[0]))[1]
+        best['as_of'] = date
+
+        # 收盘读数：另有一条只含 市值+总资产（没有可用资金）的更晚记录时，单独带出，
+        # 让界面能显示"盘前核对 → 收盘"的变化，而不是把两者混成一个数。
+        close = None
+        if best['cash'] is not None:
+            for c in reversed(cands):
+                if c is best:
+                    continue
+                if (c['cash'] is None and c['total_assets'] is not None
+                        and c['market_value'] is not None):
+                    close = {'market_value': c['market_value'],
+                             'float_pnl': c['float_pnl'],
+                             'total_assets': c['total_assets'],
+                             'raw': c['raw']}
+                    break
+        best['close'] = close
+        best['candidates'] = len(cands)
+        best['has_reading'] = best['n_fields'] >= 2
+
+        return best
+
+    best = None
+    best_score = -1
+    for date, body in sections:
+        if not date:
+            continue
+        got = parse_section(date, body)
+        score = got.get('n_fields') or 0
+        # 文件是新→旧：第一个达标的就是最新可用章节
+        if score > best_score:
+            best, best_score = got, score
+        if score >= 5:      # 可用/总资产/代码/数量/市值 齐全
+            break
+
+    if not best or not best.get('has_reading'):
+        return {'available': False, 'reason': 'AUTO_LOG.md 里未解析到账户读数'}
+
+    if best.get('code'):
+        pool = load_pool({best['code']})
+        best['name'] = (pool.get(best['code']) or {}).get('name') or None
+
+    best['available'] = True
+    best['source'] = 'AUTO_LOG.md（策略侧人工核对记录）'
+    return best
+
+
 # ── 组装给前端的一份完整视图 ───────────────────────────────────────────
 
 def strategy_picks(date8: str | None = None) -> dict:

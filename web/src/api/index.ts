@@ -1032,6 +1032,53 @@ export const getStrategyDates = () =>
 export const getStrategyMeta = () =>
   api.get<Record<string, unknown>>('/api/strategy/meta', undefined, { ttl: 0 })
 
+/* ─────────────────────── 实盘账户总览 ───────────────────────
+ * 打开实盘页**立刻**能看到账户数据，不必先点"读取"。
+ * 数据来自策略侧 AUTO_LOG.md 的**人工核对记录**（最可靠），并如实带出时间与来源；
+ * 券商客户端可读时，前端再叠加一次实时读取。
+ *
+ * 口径纪律：每个数字都必须能追到"哪一天、什么来源"。陈旧就标陈旧。
+ */
+export interface LiveAccountEstimate {
+  available: boolean
+  reason?: string
+  source?: string
+  /** 该读数的日期（YYYY-MM-DD）—— 必须展示出来 */
+  as_of?: string | null
+  code?: string | null
+  name?: string | null
+  qty?: number | null
+  cost?: number | null
+  price?: number | null
+  market_value?: number | null
+  float_pnl?: number | null
+  /** 可用资金（后端字段名是 cash，不是 available —— 避免与布尔标志冲突） */
+  cash?: number | null
+  total_assets?: number | null
+  /** 收盘读数（与主读数**同一时点自洽**的另一条记录） */
+  close?: {
+    market_value?: number | null
+    float_pnl?: number | null
+    total_assets?: number | null
+    raw?: string
+  } | null
+  carried_over?: boolean
+  raw?: string
+  candidates?: number
+}
+
+export interface LiveAccountResult {
+  estimate: LiveAccountEstimate
+  /** 最新快照里的干净浮点字段（次选来源） */
+  snapshot: { name?: string; ts?: string | null; funds_value?: number | null; max_buy_value?: number | null } | null
+  /** 券商客户端当前是否可读（不可读时"刷新账户"必然失败） */
+  readable: boolean
+  last?: Record<string, unknown> | null
+  ta_dir?: string
+}
+
+export const getLiveAccount = () => api.get<LiveAccountResult>('/api/live/account', undefined, { ttl: 0 })
+
 /* ─────────────────────────── 实盘（trade-automation 桥接） ───────────────────────────
  * 后端 backend/api/blueprints/live.py 把 C# 工具包成 HTTP。
  * 约定：返回的是**工具自己的产物**（last-result.json / 各 *.log），
